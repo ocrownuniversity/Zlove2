@@ -373,6 +373,74 @@ async function sendChatMessage(meId, chatId, otherUid, payload) {
         type: 'message', fromUserId: meId, chatId, read: false, createdAt: FieldValue.serverTimestamp()
     });
 }
+/* ============================== FRIENDS ============================== */
+function friendshipId(a, b) { return chatIdFor(a, b); }
+async function sendFriendRequest(meId, otherId) {
+    const id = friendshipId(meId, otherId);
+    await db.collection('friendships').doc(id).set({
+        users: [meId, otherId], requestedBy: meId, status: 'pending', createdAt: FieldValue.serverTimestamp()
+    });
+    db.collection('notifications').doc(otherId).collection('items').add({
+        type: 'friend_request', fromUserId: meId, read: false, createdAt: FieldValue.serverTimestamp()
+    });
+}
+async function cancelFriendRequest(meId, otherId) {
+    await db.collection('friendships').doc(friendshipId(meId, otherId)).delete();
+}
+async function declineFriendRequest(meId, otherId) {
+    await db.collection('friendships').doc(friendshipId(meId, otherId)).delete();
+}
+async function acceptFriendRequest(meId, otherId) {
+    await db.collection('friendships').doc(friendshipId(meId, otherId)).update({ status: 'accepted', acceptedAt: FieldValue.serverTimestamp() });
+    db.collection('notifications').doc(otherId).collection('items').add({
+        type: 'friend_accept', fromUserId: meId, read: false, createdAt: FieldValue.serverTimestamp()
+    });
+}
+async function removeFriend(meId, otherId) {
+    await db.collection('friendships').doc(friendshipId(meId, otherId)).delete();
+}
+function useFriendship(meId, otherId) {
+    const [rel, setRel] = useState(undefined);
+    useEffect(() => {
+        if (!otherId || !meId || otherId === meId) {
+            setRel(null);
+            return;
+        }
+        const unsub = db.collection('friendships').doc(friendshipId(meId, otherId))
+            .onSnapshot(s => setRel(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setRel(null));
+        return unsub;
+    }, [meId, otherId]);
+    return rel;
+}
+// Counts and lists are derived live from the friendships collection (never from a stored
+// counter on the other person's document) so they never depend on a cross-user write succeeding.
+function useFriendships(uid) {
+    const [list, setList] = useState(null);
+    useEffect(() => {
+        if (!uid)
+            return;
+        const unsub = db.collection('friendships').where('users', 'array-contains', uid)
+            .onSnapshot(snap => setList(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setList([]));
+        return unsub;
+    }, [uid]);
+    return list;
+}
+function otherUidOfFriendship(f, uid) { return f.users[0] === uid ? f.users[1] : f.users[0]; }
+/* ============================== POST SHARING ============================== */
+async function shareToTimeline(originalPost, meId, comment) {
+    await db.collection('posts').add({
+        authorId: meId, text: (comment || '').trim(), images: [], bold: false, bgStyle: null, taggedUsers: [],
+        sharedPostId: originalPost.id, sharedFrom: originalPost.authorId,
+        createdAt: FieldValue.serverTimestamp(), likesCount: 0, commentsCount: 0, sharesCount: 0
+    });
+    await db.collection('posts').doc(originalPost.id).update({ sharesCount: FieldValue.increment(1) }).catch(() => { });
+    await db.collection('users').doc(meId).update({ postsCount: FieldValue.increment(1) }).catch(() => { });
+    if (originalPost.authorId !== meId) {
+        db.collection('notifications').doc(originalPost.authorId).collection('items').add({
+            type: 'share', fromUserId: meId, postId: originalPost.id, read: false, createdAt: FieldValue.serverTimestamp()
+        });
+    }
+}
 /* ============================== CONTEXTS ============================== */
 const AuthContext = createContext(null);
 const ThemeContext = createContext(null);
@@ -916,6 +984,8 @@ function MainApp({ route, setRoute }) {
     const { theme, setTheme } = useContext(ThemeContext);
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const unreadMessages = useUnreadMessages(profile.id);
+    const friendships = useFriendships(profile.id);
+    const incomingRequestsCount = (friendships || []).filter(f => f.status === 'pending' && f.requestedBy !== profile.id).length;
     useEffect(() => {
         setPresence(profile.id, true);
         const heartbeat = setInterval(() => setPresence(profile.id, true), 25000);
@@ -930,7 +1000,7 @@ function MainApp({ route, setRoute }) {
     }, [profile.id]);
     const nav = [
         { name: 'home', icon: 'fa-house', label: 'Home' },
-        { name: 'search', icon: 'fa-user-group', label: 'People' },
+        { name: 'search', icon: 'fa-user-group', label: 'People', badge: incomingRequestsCount },
         { name: 'messages', icon: 'fa-comment-dots', label: 'Messages', badge: unreadMessages },
         { name: 'notifications', icon: 'fa-bell', label: 'Notifications' },
         { name: 'bookmarks', icon: 'fa-bookmark', label: 'Saved' },
@@ -989,7 +1059,7 @@ function MainApp({ route, setRoute }) {
                         route.name === n.name && n.name !== 'profile' && React.createElement("span", { className: "absolute -bottom-0 left-1/2 -translate-x-1/2 w-6 h-[3px] rounded-full bg-brand-600" }))))),
             React.createElement("main", { className: route.name === 'chat' ? "flex-1 max-w-2xl w-full mx-auto md:px-6 md:py-4" : "flex-1 max-w-2xl w-full mx-auto px-3 md:px-6 py-4 pb-8" },
                 route.name === 'home' && React.createElement(HomeFeed, { go: go }),
-                route.name === 'search' && React.createElement(SearchScreen, { go: go }),
+                route.name === 'search' && React.createElement(SearchScreen, { go: go, route: route }),
                 route.name === 'messages' && React.createElement(ChatListScreen, { go: go }),
                 route.name === 'chat' && React.createElement(ChatWindow, { chatId: route.chatId, otherUid: route.otherUid, go: go }),
                 route.name === 'notifications' && React.createElement(NotificationsScreen, { go: go }),
@@ -1002,6 +1072,54 @@ function MainApp({ route, setRoute }) {
 function Avatar({ user, size = 10, onClick }) {
     const src = (user === null || user === void 0 ? void 0 : user.photoURL) || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent((user === null || user === void 0 ? void 0 : user.displayName) || (user === null || user === void 0 ? void 0 : user.username) || '?')}`;
     return React.createElement("img", { onClick: onClick, src: src, className: `w-${size} h-${size} rounded-full object-cover shrink-0 ${onClick ? 'cursor-pointer' : ''}`, style: { width: size * 4, height: size * 4 } });
+}
+/* ============================== FRIEND ACTION BUTTON ============================== */
+function FriendActionButton({ meId, otherId, compact }) {
+    const toast = useToast();
+    const rel = useFriendship(meId, otherId);
+    const [busy, setBusy] = useState(false);
+    const [confirmOpen, setConfirmOpen] = useState(false);
+    if (!otherId || otherId === meId || rel === undefined)
+        return null;
+    const run = async (fn) => {
+        setBusy(true);
+        try {
+            await fn();
+        }
+        catch (e) {
+            toast(e.message, 'error');
+        }
+        finally {
+            setBusy(false);
+        }
+    };
+    const baseBtn = compact
+        ? "text-xs font-semibold px-3 py-1.5 rounded-full shrink-0 disabled:opacity-50"
+        : "flex-1 rounded-xl py-2.5 text-sm font-semibold disabled:opacity-50";
+    const brandBtn = baseBtn + " bg-brand-600 hover:bg-brand-700 text-white";
+    const neutralBtn = baseBtn + " bg-slate-100 dark:bg-ink-700 hover:bg-slate-200 dark:hover:bg-ink-600";
+    if (!rel) {
+        return React.createElement("button", { onClick: (e) => { e.stopPropagation(); run(() => sendFriendRequest(meId, otherId)); }, disabled: busy, className: brandBtn },
+            React.createElement("i", { className: "fa-solid fa-user-plus mr-1.5" }),
+            busy ? 'Sending…' : 'Add Friend');
+    }
+    if (rel.status === 'pending') {
+        if (rel.requestedBy === meId) {
+            return React.createElement("button", { onClick: (e) => { e.stopPropagation(); run(() => cancelFriendRequest(meId, otherId)); }, disabled: busy, className: neutralBtn },
+                React.createElement("i", { className: "fa-solid fa-user-clock mr-1.5" }),
+                busy ? 'Cancelling…' : 'Request Sent');
+        }
+        return React.createElement("div", { className: "flex items-center gap-2" + (compact ? "" : " flex-1") },
+            React.createElement("button", { onClick: (e) => { e.stopPropagation(); run(() => acceptFriendRequest(meId, otherId)); }, disabled: busy, className: brandBtn }, busy ? '…' : 'Accept'),
+            React.createElement("button", { onClick: (e) => { e.stopPropagation(); run(() => declineFriendRequest(meId, otherId)); }, disabled: busy, className: neutralBtn }, 'Decline'));
+    }
+    // accepted
+    return React.createElement("div", { className: "relative" + (compact ? "" : " flex-1") },
+        React.createElement("button", { onClick: (e) => { e.stopPropagation(); setConfirmOpen(v => !v); }, className: neutralBtn + (compact ? "" : " w-full") },
+            React.createElement("i", { className: "fa-solid fa-user-check mr-1.5 text-emerald-500" }),
+            'Friends'),
+        confirmOpen && React.createElement("div", { onClick: e => e.stopPropagation(), className: "absolute right-0 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-600 z-20 w-40" },
+            React.createElement("button", { onClick: () => run(() => removeFriend(meId, otherId)).then(() => setConfirmOpen(false)), disabled: busy, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Remove Friend")));
 }
 /* ============================== COMPOSER ============================== */
 function Composer({ onPosted }) {
@@ -1123,6 +1241,10 @@ function PostCard({ post, go }) {
     const [menuOpen, setMenuOpen] = useState(false);
     const [editing, setEditing] = useState(false);
     const [editText, setEditText] = useState(post.text);
+    const [sharesCount, setSharesCount] = useState(post.sharesCount || 0);
+    const [shareMenuOpen, setShareMenuOpen] = useState(false);
+    const [shareComment, setShareComment] = useState('');
+    const [sharing, setSharing] = useState(false);
     useEffect(() => {
         const unsub = db.collection('users').doc(post.authorId).onSnapshot(s => setAuthor(s.exists ? s.data() : null));
         return unsub;
@@ -1144,6 +1266,10 @@ function PostCard({ post, go }) {
     }, [post.id]);
     useEffect(() => {
         const unsub = db.collection('posts').doc(post.id).collection('comments').onSnapshot(snap => setCommentsCount(snap.size), () => { });
+        return unsub;
+    }, [post.id]);
+    useEffect(() => {
+        const unsub = db.collection('posts').doc(post.id).collection('shares').onSnapshot(snap => setSharesCount(snap.size), () => { });
         return unsub;
     }, [post.id]);
     useEffect(() => {
@@ -1187,11 +1313,27 @@ function PostCard({ post, go }) {
             toast('Saved', 'success');
         }
     };
-    const share = async () => {
+    const copyLink = async () => {
         var _a;
-        await db.collection('posts').doc(post.id).update({ sharesCount: FieldValue.increment(1) });
+        await db.collection('posts').doc(post.id).collection('shares').doc(profile.id).set({ uid: profile.id, createdAt: FieldValue.serverTimestamp() }, { merge: true });
         (_a = navigator.clipboard) === null || _a === void 0 ? void 0 : _a.writeText(window.location.href.split('#')[0] + '#post-' + post.id);
         toast('Link copied to clipboard', 'success');
+        setShareMenuOpen(false);
+    };
+    const shareNow = async () => {
+        setSharing(true);
+        try {
+            await shareToTimeline(post, profile.id, shareComment);
+            toast('Shared to your timeline', 'success');
+            setShareComment('');
+            setShareMenuOpen(false);
+        }
+        catch (e) {
+            toast(e.message, 'error');
+        }
+        finally {
+            setSharing(false);
+        }
     };
     const deletePost = async () => {
         if (!confirm('Delete this post?'))
@@ -1232,6 +1374,7 @@ function PostCard({ post, go }) {
                 React.createElement("button", { onClick: () => setEditing(false), className: "text-xs font-semibold text-slate-400" }, "Cancel")))) : post.text && (post.bgStyle && !((_a = post.images) === null || _a === void 0 ? void 0 : _a.length) ? (React.createElement("div", { className: `rounded-xl mb-2 p-6 min-h-[160px] flex items-center justify-center text-center ${bgStyleClass(post.bgStyle)}` },
             React.createElement("p", { className: "text-white text-xl font-bold whitespace-pre-wrap" }, formatRichText(post.text)))) : (React.createElement("p", { className: "text-sm whitespace-pre-wrap mb-2 leading-relaxed " + (post.bold ? 'font-bold' : '') }, formatRichText(post.text)))),
         ((_a = post.images) === null || _a === void 0 ? void 0 : _a.length) > 0 && (React.createElement("div", { className: `grid gap-1 rounded-xl overflow-hidden mb-2 ${post.images.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}` }, post.images.map((img, i) => React.createElement("img", { key: i, src: img, loading: "lazy", className: "w-full object-cover max-h-[420px]" })))),
+        post.sharedPostId && React.createElement(SharedPostPreview, { postId: post.sharedPostId, go: go }),
         React.createElement("div", { className: "flex items-center justify-between text-slate-500 text-sm pt-2 border-t border-slate-100 dark:border-ink-700" },
             React.createElement("button", { onClick: toggleLike, className: "flex items-center gap-1.5 " + (liked ? "text-red-500" : "hover:text-red-500") },
                 React.createElement("i", { className: (liked ? "fa-solid" : "fa-regular") + " fa-heart" }),
@@ -1241,13 +1384,48 @@ function PostCard({ post, go }) {
                 React.createElement("i", { className: "fa-regular fa-comment" }),
                 " ",
                 commentsCount),
-            React.createElement("button", { onClick: share, className: "flex items-center gap-1.5 hover:text-emerald-500" },
-                React.createElement("i", { className: "fa-regular fa-share-from-square" }),
-                " ",
-                post.sharesCount || 0),
+            React.createElement("div", { className: "relative" },
+                React.createElement("button", { onClick: () => setShareMenuOpen(v => !v), className: "flex items-center gap-1.5 hover:text-emerald-500" },
+                    React.createElement("i", { className: "fa-regular fa-share-from-square" }),
+                    " ",
+                    sharesCount),
+                shareMenuOpen && (React.createElement("div", { className: "absolute bottom-full right-0 mb-2 bg-white dark:bg-ink-700 shadow-lg rounded-xl border border-slate-100 dark:border-ink-600 z-20 w-64 p-3" },
+                    React.createElement("textarea", { value: shareComment, onChange: e => setShareComment(e.target.value), placeholder: "Say something about this (optional)\u2026", className: "w-full bg-slate-50 dark:bg-ink-800 rounded-lg p-2 text-xs resize-none mb-2", rows: 2 }),
+                    React.createElement("button", { onClick: shareNow, disabled: sharing, className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white text-xs font-semibold py-2 rounded-lg mb-1.5" },
+                        React.createElement("i", { className: "fa-solid fa-share mr-1.5" }),
+                        sharing ? 'Sharing…' : 'Share to Your Timeline'),
+                    React.createElement("button", { onClick: copyLink, className: "w-full bg-slate-100 dark:bg-ink-600 text-xs font-semibold py-2 rounded-lg" },
+                        React.createElement("i", { className: "fa-regular fa-link mr-1.5" }),
+                        "Copy Link")))),
             React.createElement("button", { onClick: toggleBookmark, className: bookmarked ? "text-brand-600" : "hover:text-brand-600" },
                 React.createElement("i", { className: (bookmarked ? "fa-solid" : "fa-regular") + " fa-bookmark" }))),
         showComments && React.createElement(Comments, { postId: post.id, go: go })));
+}
+function SharedPostPreview({ postId, go }) {
+    const [orig, setOrig] = useState(undefined);
+    const [author, setAuthor] = useState(null);
+    useEffect(() => {
+        const unsub = db.collection('posts').doc(postId).onSnapshot(s => setOrig(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setOrig(null));
+        return unsub;
+    }, [postId]);
+    useEffect(() => {
+        if (!(orig === null || orig === void 0 ? void 0 : orig.authorId))
+            return;
+        const unsub = db.collection('users').doc(orig.authorId).onSnapshot(s => setAuthor(s.exists ? s.data() : null));
+        return unsub;
+    }, [orig === null || orig === void 0 ? void 0 : orig.authorId]);
+    if (orig === undefined)
+        return React.createElement("div", { className: "border border-slate-100 dark:border-ink-700 rounded-xl p-3 mb-2 text-xs text-slate-400" }, "Loading shared post\u2026");
+    if (orig === null)
+        return React.createElement("div", { className: "border border-slate-100 dark:border-ink-700 rounded-xl p-3 mb-2 text-xs text-slate-400" }, "This post is no longer available.");
+    return React.createElement("div", { onClick: () => go({ name: 'profile', uid: orig.authorId }), className: "border border-slate-200 dark:border-ink-700 rounded-xl p-3 mb-2 cursor-pointer" },
+        React.createElement("div", { className: "flex items-center gap-2 mb-1.5" },
+            React.createElement(Avatar, { user: author, size: 7 }),
+            React.createElement("div", null,
+                React.createElement("p", { className: "font-semibold text-xs" }, author ? author.displayName : '…'),
+                React.createElement("p", { className: "text-[11px] text-slate-400" }, timeAgo(orig.createdAt)))),
+        orig.text && React.createElement("p", { className: "text-sm whitespace-pre-wrap" }, formatRichText(orig.text)),
+        (orig.images || []).length > 0 && React.createElement("img", { src: orig.images[0], loading: "lazy", className: "w-full rounded-lg mt-2 max-h-64 object-cover" }));
 }
 function PostSkeleton() {
     return (React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-4 mb-4" },
@@ -1317,7 +1495,7 @@ function CommentRow({ comment, go }) {
         React.createElement(Avatar, { user: author, size: 7, onClick: () => go({ name: 'profile', uid: comment.authorId }) }),
         React.createElement("div", { className: "bg-slate-50 dark:bg-ink-700 rounded-2xl px-3 py-2 flex-1" },
             React.createElement("p", { className: "text-xs font-semibold" },
-                author.displayName,
+                React.createElement("span", { className: "cursor-pointer", onClick: () => go({ name: 'profile', uid: comment.authorId }) }, author.displayName),
                 " ",
                 React.createElement("span", { className: "text-slate-400 font-normal ml-1" }, timeAgo(comment.createdAt))),
             React.createElement(TaggedLine, { users: comment.taggedUsers, go: go }),
@@ -1394,7 +1572,7 @@ function HomeFeed({ go }) {
         posts.map(p => React.createElement(PostCard, { key: p.id, post: p, go: go }))));
 }
 /* ============================== SEARCH / PEOPLE DIRECTORY ============================== */
-function SearchScreen({ go }) {
+function SearchScreen({ go, route }) {
     const { profile } = useAuth();
     const toast = useToast();
     const [q, setQ] = useState('');
@@ -1402,6 +1580,8 @@ function SearchScreen({ go }) {
     const [busy, setBusy] = useState(false);
     const [allUsers, setAllUsers] = useState(null);
     const [messaging, setMessaging] = useState(null);
+    const [ptab, setPtab] = useState((route === null || route === void 0 ? void 0 : route.tab) || 'suggested');
+    const friendships = useFriendships(profile.id);
     // Live directory of everyone on Zlove, used both as search fallback and as
     // "People you may know" suggestions when the search box is empty.
     useEffect(() => {
@@ -1429,6 +1609,7 @@ function SearchScreen({ go }) {
         }, 300);
         return () => clearTimeout(handle);
     }, [q]);
+    const byId = new Map((allUsers || []).map(u => [u.id, u]));
     const suggestions = (allUsers || [])
         .filter(u => u.id !== profile.id && !u.suspended)
         .filter(u => !(profile.blockedUsers || []).includes(u.id) && !(u.blockedUsers || []).includes(profile.id))
@@ -1438,6 +1619,14 @@ function SearchScreen({ go }) {
                 return bOn - aOn;
             return (a.displayName || '').localeCompare(b.displayName || '');
         });
+    const incomingRequests = (friendships || [])
+        .filter(f => f.status === 'pending' && f.requestedBy !== profile.id)
+        .map(f => byId.get(otherUidOfFriendship(f, profile.id)))
+        .filter(Boolean);
+    const friendUsers = (friendships || [])
+        .filter(f => f.status === 'accepted')
+        .map(f => byId.get(otherUidOfFriendship(f, profile.id)))
+        .filter(Boolean);
     const messageUser = async (u) => {
         setMessaging(u.id);
         try {
@@ -1460,8 +1649,10 @@ function SearchScreen({ go }) {
             React.createElement("p", { className: "text-xs text-slate-400 truncate" },
                 "@",
                 u.username)),
+        React.createElement(FriendActionButton, { meId: profile.id, otherId: u.id, compact: true }),
         React.createElement("button", { onClick: () => messageUser(u), disabled: messaging === u.id, className: "bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 rounded-full w-9 h-9 flex items-center justify-center text-sm shrink-0 disabled:opacity-50" },
             React.createElement("i", { className: "fa-regular fa-paper-plane" }))));
+    const TABS = [['suggested', 'Suggestions'], ['requests', 'Requests' + (incomingRequests.length ? ' (' + incomingRequests.length + ')' : '')], ['friends', 'Friends']];
     return (React.createElement("div", null,
         React.createElement("div", { className: "relative mb-4" },
             React.createElement("i", { className: "fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" }),
@@ -1470,13 +1661,22 @@ function SearchScreen({ go }) {
         q.trim() ? (React.createElement("div", { className: "space-y-2" },
             !busy && results.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-10" }, "No one found with that username."),
             results.map(u => React.createElement(PersonRow, { key: u.id, u: u })))) : (React.createElement("div", null,
-            React.createElement("h2", { className: "font-display text-sm font-bold text-slate-500 mb-3" }, "People you may know"),
-            allUsers === null && React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026"),
-            allUsers !== null && suggestions.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-10" }, "No other users on Zlove yet. Invite someone!"),
-            React.createElement("div", { className: "space-y-2" }, suggestions.map(u => React.createElement(PersonRow, { key: u.id, u: u })))))));
+            React.createElement("div", { className: "flex gap-2 mb-4" }, TABS.map(([k, l]) => (React.createElement("button", { key: k, onClick: () => setPtab(k), className: "flex-1 py-2 rounded-full text-xs font-semibold border " + (ptab === k ? "bg-brand-600 text-white border-brand-600" : "border-slate-200 dark:border-ink-700 text-slate-500") }, l)))),
+            ptab === 'suggested' && (React.createElement("div", null,
+                allUsers === null && React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026"),
+                allUsers !== null && suggestions.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-10" }, "No other users on Zlove yet. Invite someone!"),
+                React.createElement("div", { className: "space-y-2" }, suggestions.map(u => React.createElement(PersonRow, { key: u.id, u: u }))))),
+            ptab === 'requests' && (React.createElement("div", null,
+                friendships === null && React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026"),
+                friendships !== null && incomingRequests.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-10" }, "No pending friend requests."),
+                React.createElement("div", { className: "space-y-2" }, incomingRequests.map(u => React.createElement(PersonRow, { key: u.id, u: u }))))),
+            ptab === 'friends' && (React.createElement("div", null,
+                friendships === null && React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026"),
+                friendships !== null && friendUsers.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-10" }, "No friends yet \u2014 send some requests from Suggestions."),
+                React.createElement("div", { className: "space-y-2" }, friendUsers.map(u => React.createElement(PersonRow, { key: u.id, u: u })))))))));
 }
 /* ============================== NOTIFICATIONS ============================== */
-const NOTIF_TEXT = { like: 'liked your post', comment: 'commented on your post', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you' };
+const NOTIF_TEXT = { like: 'liked your post', comment: 'commented on your post', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request' };
 function NotificationsScreen({ go }) {
     const { profile } = useAuth();
     const [items, setItems] = useState(null);
@@ -1593,6 +1793,19 @@ function ProfileScreen({ uid, go }) {
         const unsub = db.collection('follows').where('followerId', '==', uid).onSnapshot(snap => setFollowingCount(snap.size), () => { });
         return unsub;
     }, [uid]);
+    const friendships = useFriendships(uid);
+    const friendsCount = (friendships || []).filter(f => f.status === 'accepted').length;
+    const friendUids = (friendships || []).filter(f => f.status === 'accepted').map(f => otherUidOfFriendship(f, uid)).slice(0, 9);
+    const [friendUsers, setFriendUsers] = useState([]);
+    useEffect(() => {
+        if (friendUids.length === 0) {
+            setFriendUsers([]);
+            return;
+        }
+        Promise.all(friendUids.map(id => db.collection('users').doc(id).get()))
+            .then(snaps => setFriendUsers(snaps.filter(s => s.exists).map(s => (Object.assign({ id: s.id }, s.data())))))
+            .catch(() => setFriendUsers([]));
+    }, [JSON.stringify(friendUids)]);
     const toggleFollow = async () => {
         const relId = me.id + '_' + uid;
         try {
@@ -1669,6 +1882,10 @@ function ProfileScreen({ uid, go }) {
                         " ",
                         React.createElement("span", { className: "text-slate-400" }, "Posts")),
                     React.createElement("span", null,
+                        React.createElement("b", null, friendsCount),
+                        " ",
+                        React.createElement("span", { className: "text-slate-400" }, "Friends")),
+                    React.createElement("span", null,
                         React.createElement("b", null, followersCount),
                         " ",
                         React.createElement("span", { className: "text-slate-400" }, "Followers")),
@@ -1695,12 +1912,20 @@ function ProfileScreen({ uid, go }) {
                         React.createElement("i", { className: "fa-solid fa-pen mr-2 text-xs" }),
                         "Edit profile"),
                     React.createElement("button", { onClick: () => confirm('Log out of Zlove?') && auth.signOut(), className: "bg-red-50 dark:bg-red-900/20 text-red-500 rounded-xl w-11 h-11 flex items-center justify-center text-sm shrink-0" },
-                        React.createElement("i", { className: "fa-solid fa-arrow-right-from-bracket" })))) : (React.createElement("div", { className: "flex items-center gap-2" },
-                    React.createElement("button", { onClick: toggleFollow, className: "flex-1 rounded-xl py-2.5 text-sm font-semibold " + (following ? "bg-slate-100 dark:bg-ink-700" : "bg-brand-600 text-white") }, following ? 'Following' : 'Follow'),
+                        React.createElement("i", { className: "fa-solid fa-arrow-right-from-bracket" })))) : (React.createElement("div", { className: "flex items-center gap-2 flex-wrap" },
+                    React.createElement(FriendActionButton, { meId: me.id, otherId: uid }),
+                    React.createElement("button", { onClick: toggleFollow, className: "rounded-xl py-2.5 px-3 text-sm font-semibold " + (following ? "bg-slate-100 dark:bg-ink-700" : "bg-slate-100 dark:bg-ink-700") }, following ? 'Following' : 'Follow'),
                     !theyBlockedMe && !iBlockedThem && (React.createElement("button", { onClick: () => go({ name: 'chat', chatId: chatIdFor(me.id, uid), otherUid: uid }), className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center text-sm shrink-0" },
                         React.createElement("i", { className: "fa-regular fa-paper-plane" }))),
                     React.createElement("button", { onClick: toggleBlock, className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center text-sm text-red-500 shrink-0" },
                         React.createElement("i", { className: "fa-solid " + (iBlockedThem ? "fa-user-check" : "fa-ban") })))))),
+                friendUsers.length > 0 && (React.createElement("div", { className: "mt-4 pt-4 border-t border-slate-100 dark:border-ink-700" },
+                    React.createElement("div", { className: "flex items-center justify-between mb-2" },
+                        React.createElement("p", { className: "text-sm font-semibold" }, "Friends"),
+                        React.createElement("p", { className: "text-xs text-slate-400" }, friendsCount + (friendsCount === 1 ? ' friend' : ' friends'))),
+                    React.createElement("div", { className: "grid grid-cols-3 gap-2" }, friendUsers.map(fu => (React.createElement("div", { key: fu.id, onClick: () => go({ name: 'profile', uid: fu.id }), className: "cursor-pointer text-center" },
+                        React.createElement(Avatar, { user: fu, size: 14 }),
+                        React.createElement("p", { className: "text-xs mt-1 truncate" }, fu.displayName || fu.username))))))),
             React.createElement("div", { className: "flex border-t border-slate-100 dark:border-ink-700" }, [['posts', 'Posts'], ['photos', 'Photos']].map(([k, l]) => (React.createElement("button", { key: k, onClick: () => setTab(k), className: "flex-1 py-3 text-sm font-semibold border-b-2 " + (tab === k ? "border-brand-600 text-brand-600" : "border-transparent text-slate-400") }, l))))),
         shownPosts.length === 0 ? (React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, tab === 'photos' ? 'No photos yet.' : 'No posts yet.')) : shownPosts.map(p => React.createElement(PostCard, { key: p.id, post: p, go: go })),
         editing && React.createElement(EditProfileModal, { user: user, onClose: () => setEditing(false) })));
