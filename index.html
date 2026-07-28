@@ -930,7 +930,7 @@ function MainApp({ route, setRoute }) {
     }, [profile.id]);
     const nav = [
         { name: 'home', icon: 'fa-house', label: 'Home' },
-        { name: 'search', icon: 'fa-magnifying-glass', label: 'Search' },
+        { name: 'search', icon: 'fa-user-group', label: 'People' },
         { name: 'messages', icon: 'fa-comment-dots', label: 'Messages', badge: unreadMessages },
         { name: 'notifications', icon: 'fa-bell', label: 'Notifications' },
         { name: 'bookmarks', icon: 'fa-bookmark', label: 'Saved' },
@@ -1317,11 +1317,22 @@ function HomeFeed({ go }) {
             React.createElement("p", null, "No posts yet. Be the first to share something."))), posts === null || posts === void 0 ? void 0 :
         posts.map(p => React.createElement(PostCard, { key: p.id, post: p, go: go }))));
 }
-/* ============================== SEARCH ============================== */
+/* ============================== SEARCH / PEOPLE DIRECTORY ============================== */
 function SearchScreen({ go }) {
+    const { profile } = useAuth();
+    const toast = useToast();
     const [q, setQ] = useState('');
     const [results, setResults] = useState([]);
     const [busy, setBusy] = useState(false);
+    const [allUsers, setAllUsers] = useState(null);
+    const [messaging, setMessaging] = useState(null);
+    // Live directory of everyone on Zlove, used both as search fallback and as
+    // "People you may know" suggestions when the search box is empty.
+    useEffect(() => {
+        const unsub = db.collection('users').limit(200)
+            .onSnapshot(snap => setAllUsers(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setAllUsers([]));
+        return unsub;
+    }, []);
     useEffect(() => {
         if (!q.trim()) {
             setResults([]);
@@ -1330,25 +1341,63 @@ function SearchScreen({ go }) {
         setBusy(true);
         const handle = setTimeout(async () => {
             const lower = q.toLowerCase();
-            const snap = await db.collection('users')
-                .orderBy('username').startAt(lower).endAt(lower + '\uf8ff').limit(20).get();
-            setResults(snap.docs.map(d => (Object.assign({ id: d.id }, d.data()))));
+            try {
+                const snap = await db.collection('users')
+                    .orderBy('username').startAt(lower).endAt(lower + '\uf8ff').limit(20).get();
+                setResults(snap.docs.map(d => (Object.assign({ id: d.id }, d.data()))));
+            }
+            catch (e) {
+                toast(e.message, 'error');
+            }
             setBusy(false);
         }, 300);
         return () => clearTimeout(handle);
     }, [q]);
+    const suggestions = (allUsers || [])
+        .filter(u => u.id !== profile.id && !u.suspended)
+        .filter(u => !(profile.blockedUsers || []).includes(u.id) && !(u.blockedUsers || []).includes(profile.id))
+        .sort((a, b) => {
+            const aOn = isUserOnline(a) ? 1 : 0, bOn = isUserOnline(b) ? 1 : 0;
+            if (aOn !== bOn)
+                return bOn - aOn;
+            return (a.displayName || '').localeCompare(b.displayName || '');
+        });
+    const messageUser = async (u) => {
+        setMessaging(u.id);
+        try {
+            const chatId = await ensureChat(profile.id, u.id);
+            go({ name: 'chat', chatId, otherUid: u.id });
+        }
+        catch (e) {
+            toast(e.message, 'error');
+        }
+        finally {
+            setMessaging(null);
+        }
+    };
+    const PersonRow = ({ u }) => (React.createElement("div", { key: u.id, className: "flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
+        React.createElement("div", { className: "relative cursor-pointer shrink-0", onClick: () => go({ name: 'profile', uid: u.id }) },
+            React.createElement(Avatar, { user: u, size: 10 }),
+            isUserOnline(u) && React.createElement("span", { className: "absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-white dark:border-ink-800" })),
+        React.createElement("div", { className: "flex-1 min-w-0 cursor-pointer", onClick: () => go({ name: 'profile', uid: u.id }) },
+            React.createElement("p", { className: "font-semibold text-sm truncate" }, u.displayName || u.username),
+            React.createElement("p", { className: "text-xs text-slate-400 truncate" },
+                "@",
+                u.username)),
+        React.createElement("button", { onClick: () => messageUser(u), disabled: messaging === u.id, className: "bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 rounded-full w-9 h-9 flex items-center justify-center text-sm shrink-0 disabled:opacity-50" },
+            React.createElement("i", { className: "fa-regular fa-paper-plane" }))));
     return (React.createElement("div", null,
         React.createElement("div", { className: "relative mb-4" },
             React.createElement("i", { className: "fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" }),
             React.createElement("input", { value: q, onChange: e => setQ(e.target.value), placeholder: "Search by username\u2026", className: "w-full pl-11 pr-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" })),
         busy && React.createElement("p", { className: "text-sm text-slate-400" }, "Searching\u2026"),
-        React.createElement("div", { className: "space-y-2" }, results.map(u => (React.createElement("div", { key: u.id, onClick: () => go({ name: 'profile', uid: u.id }), className: "flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700 cursor-pointer hover:border-brand-300" },
-            React.createElement(Avatar, { user: u, size: 10 }),
-            React.createElement("div", null,
-                React.createElement("p", { className: "font-semibold text-sm" }, u.displayName),
-                React.createElement("p", { className: "text-xs text-slate-400" },
-                    "@",
-                    u.username))))))));
+        q.trim() ? (React.createElement("div", { className: "space-y-2" },
+            !busy && results.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-10" }, "No one found with that username."),
+            results.map(u => React.createElement(PersonRow, { key: u.id, u: u })))) : (React.createElement("div", null,
+            React.createElement("h2", { className: "font-display text-sm font-bold text-slate-500 mb-3" }, "People you may know"),
+            allUsers === null && React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026"),
+            allUsers !== null && suggestions.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-10" }, "No other users on Zlove yet. Invite someone!"),
+            React.createElement("div", { className: "space-y-2" }, suggestions.map(u => React.createElement(PersonRow, { key: u.id, u: u })))))));
 }
 /* ============================== NOTIFICATIONS ============================== */
 const NOTIF_TEXT = { like: 'liked your post', comment: 'commented on your post', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you' };
