@@ -1981,7 +1981,7 @@ function ChatWindow({ chatId, otherUid, go }) {
         return React.createElement("div", { className: "p-6" },
             React.createElement(PostSkeleton, null));
     const visibleMessages = (messages || []).filter(m => !(m.deletedFor || []).includes(profile.id));
-    return (React.createElement("div", { className: "flex flex-col bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 md:rounded-2xl overflow-hidden", style: { height: 'calc(100vh - 1px)' } },
+    return (React.createElement("div", { className: "flex flex-col bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 md:rounded-2xl overflow-hidden h-[calc(100dvh-7.25rem)] md:h-[calc(100vh-2rem)]" },
         React.createElement("div", { className: "flex items-center gap-3 px-4 py-3 border-b border-slate-100 dark:border-ink-700 shrink-0" },
             React.createElement("button", { onClick: () => go({ name: 'messages' }), className: "text-slate-400 md:hidden" },
                 React.createElement("i", { className: "fa-solid fa-arrow-left" })),
