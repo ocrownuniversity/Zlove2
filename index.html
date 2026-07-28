@@ -194,6 +194,82 @@ async function uploadProfileImage(uid, file, kind) {
 function chatIdFor(a, b) { return [a, b].sort().join('_'); }
 const REACTION_EMOJIS = ['❤️', '👍', '😂', '😮', '😢', '😡'];
 const EMOJI_PICKER_SET = ['😀', '😂', '😍', '🥰', '😊', '😉', '😎', '🤔', '😢', '😭', '😡', '👍', '👎', '👏', '🙏', '🔥', '🎉', '❤️', '💯', '✨', '😴', '🤗', '😅', '🙌'];
+const POST_BG_STYLES = [
+    { id: 'grad-purple', className: 'bg-gradient-to-br from-fuchsia-500 to-purple-700' },
+    { id: 'grad-sunset', className: 'bg-gradient-to-br from-orange-400 to-pink-600' },
+    { id: 'grad-ocean', className: 'bg-gradient-to-br from-cyan-400 to-blue-700' },
+    { id: 'grad-forest', className: 'bg-gradient-to-br from-emerald-400 to-teal-700' },
+    { id: 'grad-fire', className: 'bg-gradient-to-br from-red-500 to-amber-500' },
+    { id: 'grad-night', className: 'bg-gradient-to-br from-slate-800 to-indigo-900' },
+    { id: 'grad-candy', className: 'bg-gradient-to-br from-pink-400 to-violet-500' },
+    { id: 'solid-red', className: 'bg-red-500' },
+    { id: 'solid-blue', className: 'bg-blue-600' },
+    { id: 'solid-black', className: 'bg-slate-900' },
+];
+function bgStyleClass(id) { var _a; return ((_a = POST_BG_STYLES.find(s => s.id === id)) === null || _a === void 0 ? void 0 : _a.className) || ''; }
+// Renders **bold** markdown spans and @username mentions as styled inline nodes.
+function formatRichText(text) {
+    if (!text)
+        return null;
+    const parts = String(text).split(/(\*\*[^*]+\*\*|@[a-zA-Z0-9_.]+)/g).filter(p => p !== '');
+    return parts.map((part, i) => {
+        if (part.length > 4 && part.startsWith('**') && part.endsWith('**')) {
+            return React.createElement('b', { key: i }, part.slice(2, -2));
+        }
+        if (part.startsWith('@') && part.length > 1) {
+            return React.createElement('span', { key: i, className: 'text-brand-600 dark:text-brand-400 font-semibold' }, part);
+        }
+        return part;
+    });
+}
+// Small "with @a, @b" line shown under an author's name when a post/comment tags people.
+function TaggedLine({ users, go }) {
+    if (!(users === null || users === void 0 ? void 0 : users.length))
+        return null;
+    return React.createElement("p", { className: "text-xs text-slate-400" }, "with ", users.map((u, i) => (React.createElement(React.Fragment, { key: u.uid },
+        i > 0 && ', ',
+        React.createElement("span", { onClick: (e) => { e.stopPropagation(); go({ name: 'profile', uid: u.uid }); }, className: "text-brand-600 dark:text-brand-400 font-semibold cursor-pointer" }, "@" + u.username)))));
+}
+// Search-and-select popover for tagging any user in a post or comment.
+function TagPeoplePicker({ selected, onChange, onClose }) {
+    const [q, setQ] = useState('');
+    const [results, setResults] = useState([]);
+    useEffect(() => {
+        if (!q.trim()) {
+            setResults([]);
+            return;
+        }
+        const handle = setTimeout(async () => {
+            const lower = q.toLowerCase();
+            const snap = await db.collection('users').orderBy('username').startAt(lower).endAt(lower + '\uf8ff').limit(15).get();
+            setResults(snap.docs.map(d => (Object.assign({ id: d.id }, d.data()))));
+        }, 300);
+        return () => clearTimeout(handle);
+    }, [q]);
+    const isSelected = (uid) => selected.some(s => s.uid === uid);
+    const toggle = (u) => {
+        if (isSelected(u.id))
+            onChange(selected.filter(s => s.uid !== u.id));
+        else
+            onChange([...selected, { uid: u.id, username: u.username, displayName: u.displayName }]);
+    };
+    const header = React.createElement("div", { className: "flex items-center justify-between mb-2" }, React.createElement("p", { className: "text-xs font-semibold text-slate-500" }, "Tag people"), React.createElement("button", { onClick: onClose, className: "text-brand-600 text-xs font-semibold" }, "Done"));
+    const searchInput = React.createElement("input", { value: q, onChange: e => setQ(e.target.value), placeholder: "Search username\u2026", className: "w-full px-3 py-1.5 rounded-full bg-slate-50 dark:bg-ink-800 text-sm mb-2 focus:outline-none" });
+    const chips = selected.length > 0 && React.createElement("div", { className: "flex flex-wrap gap-1 mb-2" }, selected.map(s => React.createElement("span", { key: s.uid, className: "bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 text-xs px-2 py-0.5 rounded-full flex items-center gap-1" }, "@" + s.username, React.createElement("button", { onClick: () => onChange(selected.filter(x => x.uid !== s.uid)), className: "ml-0.5" }, "\u2715"))));
+    const resultRows = results.map(u => React.createElement("div", { key: u.id, onClick: () => toggle(u), className: "flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-slate-50 dark:hover:bg-ink-600 " + (isSelected(u.id) ? "bg-brand-50 dark:bg-brand-900/20" : "") }, React.createElement(Avatar, { user: u, size: 6 }), React.createElement("div", null, React.createElement("p", { className: "text-xs font-semibold" }, u.displayName), React.createElement("p", { className: "text-[10px] text-slate-400" }, "@" + u.username))));
+    const resultsBox = React.createElement("div", { className: "max-h-48 overflow-y-auto space-y-1" }, resultRows);
+    return React.createElement("div", { className: "absolute z-30 top-full left-0 mt-1 w-72 max-w-[85vw] bg-white dark:bg-ink-700 border border-slate-100 dark:border-ink-600 rounded-xl shadow-lg p-3" }, header, searchInput, chips, resultsBox);
+}
+// Best-effort notifications for anyone tagged in a post or comment (skips the author themself).
+function notifyTagged(taggedUsers, fromUserId, postId, type) {
+    (taggedUsers || []).forEach(u => {
+        if (u.uid === fromUserId)
+            return;
+        db.collection('notifications').doc(u.uid).collection('items').add({
+            type, fromUserId, postId, read: false, createdAt: FieldValue.serverTimestamp()
+        }).catch(() => { });
+    });
+}
 function isUserOnline(user) {
     if (!user || !user.lastSeen)
         return false;
@@ -914,6 +990,11 @@ function Composer({ onPosted }) {
     const [previews, setPreviews] = useState([]);
     const [busy, setBusy] = useState(false);
     const [progress, setProgress] = useState(0);
+    const [bold, setBold] = useState(false);
+    const [bgStyle, setBgStyle] = useState(null);
+    const [showBg, setShowBg] = useState(false);
+    const [tagged, setTagged] = useState([]);
+    const [showTagPicker, setShowTagPicker] = useState(false);
     const fileRef = useRef();
     const onFiles = (e) => {
         const chosen = Array.from(e.target.files).slice(0, 10 - files.length);
@@ -955,14 +1036,19 @@ function Composer({ onPosted }) {
                 });
                 imageUrls.push(await ref.getDownloadURL());
             }
-            await db.collection('posts').add({
+            const postRef = await db.collection('posts').add({
                 authorId: profile.id, text: text.trim(), images: imageUrls,
+                bold, bgStyle: imageUrls.length ? null : bgStyle, taggedUsers: tagged,
                 createdAt: FieldValue.serverTimestamp(), likesCount: 0, commentsCount: 0, sharesCount: 0
             });
             await db.collection('users').doc(profile.id).update({ postsCount: FieldValue.increment(1) });
+            notifyTagged(tagged, profile.id, postRef.id, 'tag');
             setText('');
             setFiles([]);
             setPreviews([]);
+            setBold(false);
+            setBgStyle(null);
+            setTagged([]);
             toast('Posted!', 'success');
             onPosted && onPosted();
         }
@@ -978,19 +1064,26 @@ function Composer({ onPosted }) {
         React.createElement("div", { className: "flex gap-3" },
             React.createElement(Avatar, { user: profile, size: 10 }),
             React.createElement("div", { className: "flex-1 min-w-0" },
-                React.createElement("textarea", { value: text, onChange: e => setText(e.target.value), placeholder: `What's on your mind, ${(_a = profile.displayName) === null || _a === void 0 ? void 0 : _a.split(' ')[0]}?`, className: "w-full resize-none bg-transparent text-sm py-2 focus:outline-none min-h-[44px]", rows: 2 }),
+                bgStyle ? (React.createElement("textarea", { value: text, onChange: e => setText(e.target.value), placeholder: "What's on your mind?", className: `w-full resize-none rounded-xl text-white text-lg font-bold text-center placeholder-white/70 focus:outline-none min-h-[160px] p-6 ${bgStyleClass(bgStyle)} ${bold ? '' : 'font-bold'}`, rows: 5 })) : (React.createElement("textarea", { value: text, onChange: e => setText(e.target.value), placeholder: `What's on your mind, ${(_a = profile.displayName) === null || _a === void 0 ? void 0 : _a.split(' ')[0]}?`, className: "w-full resize-none bg-transparent text-sm py-2 focus:outline-none min-h-[44px] " + (bold ? 'font-bold' : ''), rows: 2 })),
                 previews.length > 0 && (React.createElement("div", { className: "grid grid-cols-3 gap-2 mb-2" }, previews.map((p, i) => (React.createElement("div", { key: i, className: "relative rounded-lg overflow-hidden aspect-square group" },
                     React.createElement("img", { src: p, className: "w-full h-full object-cover" }),
                     React.createElement("button", { onClick: () => removeFile(i), className: "absolute top-1 right-1 bg-black/60 text-white rounded-full w-6 h-6 text-xs" }, "\u2715")))))),
+                showBg && !previews.length && (React.createElement("div", { className: "flex gap-2 overflow-x-auto pb-2 mb-1" }, POST_BG_STYLES.map(s => (React.createElement("button", { key: s.id, onClick: () => setBgStyle(bg => bg === s.id ? null : s.id), className: `w-9 h-9 shrink-0 rounded-full ${s.className} ${bgStyle === s.id ? 'ring-2 ring-offset-2 ring-brand-600 dark:ring-offset-ink-800' : ''}` }))))),
+                tagged.length > 0 && (React.createElement("div", { className: "flex flex-wrap gap-1 mb-1" }, tagged.map(u => (React.createElement("span", { key: u.uid, className: "bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 text-xs px-2 py-0.5 rounded-full" }, "@" + u.username))))),
                 busy && progress > 0 && (React.createElement("div", { className: "w-full h-1.5 bg-slate-100 dark:bg-ink-700 rounded-full overflow-hidden mb-2" },
                     React.createElement("div", { className: "h-full bg-brand-600 transition-all", style: { width: progress + '%' } }))),
                 React.createElement("div", { className: "flex items-center justify-between pt-2 border-t border-slate-100 dark:border-ink-700 mt-1" },
-                    React.createElement("button", { onClick: () => fileRef.current.click(), disabled: files.length >= 10, className: "text-brand-600 dark:text-brand-400 text-sm font-semibold flex items-center gap-1.5 disabled:opacity-40" },
-                        React.createElement("i", { className: "fa-regular fa-image" }),
-                        " Photo (",
-                        files.length,
-                        "/10)"),
-                    React.createElement("input", { ref: fileRef, type: "file", accept: "image/*", multiple: true, hidden: true, onChange: onFiles }),
+                    React.createElement("div", { className: "flex items-center gap-3" },
+                        React.createElement("button", { onClick: () => fileRef.current.click(), disabled: files.length >= 10 || !!bgStyle, title: "Photo", className: "text-brand-600 dark:text-brand-400 text-sm disabled:opacity-30" },
+                            React.createElement("i", { className: "fa-regular fa-image" })),
+                        React.createElement("button", { onClick: () => setBold(b => !b), title: "Bold", className: "text-sm font-bold w-6 h-6 rounded " + (bold ? "bg-brand-600 text-white" : "text-slate-500 hover:bg-slate-100 dark:hover:bg-ink-700") }, "B"),
+                        React.createElement("button", { onClick: () => setShowBg(v => !v), disabled: files.length > 0, title: "Background color", className: "text-slate-500 disabled:opacity-30" },
+                            React.createElement("i", { className: "fa-solid fa-palette" })),
+                        React.createElement("div", { className: "relative" },
+                            React.createElement("button", { onClick: () => setShowTagPicker(v => !v), title: "Tag people", className: "text-slate-500" },
+                                React.createElement("i", { className: "fa-solid fa-user-tag" })),
+                            showTagPicker && React.createElement(TagPeoplePicker, { selected: tagged, onChange: setTagged, onClose: () => setShowTagPicker(false) })),
+                        React.createElement("input", { ref: fileRef, type: "file", accept: "image/*", multiple: true, hidden: true, onChange: onFiles })),
                     React.createElement("button", { onClick: submit, disabled: busy || (!text.trim() && files.length === 0), className: "bg-brand-600 hover:bg-brand-700 disabled:opacity-40 text-white text-sm font-semibold px-5 py-1.5 rounded-full transition" }, busy ? 'Posting…' : 'Post'))))));
 }
 /* ============================== POST CARD ============================== */
@@ -1101,7 +1194,8 @@ function PostCard({ post, go }) {
                         author.username,
                         " \u00B7 ",
                         timeAgo(post.createdAt),
-                        post.edited ? ' · edited' : ''))),
+                        post.edited ? ' · edited' : ''),
+                    React.createElement(TaggedLine, { users: post.taggedUsers, go: go }))),
             post.authorId === profile.id && (React.createElement("div", { className: "relative" },
                 React.createElement("button", { onClick: () => setMenuOpen(m => !m), className: "text-slate-400 px-2" },
                     React.createElement("i", { className: "fa-solid fa-ellipsis" })),
@@ -1112,7 +1206,8 @@ function PostCard({ post, go }) {
             React.createElement("textarea", { value: editText, onChange: e => setEditText(e.target.value), className: "w-full bg-transparent border border-slate-200 dark:border-ink-600 rounded-lg p-2 text-sm", rows: 3 }),
             React.createElement("div", { className: "flex gap-2 mt-1" },
                 React.createElement("button", { onClick: saveEdit, className: "text-xs font-semibold text-brand-600" }, "Save"),
-                React.createElement("button", { onClick: () => setEditing(false), className: "text-xs font-semibold text-slate-400" }, "Cancel")))) : post.text && React.createElement("p", { className: "text-sm whitespace-pre-wrap mb-2 leading-relaxed" }, post.text),
+                React.createElement("button", { onClick: () => setEditing(false), className: "text-xs font-semibold text-slate-400" }, "Cancel")))) : post.text && (post.bgStyle && !((_a = post.images) === null || _a === void 0 ? void 0 : _a.length) ? (React.createElement("div", { className: `rounded-xl mb-2 p-6 min-h-[160px] flex items-center justify-center text-center ${bgStyleClass(post.bgStyle)}` },
+            React.createElement("p", { className: "text-white text-xl font-bold whitespace-pre-wrap" }, formatRichText(post.text)))) : (React.createElement("p", { className: "text-sm whitespace-pre-wrap mb-2 leading-relaxed " + (post.bold ? 'font-bold' : '') }, formatRichText(post.text)))),
         ((_a = post.images) === null || _a === void 0 ? void 0 : _a.length) > 0 && (React.createElement("div", { className: `grid gap-1 rounded-xl overflow-hidden mb-2 ${post.images.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}` }, post.images.map((img, i) => React.createElement("img", { key: i, src: img, loading: "lazy", className: "w-full object-cover max-h-[420px]" })))),
         React.createElement("div", { className: "flex items-center justify-between text-slate-500 text-sm pt-2 border-t border-slate-100 dark:border-ink-700" },
             React.createElement("button", { onClick: toggleLike, className: "flex items-center gap-1.5 " + (liked ? "text-red-500" : "hover:text-red-500") },
@@ -1146,6 +1241,9 @@ function Comments({ postId, go }) {
     const { profile } = useAuth();
     const [comments, setComments] = useState([]);
     const [text, setText] = useState('');
+    const [bold, setBold] = useState(false);
+    const [tagged, setTagged] = useState([]);
+    const [showTagPicker, setShowTagPicker] = useState(false);
     useEffect(() => {
         const unsub = db.collection('posts').doc(postId).collection('comments').orderBy('createdAt', 'asc').limit(100)
             .onSnapshot(snap => setComments(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))));
@@ -1157,7 +1255,7 @@ function Comments({ postId, go }) {
         const postSnap = await db.collection('posts').doc(postId).get();
         const post = postSnap.data();
         await db.collection('posts').doc(postId).collection('comments').add({
-            authorId: profile.id, text: text.trim(), createdAt: FieldValue.serverTimestamp()
+            authorId: profile.id, text: text.trim(), bold, taggedUsers: tagged, createdAt: FieldValue.serverTimestamp()
         });
         // Best-effort denormalized counter (see PostCard's live commentsCount for why).
         db.collection('posts').doc(postId).update({ commentsCount: FieldValue.increment(1) }).catch(() => { });
@@ -1166,14 +1264,23 @@ function Comments({ postId, go }) {
                 type: 'comment', fromUserId: profile.id, postId, read: false, createdAt: FieldValue.serverTimestamp()
             });
         }
+        notifyTagged(tagged, profile.id, postId, 'tag');
         setText('');
+        setBold(false);
+        setTagged([]);
     };
     return (React.createElement("div", { className: "mt-3 pt-3 border-t border-slate-100 dark:border-ink-700 space-y-3" },
         comments.map(c => React.createElement(CommentRow, { key: c.id, comment: c, go: go })),
+        tagged.length > 0 && (React.createElement("div", { className: "flex flex-wrap gap-1 pl-9" }, tagged.map(u => (React.createElement("span", { key: u.uid, className: "bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 text-xs px-2 py-0.5 rounded-full" }, "@" + u.username))))),
         React.createElement("div", { className: "flex items-center gap-2" },
             React.createElement(Avatar, { user: profile, size: 7 }),
-            React.createElement("input", { value: text, onChange: e => setText(e.target.value), onKeyDown: e => e.key === 'Enter' && submit(), placeholder: "Write a comment\u2026", className: "flex-1 bg-slate-50 dark:bg-ink-700 rounded-full px-4 py-1.5 text-sm" }),
-            React.createElement("button", { onClick: submit, className: "text-brand-600 text-sm font-semibold" }, "Send"))));
+            React.createElement("input", { value: text, onChange: e => setText(e.target.value), onKeyDown: e => e.key === 'Enter' && submit(), placeholder: "Write a comment\u2026", className: "flex-1 bg-slate-50 dark:bg-ink-700 rounded-full px-4 py-1.5 text-sm " + (bold ? 'font-bold' : '') }),
+            React.createElement("button", { onClick: () => setBold(b => !b), title: "Bold", className: "text-xs font-bold w-6 h-6 rounded shrink-0 " + (bold ? "bg-brand-600 text-white" : "text-slate-500 hover:bg-slate-100 dark:hover:bg-ink-700") }, "B"),
+            React.createElement("div", { className: "relative shrink-0" },
+                React.createElement("button", { onClick: () => setShowTagPicker(v => !v), title: "Tag people", className: "text-slate-500" },
+                    React.createElement("i", { className: "fa-solid fa-user-tag" })),
+                showTagPicker && React.createElement(TagPeoplePicker, { selected: tagged, onChange: setTagged, onClose: () => setShowTagPicker(false) })),
+            React.createElement("button", { onClick: submit, className: "text-brand-600 text-sm font-semibold shrink-0" }, "Send"))));
 }
 function CommentRow({ comment, go }) {
     const [author, setAuthor] = useState(null);
@@ -1190,7 +1297,8 @@ function CommentRow({ comment, go }) {
                 author.displayName,
                 " ",
                 React.createElement("span", { className: "text-slate-400 font-normal ml-1" }, timeAgo(comment.createdAt))),
-            React.createElement("p", { className: "text-sm" }, comment.text))));
+            React.createElement(TaggedLine, { users: comment.taggedUsers, go: go }),
+            React.createElement("p", { className: "text-sm " + (comment.bold ? 'font-bold' : '') }, formatRichText(comment.text)))));
 }
 /* ============================== HOME FEED ============================== */
 function HomeFeed({ go }) {
@@ -1243,7 +1351,7 @@ function SearchScreen({ go }) {
                     u.username))))))));
 }
 /* ============================== NOTIFICATIONS ============================== */
-const NOTIF_TEXT = { like: 'liked your post', comment: 'commented on your post', follow: 'started following you', share: 'shared your post', message: 'sent you a message' };
+const NOTIF_TEXT = { like: 'liked your post', comment: 'commented on your post', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you' };
 function NotificationsScreen({ go }) {
     const { profile } = useAuth();
     const [items, setItems] = useState(null);
