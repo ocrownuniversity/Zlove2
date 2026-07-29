@@ -55,9 +55,11 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js" onload="window.__zloveStatus.firebaseStorage='ok'" onerror="window.__zloveStatus.firebaseStorage='failed'"></script>
 
 <style>
-  html { scroll-behavior: smooth; }
-  body { font-family: 'Inter', sans-serif; }
+  html { scroll-behavior: smooth; font-size: 118%; }
+  body { font-family: 'Inter', sans-serif; font-weight: 500; }
   .font-display { font-family: 'Sora', sans-serif; }
+  p, span, li, label, button, input, textarea, select, a { letter-spacing: 0.005em; }
+  h1, h2, h3, .font-display { font-weight: 800 !important; }
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
   .dark ::-webkit-scrollbar-thumb { background: #2a3150; }
@@ -1107,10 +1109,24 @@ function AuthScreen() {
                 React.createElement(Footer, null)))));
 }
 /* ============================== ONBOARDING ============================== */
+const NIGERIAN_STATES = [
+    'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno',
+    'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'FCT (Abuja)', 'Gombe',
+    'Imo', 'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi', 'Kwara', 'Lagos',
+    'Nasarawa', 'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto',
+    'Taraba', 'Yobe', 'Zamfara'
+];
+const NATIONALITIES = [
+    'Nigerian', 'Ghanaian', 'Beninese', 'Cameroonian', 'Togolese', 'Nigerien', 'Chadian',
+    'South African', 'Kenyan', 'Egyptian', 'British', 'American', 'Canadian', 'Other'
+];
 function OnboardingScreen() {
     const { firebaseUser } = useAuth();
     const [username, setUsername] = useState('');
     const [displayName, setDisplayName] = useState(firebaseUser.displayName || '');
+    const [phoneNumber, setPhoneNumber] = useState('');
+    const [state, setState] = useState('');
+    const [nationality, setNationality] = useState('Nigerian');
     const [status, setStatus] = useState(null);
     const [busy, setBusy] = useState(false);
     const toast = useToast();
@@ -1130,6 +1146,10 @@ function OnboardingScreen() {
         e.preventDefault();
         if (status !== 'available' || !displayName.trim())
             return;
+        if (!phoneNumber.trim() || !state || !nationality) {
+            toast('Please fill in phone number, state, and nationality.', 'error');
+            return;
+        }
         setBusy(true);
         try {
             const uname = username.toLowerCase();
@@ -1140,7 +1160,8 @@ function OnboardingScreen() {
                     throw new Error('Username was just taken, try another.');
                 tx.set(unameRef, { uid: firebaseUser.uid });
                 tx.set(db.collection('users').doc(firebaseUser.uid), {
-                    username: uname, displayName: displayName.trim(), joinDate: FieldValue.serverTimestamp()
+                    username: uname, displayName: displayName.trim(), joinDate: FieldValue.serverTimestamp(),
+                    phoneNumber: phoneNumber.trim(), state, nationality
                 }, { merge: true });
             });
         }
@@ -1169,6 +1190,15 @@ function OnboardingScreen() {
                 status === 'taken' && React.createElement("span", { className: "text-red-500" },
                     React.createElement("i", { className: "fa-solid fa-xmark mr-1" }),
                     "Already taken")),
+            React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Phone number"),
+            React.createElement("input", { type: "tel", value: phoneNumber, onChange: e => setPhoneNumber(e.target.value.replace(/[^0-9+]/g, '')), required: true, className: "w-full mb-4 mt-1 px-4 py-2.5 rounded-xl border border-slate-200 dark:border-ink-700 bg-transparent text-sm", placeholder: "080XXXXXXXX" }),
+            React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "State"),
+            React.createElement("select", { value: state, onChange: e => setState(e.target.value), required: true, className: "w-full mb-4 mt-1 px-4 py-2.5 rounded-xl border border-slate-200 dark:border-ink-700 bg-transparent text-sm" },
+                React.createElement("option", { value: "" }, "Select your state"),
+                NIGERIAN_STATES.map(s => React.createElement("option", { key: s, value: s }, s))),
+            React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Nationality"),
+            React.createElement("select", { value: nationality, onChange: e => setNationality(e.target.value), required: true, className: "w-full mb-4 mt-1 px-4 py-2.5 rounded-xl border border-slate-200 dark:border-ink-700 bg-transparent text-sm" },
+                NATIONALITIES.map(n => React.createElement("option", { key: n, value: n }, n))),
             React.createElement("button", { disabled: status !== 'available' || busy, type: "submit", className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-40 text-white rounded-xl py-2.5 font-semibold text-sm transition" }, busy ? 'Creating…' : 'Continue'))));
 }
 /* ============================== MAIN APP SHELL ============================== */
@@ -2186,7 +2216,8 @@ function EditProfileModal({ user, onClose }) {
     const [form, setForm] = useState({
         displayName: user.displayName || '', bio: user.bio || '', location: user.location || '',
         website: user.website || '', occupation: user.occupation || '', gender: user.gender || '',
-        dob: user.dob || '', relationshipStatus: user.relationshipStatus || ''
+        dob: user.dob || '', relationshipStatus: user.relationshipStatus || '',
+        phoneNumber: user.phoneNumber || '', state: user.state || '', nationality: user.nationality || ''
     });
     const [photoFile, setPhotoFile] = useState(null);
     const [coverFile, setCoverFile] = useState(null);
@@ -2238,6 +2269,19 @@ function EditProfileModal({ user, onClose }) {
                 ].map(([key, label, type]) => (React.createElement("div", { key: key },
                     React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, label),
                     type === 'textarea' ? (React.createElement("textarea", { value: form[key], onChange: e => set(key, e.target.value), rows: 3, className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" })) : (React.createElement("input", { type: type, value: form[key], onChange: e => set(key, e.target.value), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }))))),
+                React.createElement("div", null,
+                    React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Phone number"),
+                    React.createElement("input", { type: "tel", value: form.phoneNumber, onChange: e => set('phoneNumber', e.target.value.replace(/[^0-9+]/g, '')), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" })),
+                React.createElement("div", null,
+                    React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "State"),
+                    React.createElement("select", { value: form.state, onChange: e => set('state', e.target.value), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" },
+                        React.createElement("option", { value: "" }, "Select your state"),
+                        NIGERIAN_STATES.map(s => React.createElement("option", { key: s, value: s }, s)))),
+                React.createElement("div", null,
+                    React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Nationality"),
+                    React.createElement("select", { value: form.nationality, onChange: e => set('nationality', e.target.value), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" },
+                        React.createElement("option", { value: "" }, "Prefer not to say"),
+                        NATIONALITIES.map(n => React.createElement("option", { key: n, value: n }, n)))),
                 React.createElement(DobPicker, { value: form.dob, onChange: v => set('dob', v) }),
                 React.createElement("div", null,
                     React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Gender"),
@@ -2253,8 +2297,15 @@ function EditProfileModal({ user, onClose }) {
                         React.createElement("option", { value: "" }, "Prefer not to say"),
                         React.createElement("option", null, "Single"),
                         React.createElement("option", null, "In a relationship"),
+                        React.createElement("option", null, "Engaged"),
                         React.createElement("option", null, "Married"),
-                        React.createElement("option", null, "It's complicated"))),
+                        React.createElement("option", null, "In a civil partnership"),
+                        React.createElement("option", null, "In a domestic partnership"),
+                        React.createElement("option", null, "In an open relationship"),
+                        React.createElement("option", null, "It's complicated"),
+                        React.createElement("option", null, "Separated"),
+                        React.createElement("option", null, "Divorced"),
+                        React.createElement("option", null, "Widowed"))),
                 React.createElement("div", { className: "pt-2 border-t border-slate-100 dark:border-ink-700" },
                     React.createElement("p", { className: "text-xs font-semibold text-slate-500 mb-2" }, "Legal & support"),
                     React.createElement("div", { className: "flex flex-wrap gap-x-4 gap-y-1.5 text-xs" }, Object.keys(LEGAL_PAGES).map(k => (React.createElement(PageLink, { key: k, pageKey: k, className: "text-brand-600 dark:text-brand-400 hover:underline" }, LEGAL_PAGES[k].title)))))),
