@@ -244,17 +244,45 @@ const POST_BG_STYLES = [
 function bgStyleClass(id) { var _a; return ((_a = POST_BG_STYLES.find(s => s.id === id)) === null || _a === void 0 ? void 0 : _a.className) || ''; }
 // Curated picks for the "Music" attachment on a post — title/artist only, no playback.
 const MUSIC_LIBRARY = [
-    { id: 'm1', title: 'Sunset Drive', artist: 'Wave Riders' },
-    { id: 'm2', title: 'City Lights', artist: 'Nova Sound' },
-    { id: 'm3', title: 'Golden Hour', artist: 'Amara' },
-    { id: 'm4', title: 'Higher', artist: 'Kelo & Ben' },
-    { id: 'm5', title: 'Ocean Drift', artist: 'Milo James' },
-    { id: 'm6', title: 'Afrobeat Nights', artist: 'DJ Tunde' },
-    { id: 'm7', title: 'Still Here', artist: 'Rina' },
-    { id: 'm8', title: 'Good Vibes Only', artist: 'The Collective' },
-    { id: 'm9', title: 'Homecoming', artist: 'Zaha' },
-    { id: 'm10', title: 'Electric Feel', artist: 'Neon Drift' },
+    { id: 'm1', title: 'Sunset Drive', artist: 'Wave Riders', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3' },
+    { id: 'm2', title: 'City Lights', artist: 'Nova Sound', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3' },
+    { id: 'm3', title: 'Golden Hour', artist: 'Amara', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3' },
+    { id: 'm4', title: 'Higher', artist: 'Kelo & Ben', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3' },
+    { id: 'm5', title: 'Ocean Drift', artist: 'Milo James', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3' },
+    { id: 'm6', title: 'Afrobeat Nights', artist: 'DJ Tunde', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3' },
+    { id: 'm7', title: 'Still Here', artist: 'Rina', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3' },
+    { id: 'm8', title: 'Good Vibes Only', artist: 'The Collective', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3' },
+    { id: 'm9', title: 'Homecoming', artist: 'Zaha', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-9.mp3' },
+    { id: 'm10', title: 'Electric Feel', artist: 'Neon Drift', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3' },
 ];
+// Small reusable play/pause control used anywhere a music track needs to actually be audible
+// (music picker preview, composer badge, feed post badge). Only one track plays at a time.
+function MusicPlayBadge({ music, size }) {
+    const [playing, setPlaying] = useState(false);
+    const audioRef = useRef(null);
+    useEffect(() => () => { var _a; return (_a = audioRef.current) === null || _a === void 0 ? void 0 : _a.pause(); }, []);
+    const toggle = (e) => {
+        e.stopPropagation();
+        const el = audioRef.current;
+        if (!el)
+            return;
+        if (playing) {
+            el.pause();
+            setPlaying(false);
+        }
+        else {
+            document.querySelectorAll('audio[data-blueface-music]').forEach(a => { if (a !== el)
+                a.pause(); });
+            el.play().catch(() => { });
+            setPlaying(true);
+        }
+    };
+    const dim = size || 5;
+    return React.createElement(React.Fragment, null,
+        React.createElement("button", { onClick: toggle, title: playing ? 'Pause' : 'Play', className: `w-${dim} h-${dim} rounded-full bg-pink-600 text-white flex items-center justify-center shrink-0`, style: { width: dim * 4, height: dim * 4 } },
+            React.createElement("i", { className: (playing ? "fa-solid fa-pause" : "fa-solid fa-play") + " text-[9px]" })),
+        React.createElement("audio", { ref: audioRef, src: music.url, "data-blueface-music": "true", preload: "none", onEnded: () => setPlaying(false), onPause: () => setPlaying(false) }));
+}
 // "Feeling / activity" options shown when a user taps that item in the composer.
 const FEELINGS_LIST = [
     { emoji: '😊', label: 'happy', type: 'feeling' },
@@ -298,11 +326,12 @@ function MusicPicker({ onSelect, onClose }) {
     return React.createElement(BottomSheet, { title: "Add music", onClose: onClose },
         React.createElement("input", { autoFocus: true, value: q, onChange: e => setQ(e.target.value), placeholder: "Search songs or artists\u2026", className: "w-full px-3 py-2 rounded-full bg-slate-50 dark:bg-ink-700 text-sm mb-2 mx-1 focus:outline-none" }),
         results.length === 0 && React.createElement("p", { className: "text-center text-sm text-slate-400 py-6" }, "No songs found"),
-        results.map(m => React.createElement("button", { key: m.id, onClick: () => onSelect(m), className: "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-ink-700 text-left" },
+        results.map(m => React.createElement("div", { key: m.id, onClick: () => onSelect(m), className: "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-ink-700 text-left cursor-pointer" },
             React.createElement("span", { className: "w-9 h-9 rounded-full bg-pink-50 dark:bg-pink-900/20 text-pink-500 flex items-center justify-center shrink-0" }, React.createElement("i", { className: "fa-solid fa-music" })),
-            React.createElement("span", null,
-                React.createElement("p", { className: "text-sm font-semibold" }, m.title),
-                React.createElement("p", { className: "text-xs text-slate-400" }, m.artist)))));
+            React.createElement("span", { className: "flex-1 min-w-0" },
+                React.createElement("p", { className: "text-sm font-semibold truncate" }, m.title),
+                React.createElement("p", { className: "text-xs text-slate-400 truncate" }, m.artist)),
+            React.createElement(MusicPlayBadge, { music: m }))));
 }
 // "Feeling / activity" picker — two labeled sections, taps to attach to the post being composed.
 function FeelingPicker({ onSelect, onClose }) {
@@ -476,19 +505,32 @@ function TaggedLine({ users, go }) {
         i > 0 && ', ',
         React.createElement("span", { onClick: (e) => { e.stopPropagation(); go({ name: 'profile', uid: u.uid }); }, className: "text-brand-600 dark:text-brand-400 font-semibold cursor-pointer" }, "@" + u.username)))));
 }
-// Search-and-select popover for tagging any user in a post or comment.
+// Search-and-select sheet for tagging any user in a post or comment. Rendered as a full
+// BottomSheet (like Music/Feeling/Location) instead of an absolute-positioned popover, since
+// the popover version could render outside the visible screen depending on where the "Tag
+// people" button sat in the layout — which was why tapping it appeared to do nothing.
 function TagPeoplePicker({ selected, onChange, onClose }) {
     const [q, setQ] = useState('');
     const [results, setResults] = useState([]);
+    const [loading, setLoading] = useState(false);
     useEffect(() => {
         if (!q.trim()) {
             setResults([]);
             return;
         }
+        setLoading(true);
         const handle = setTimeout(async () => {
-            const lower = q.toLowerCase();
-            const snap = await db.collection('users').orderBy('username').startAt(lower).endAt(lower + '\uf8ff').limit(15).get();
-            setResults(snap.docs.map(d => (Object.assign({ id: d.id }, d.data()))));
+            try {
+                const lower = q.toLowerCase();
+                const snap = await db.collection('users').orderBy('username').startAt(lower).endAt(lower + '\uf8ff').limit(15).get();
+                setResults(snap.docs.map(d => (Object.assign({ id: d.id }, d.data()))));
+            }
+            catch (e) {
+                setResults([]);
+            }
+            finally {
+                setLoading(false);
+            }
         }, 300);
         return () => clearTimeout(handle);
     }, [q]);
@@ -499,12 +541,19 @@ function TagPeoplePicker({ selected, onChange, onClose }) {
         else
             onChange([...selected, { uid: u.id, username: u.username, displayName: u.displayName }]);
     };
-    const header = React.createElement("div", { className: "flex items-center justify-between mb-2" }, React.createElement("p", { className: "text-xs font-semibold text-slate-500" }, "Tag people"), React.createElement("button", { onClick: onClose, className: "text-brand-600 text-xs font-semibold" }, "Done"));
-    const searchInput = React.createElement("input", { value: q, onChange: e => setQ(e.target.value), placeholder: "Search username\u2026", className: "w-full px-3 py-1.5 rounded-full bg-slate-50 dark:bg-ink-800 text-sm mb-2 focus:outline-none" });
-    const chips = selected.length > 0 && React.createElement("div", { className: "flex flex-wrap gap-1 mb-2" }, selected.map(s => React.createElement("span", { key: s.uid, className: "bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 text-xs px-2 py-0.5 rounded-full flex items-center gap-1" }, "@" + s.username, React.createElement("button", { onClick: () => onChange(selected.filter(x => x.uid !== s.uid)), className: "ml-0.5" }, "\u2715"))));
-    const resultRows = results.map(u => React.createElement("div", { key: u.id, onClick: () => toggle(u), className: "flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-slate-50 dark:hover:bg-ink-600 " + (isSelected(u.id) ? "bg-brand-50 dark:bg-brand-900/20" : "") }, React.createElement(Avatar, { user: u, size: 6 }), React.createElement("div", null, React.createElement("p", { className: "text-xs font-semibold" }, u.displayName), React.createElement("p", { className: "text-[10px] text-slate-400" }, "@" + u.username))));
-    const resultsBox = React.createElement("div", { className: "max-h-48 overflow-y-auto space-y-1" }, resultRows);
-    return React.createElement("div", { className: "absolute z-30 top-full left-0 mt-1 w-72 max-w-[85vw] bg-white dark:bg-ink-700 border border-slate-100 dark:border-ink-600 rounded-xl shadow-lg p-3" }, header, searchInput, chips, resultsBox);
+    const searchInput = React.createElement("input", { autoFocus: true, value: q, onChange: e => setQ(e.target.value), placeholder: "Search username\u2026", className: "w-full px-3 py-2 rounded-full bg-slate-50 dark:bg-ink-700 text-sm mb-2 mx-1 focus:outline-none" });
+    const chips = selected.length > 0 && React.createElement("div", { className: "flex flex-wrap gap-1 mb-2 px-1" }, selected.map(s => React.createElement("span", { key: s.uid, className: "bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 text-xs px-2 py-0.5 rounded-full flex items-center gap-1" }, "@" + s.username, React.createElement("button", { onClick: () => onChange(selected.filter(x => x.uid !== s.uid)), className: "ml-0.5" }, "\u2715"))));
+    const resultRows = results.map(u => React.createElement("button", { key: u.id, onClick: () => toggle(u), className: "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer hover:bg-slate-50 dark:hover:bg-ink-700 text-left " + (isSelected(u.id) ? "bg-brand-50 dark:bg-brand-900/20" : "") },
+        React.createElement(Avatar, { user: u, size: 9 }),
+        React.createElement("span", { className: "flex-1 min-w-0" }, React.createElement("p", { className: "text-sm font-semibold truncate" }, u.displayName), React.createElement("p", { className: "text-xs text-slate-400 truncate" }, "@" + u.username)),
+        isSelected(u.id) && React.createElement("i", { className: "fa-solid fa-circle-check text-brand-600" })));
+    return React.createElement(BottomSheet, { title: "Tag people", onClose: onClose },
+        searchInput,
+        chips,
+        loading && React.createElement("p", { className: "text-center text-xs text-slate-400 py-4" }, "Searching\u2026"),
+        !loading && q.trim() && results.length === 0 && React.createElement("p", { className: "text-center text-sm text-slate-400 py-6" }, "No matching users"),
+        !loading && !q.trim() && React.createElement("p", { className: "text-center text-xs text-slate-400 py-4" }, "Start typing a username to find friends to tag"),
+        React.createElement("div", { className: "space-y-1" }, resultRows));
 }
 // Best-effort notifications for anyone tagged in a post or comment (skips the author themself).
 function notifyTagged(taggedUsers, fromUserId, postId, type) {
@@ -1698,7 +1747,8 @@ function CreatePostScreen({ go, route }) {
                         showAudiencePicker && (React.createElement("div", { className: "absolute left-0 mt-1 bg-white dark:bg-ink-800 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-700 z-20 w-40" }, AUDIENCE_OPTIONS.map(a => (React.createElement("button", { key: a.id, onClick: () => { setAudience(a.id); setShowAudiencePicker(false); }, className: "w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-ink-700" },
                             React.createElement("i", { className: `fa-solid ${a.icon} w-4 text-slate-400` }),
                             a.label)))))))),
-            bgStyle ? (React.createElement("textarea", { autoFocus: true, value: text, onChange: e => setText(e.target.value), placeholder: "Share a highlight from your day\u2026", className: `w-full resize-none rounded-xl text-white text-xl font-bold text-center placeholder-white/70 focus:outline-none min-h-[260px] p-6 ${bgStyleClass(bgStyle)}`, rows: 6 })) : (React.createElement("textarea", { autoFocus: true, value: text, onChange: e => setText(e.target.value), placeholder: "Share a highlight from your day\u2026", className: "w-full resize-none bg-transparent text-2xl text-slate-500 dark:text-slate-400 focus:outline-none min-h-[160px] " + (bold ? 'font-bold text-slate-900 dark:text-slate-100' : ''), rows: 6 })),
+            bgStyle ? (React.createElement("div", { className: "-mx-4 mb-3" },
+                React.createElement("textarea", { autoFocus: true, value: text, onChange: e => setText(e.target.value), placeholder: "Share a highlight from your day\u2026", className: `w-full resize-none text-white text-2xl font-bold text-center placeholder-white/80 focus:outline-none min-h-[320px] px-8 py-10 ${bgStyleClass(bgStyle)}`, rows: 6 }))) : (React.createElement("textarea", { autoFocus: true, value: text, onChange: e => setText(e.target.value), placeholder: "Share a highlight from your day\u2026", className: "w-full resize-none bg-transparent text-2xl text-slate-500 dark:text-slate-400 focus:outline-none min-h-[160px] " + (bold ? 'font-bold text-slate-900 dark:text-slate-100' : ''), rows: 6 })),
             previews.length > 0 && (React.createElement("div", { className: "grid grid-cols-3 gap-2 mb-3" }, previews.map((p, i) => (React.createElement("div", { key: i, className: "relative rounded-lg overflow-hidden aspect-square group" },
                 React.createElement("img", { src: p, className: "w-full h-full object-cover" }),
                 React.createElement("button", { onClick: () => removeFile(i), className: "absolute top-1 right-1 bg-black/60 text-white rounded-full w-6 h-6 text-xs" }, "\u2715")))))),
@@ -1707,7 +1757,7 @@ function CreatePostScreen({ go, route }) {
                 POST_BG_STYLES.map(s => (React.createElement("button", { key: s.id, onClick: () => setBgStyle(s.id), className: `w-9 h-9 shrink-0 rounded-full ${s.className} ${bgStyle === s.id ? 'ring-2 ring-offset-2 ring-brand-600 dark:ring-offset-ink-900' : ''}` }))))),
             (tagged.length > 0 || music || feeling || location) && (React.createElement("div", { className: "flex flex-wrap gap-1 mb-2" },
                 tagged.map(u => (React.createElement("span", { key: u.uid, className: "bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 text-xs px-2 py-0.5 rounded-full" }, "@" + u.username))),
-                music && (React.createElement("span", { className: "bg-pink-50 dark:bg-pink-900/20 text-pink-600 dark:text-pink-400 text-xs px-2 py-0.5 rounded-full flex items-center gap-1" }, React.createElement("i", { className: "fa-solid fa-music" }), music.title + ' · ' + music.artist, React.createElement("button", { onClick: () => setMusic(null), className: "ml-0.5" }, "\u2715"))),
+                music && (React.createElement("span", { className: "bg-pink-50 dark:bg-pink-900/20 text-pink-600 dark:text-pink-400 text-xs pl-1 pr-2 py-0.5 rounded-full flex items-center gap-1.5" }, React.createElement(MusicPlayBadge, { music: music, size: 4 }), music.title + ' · ' + music.artist, React.createElement("button", { onClick: () => setMusic(null), className: "ml-0.5" }, "\u2715"))),
                 feeling && (React.createElement("span", { className: "bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 text-xs px-2 py-0.5 rounded-full flex items-center gap-1" }, feeling.emoji, ' ' + feeling.label, React.createElement("button", { onClick: () => setFeeling(null), className: "ml-0.5" }, "\u2715"))),
                 location && (React.createElement("span", { className: "bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-xs px-2 py-0.5 rounded-full flex items-center gap-1" }, React.createElement("i", { className: "fa-solid fa-location-dot" }), location, React.createElement("button", { onClick: () => setLocation(''), className: "ml-0.5" }, "\u2715"))))),
             busy && progress > 0 && (React.createElement("div", { className: "w-full h-1.5 bg-slate-100 dark:bg-ink-700 rounded-full overflow-hidden mb-3" },
@@ -1947,7 +1997,7 @@ function PostCard({ post, go }) {
     return (React.createElement("div", { id: 'post-' + post.id, className: "bg-white dark:bg-ink-800 -mx-2 sm:mx-0 rounded-none sm:rounded-2xl border-y sm:border border-slate-100 dark:border-ink-700 mb-2 fade-in overflow-hidden" },
         React.createElement("div", { className: "flex items-start justify-between px-3 sm:px-4 pt-3 mb-2" },
             React.createElement("div", { className: "flex items-center gap-3 cursor-pointer", onClick: () => go({ name: 'profile', uid: post.authorId }) },
-                React.createElement(Avatar, { user: author, size: 10 }),
+                React.createElement(Avatar, { user: author, size: 13 }),
                 React.createElement("div", null,
                     React.createElement("p", { className: "font-bold text-base" }, author.displayName),
                     React.createElement("p", { className: "text-sm text-slate-400" },
@@ -1958,7 +2008,7 @@ function PostCard({ post, go }) {
                         post.edited ? ' · edited' : ''),
                     React.createElement(TaggedLine, { users: post.taggedUsers, go: go }),
                     React.createElement(PostMetaLine, { post: post }),
-                    post.music && React.createElement("p", { className: "text-xs text-brand-600 dark:text-brand-400 flex items-center gap-1 mt-0.5" }, React.createElement("i", { className: "fa-solid fa-music" }), post.music.title + ' · ' + post.music.artist))),
+                    post.music && React.createElement("p", { className: "text-xs text-brand-600 dark:text-brand-400 flex items-center gap-1.5 mt-0.5" }, React.createElement(MusicPlayBadge, { music: post.music, size: 4 }), post.music.title + ' · ' + post.music.artist))),
             React.createElement("div", { className: "relative" },
                 React.createElement("button", { onClick: () => setMenuOpen(m => !m), className: "text-slate-400 px-2" },
                     React.createElement("i", { className: "fa-solid fa-ellipsis text-lg" })),
@@ -1966,13 +2016,18 @@ function PostCard({ post, go }) {
                     post.authorId === profile.id && React.createElement("button", { onClick: () => { setEditing(true); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Edit"),
                     post.authorId === profile.id && React.createElement("button", { onClick: deletePost, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Delete"),
                     React.createElement("button", { onClick: () => { toggleBookmark(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, bookmarked ? 'Remove from saved' : 'Save post'))))),
+        editing ? (React.createElement("div", { className: "px-3 sm:px-4 mb-2" },
+            React.createElement("textarea", { value: editText, onChange: e => setEditText(e.target.value), className: "w-full bg-transparent border border-slate-200 dark:border-ink-600 rounded-lg p-2 text-sm", rows: 3 }),
+            React.createElement("div", { className: "flex gap-2 mt-1" },
+                React.createElement("button", { onClick: saveEdit, className: "text-xs font-semibold text-brand-600" }, "Save"),
+                React.createElement("button", { onClick: () => setEditing(false), className: "text-xs font-semibold text-slate-400" }, "Cancel")))) : (post.text && (post.bgStyle && !((_a = post.images) === null || _a === void 0 ? void 0 : _a.length) ? (
+        // Facebook-style colour-background text post: full-bleed, edge-to-edge with no left/right
+        // gap (this is a direct sibling of the padded content, not nested inside the px-3/px-4
+        // wrapper, which is what previously left visible white space on both sides).
+        React.createElement("div", { className: `w-full min-h-[240px] flex items-center justify-center text-center px-8 py-10 mb-2 ${bgStyleClass(post.bgStyle)}` },
+            React.createElement("p", { className: "text-white text-2xl sm:text-3xl font-bold whitespace-pre-wrap leading-snug" }, formatRichText(post.text)))) : (
         React.createElement("div", { className: "px-3 sm:px-4" },
-            editing ? (React.createElement("div", { className: "mb-2" },
-                React.createElement("textarea", { value: editText, onChange: e => setEditText(e.target.value), className: "w-full bg-transparent border border-slate-200 dark:border-ink-600 rounded-lg p-2 text-sm", rows: 3 }),
-                React.createElement("div", { className: "flex gap-2 mt-1" },
-                    React.createElement("button", { onClick: saveEdit, className: "text-xs font-semibold text-brand-600" }, "Save"),
-                    React.createElement("button", { onClick: () => setEditing(false), className: "text-xs font-semibold text-slate-400" }, "Cancel")))) : post.text && (post.bgStyle && !((_a = post.images) === null || _a === void 0 ? void 0 : _a.length) ? (React.createElement("div", { className: `rounded-xl mb-2 p-6 min-h-[160px] flex items-center justify-center text-center ${bgStyleClass(post.bgStyle)}` },
-                React.createElement("p", { className: "text-white text-xl font-bold whitespace-pre-wrap" }, formatRichText(post.text)))) : (React.createElement(ExpandableText, { text: post.text, limit: 220, className: "text-base whitespace-pre-wrap mb-2 leading-relaxed " + (post.bold ? 'font-bold' : '') })))),
+            React.createElement(ExpandableText, { text: post.text, limit: 220, className: "text-base whitespace-pre-wrap mb-2 leading-relaxed " + (post.bold ? 'font-bold' : '') }))))),
         ((_a = post.images) === null || _a === void 0 ? void 0 : _a.length) > 0 && (React.createElement("div", { className: `grid gap-0.5 overflow-hidden mb-2 ${post.images.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}` }, post.images.map((img, i) => React.createElement("img", { key: i, src: img, loading: "lazy", onClick: () => openLightbox(post.images, i), className: "w-full object-cover max-h-[420px] cursor-zoom-in" })))),
         React.createElement("div", { className: "px-3 sm:px-4" },
             post.sharedPostId && React.createElement(SharedPostPreview, { postId: post.sharedPostId, go: go }),
