@@ -178,6 +178,14 @@ function initials(name) {
         return '?';
     return name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
 }
+function formatCompactCount(n) {
+    n = Number(n || 0);
+    if (n < 1000)
+        return String(n);
+    if (n < 1000000)
+        return (Math.floor(n / 100) / 10) + 'K';
+    return (Math.floor(n / 100000) / 10) + 'M';
+}
 async function compressImage(file, maxDim = 1600, quality = 0.82) {
     return new Promise((resolve, reject) => {
         const img = new Image();
@@ -467,6 +475,13 @@ async function shareToTimeline(originalPost, meId, comment) {
             type: 'share', fromUserId: meId, postId: originalPost.id, read: false, createdAt: FieldValue.serverTimestamp()
         });
     }
+}
+async function uploadCommentImage(postId, uid, file) {
+    const compressed = await compressImage(file, 1280, 0.82);
+    const path = `comments/${postId}/${uid}_${Date.now()}.jpg`;
+    const ref = storage.ref(path);
+    await ref.put(compressed, { contentType: 'image/jpeg' });
+    return ref.getDownloadURL();
 }
 /* ============================== MARKETPLACE ============================== */
 const MARKETPLACE_CATEGORIES = ['Electronics', 'Phones & Tablets', 'Vehicles', 'Property', 'Fashion', 'Home & Furniture', 'Health & Beauty', 'Jobs', 'Services', 'Food & Agriculture', 'Others'];
@@ -1280,7 +1295,7 @@ function MainApp({ route, setRoute }) {
                             React.createElement("i", { className: "fa-solid " + n.icon + " text-[26px] " + (route.name === n.name ? "text-brand-600" : "text-slate-400") }),
                         !!n.badge && React.createElement("span", { className: "absolute top-1 right-1/4 min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center" }, n.badge > 9 ? '9+' : n.badge),
                         route.name === n.name && n.name !== 'profile' && React.createElement("span", { className: "absolute -bottom-0 left-1/2 -translate-x-1/2 w-6 h-[3px] rounded-full bg-brand-600" }))))),
-            React.createElement("main", { className: route.name === 'chat' ? "flex-1 max-w-2xl w-full mx-auto md:px-6 md:py-4" : "flex-1 max-w-2xl w-full mx-auto px-3 md:px-6 py-4 pb-8" },
+            React.createElement("main", { className: route.name === 'chat' ? "flex-1 max-w-2xl w-full mx-auto md:px-6 md:py-4" : "flex-1 max-w-2xl w-full mx-auto px-1.5 md:px-6 py-3 pb-8" },
                 route.name === 'home' && React.createElement(HomeFeed, { go: go }),
                 route.name === 'createPost' && React.createElement(CreatePostScreen, { go: go, route: route }),
                 route.name === 'search' && React.createElement(SearchScreen, { go: go, route: route }),
@@ -1614,7 +1629,7 @@ function PostCard({ post, go }) {
     };
     if (!author)
         return React.createElement(PostSkeleton, null);
-    return (React.createElement("div", { id: 'post-' + post.id, className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-4 mb-4 fade-in" },
+    return (React.createElement("div", { id: 'post-' + post.id, className: "bg-white dark:bg-ink-800 rounded-lg sm:rounded-2xl border border-slate-100 dark:border-ink-700 p-3 sm:p-4 mb-2.5 fade-in" },
         React.createElement("div", { className: "flex items-start justify-between mb-2" },
             React.createElement("div", { className: "flex items-center gap-3 cursor-pointer", onClick: () => go({ name: 'profile', uid: post.authorId }) },
                 React.createElement(Avatar, { user: author, size: 10 }),
@@ -1627,12 +1642,13 @@ function PostCard({ post, go }) {
                         timeAgo(post.createdAt),
                         post.edited ? ' · edited' : ''),
                     React.createElement(TaggedLine, { users: post.taggedUsers, go: go }))),
-            post.authorId === profile.id && (React.createElement("div", { className: "relative" },
+            React.createElement("div", { className: "relative" },
                 React.createElement("button", { onClick: () => setMenuOpen(m => !m), className: "text-slate-400 px-2" },
                     React.createElement("i", { className: "fa-solid fa-ellipsis text-lg" })),
-                menuOpen && (React.createElement("div", { className: "absolute right-0 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-600 z-10 w-32" },
-                    React.createElement("button", { onClick: () => { setEditing(true); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Edit"),
-                    React.createElement("button", { onClick: deletePost, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Delete")))))),
+                menuOpen && (React.createElement("div", { className: "absolute right-0 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-600 z-10 w-44" },
+                    post.authorId === profile.id && React.createElement("button", { onClick: () => { setEditing(true); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Edit"),
+                    post.authorId === profile.id && React.createElement("button", { onClick: deletePost, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Delete"),
+                    React.createElement("button", { onClick: () => { toggleBookmark(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, bookmarked ? 'Remove from saved' : 'Save post'))))),
         editing ? (React.createElement("div", { className: "mb-2" },
             React.createElement("textarea", { value: editText, onChange: e => setEditText(e.target.value), className: "w-full bg-transparent border border-slate-200 dark:border-ink-600 rounded-lg p-2 text-sm", rows: 3 }),
             React.createElement("div", { className: "flex gap-2 mt-1" },
@@ -1641,20 +1657,25 @@ function PostCard({ post, go }) {
             React.createElement("p", { className: "text-white text-xl font-bold whitespace-pre-wrap" }, formatRichText(post.text)))) : (React.createElement("p", { className: "text-base whitespace-pre-wrap mb-2 leading-relaxed " + (post.bold ? 'font-bold' : '') }, formatRichText(post.text)))),
         ((_a = post.images) === null || _a === void 0 ? void 0 : _a.length) > 0 && (React.createElement("div", { className: `grid gap-1 rounded-xl overflow-hidden mb-2 ${post.images.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}` }, post.images.map((img, i) => React.createElement("img", { key: i, src: img, loading: "lazy", className: "w-full object-cover max-h-[420px]" })))),
         post.sharedPostId && React.createElement(SharedPostPreview, { postId: post.sharedPostId, go: go }),
-        React.createElement("div", { className: "flex items-center justify-between text-slate-500 text-base font-semibold pt-2 border-t border-slate-100 dark:border-ink-700" },
-            React.createElement("button", { onClick: toggleLike, className: "flex items-center gap-1.5 " + (liked ? "text-red-500" : "hover:text-red-500") },
-                React.createElement("i", { className: (liked ? "fa-solid" : "fa-regular") + " fa-heart text-lg" }),
-                " ",
-                likesCount),
-            React.createElement("button", { onClick: () => setShowComments(s => !s), className: "flex items-center gap-1.5 hover:text-brand-600" },
+        (likesCount > 0 || commentsCount > 0 || sharesCount > 0) && (React.createElement("div", { className: "flex items-center justify-between pb-2 text-[13px] text-slate-500 dark:text-slate-400" },
+            likesCount > 0 ? (React.createElement("button", { onClick: () => setShowComments(true), className: "flex items-center gap-1.5" },
+                React.createElement("span", { className: "w-[18px] h-[18px] rounded-full bg-brand-600 text-white flex items-center justify-center shrink-0" },
+                    React.createElement("i", { className: "fa-solid fa-thumbs-up text-[9px]" })),
+                formatCompactCount(likesCount))) : React.createElement("span", null),
+            (commentsCount > 0 || sharesCount > 0) && (React.createElement("div", { className: "flex items-center gap-3" },
+                commentsCount > 0 && React.createElement("button", { onClick: () => setShowComments(s => !s), className: "hover:underline" }, formatCompactCount(commentsCount) + (commentsCount === 1 ? ' comment' : ' comments')),
+                sharesCount > 0 && React.createElement("button", { onClick: () => setShareMenuOpen(v => !v), className: "hover:underline" }, formatCompactCount(sharesCount) + (sharesCount === 1 ? ' share' : ' shares')))))),
+        React.createElement("div", { className: "grid grid-cols-3 border-t border-slate-100 dark:border-ink-700 -mx-1" },
+            React.createElement("button", { onClick: toggleLike, className: "flex items-center justify-center gap-2 py-2 mt-1 mx-1 rounded-lg text-[15px] font-semibold transition " + (liked ? "text-brand-600" : "text-slate-500 dark:text-slate-400") + " hover:bg-slate-50 dark:hover:bg-ink-700" },
+                React.createElement("i", { className: (liked ? "fa-solid" : "fa-regular") + " fa-thumbs-up text-lg" }),
+                "Like"),
+            React.createElement("button", { onClick: () => setShowComments(s => !s), className: "flex items-center justify-center gap-2 py-2 mt-1 mx-1 rounded-lg text-[15px] font-semibold text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-ink-700 transition" },
                 React.createElement("i", { className: "fa-regular fa-comment text-lg" }),
-                " ",
-                commentsCount),
-            React.createElement("div", { className: "relative" },
-                React.createElement("button", { onClick: () => setShareMenuOpen(v => !v), className: "flex items-center gap-1.5 hover:text-emerald-500" },
-                    React.createElement("i", { className: "fa-regular fa-share-from-square text-lg" }),
-                    " ",
-                    sharesCount),
+                "Comment"),
+            React.createElement("div", { className: "relative mt-1 mx-1" },
+                React.createElement("button", { onClick: () => setShareMenuOpen(v => !v), className: "w-full flex items-center justify-center gap-2 py-2 rounded-lg text-[15px] font-semibold text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-ink-700 transition" },
+                    React.createElement("i", { className: "fa-solid fa-share text-lg" }),
+                    "Share"),
                 shareMenuOpen && (React.createElement("div", { className: "absolute bottom-full right-0 mb-2 bg-white dark:bg-ink-700 shadow-lg rounded-xl border border-slate-100 dark:border-ink-600 z-20 w-64 p-3" },
                     React.createElement("textarea", { value: shareComment, onChange: e => setShareComment(e.target.value), placeholder: "Say something about this (optional)\u2026", className: "w-full bg-slate-50 dark:bg-ink-800 rounded-lg p-2 text-xs resize-none mb-2", rows: 2 }),
                     React.createElement("button", { onClick: shareNow, disabled: sharing, className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white text-xs font-semibold py-2 rounded-lg mb-1.5" },
@@ -1662,9 +1683,7 @@ function PostCard({ post, go }) {
                         sharing ? 'Sharing…' : 'Share to Your Timeline'),
                     React.createElement("button", { onClick: copyLink, className: "w-full bg-slate-100 dark:bg-ink-600 text-xs font-semibold py-2 rounded-lg" },
                         React.createElement("i", { className: "fa-regular fa-link mr-1.5" }),
-                        "Copy Link")))),
-            React.createElement("button", { onClick: toggleBookmark, className: bookmarked ? "text-brand-600" : "hover:text-brand-600" },
-                React.createElement("i", { className: (bookmarked ? "fa-solid" : "fa-regular") + " fa-bookmark text-lg" }))),
+                        "Copy Link"))))),
         showComments && React.createElement(Comments, { postId: post.id, go: go })));
 }
 function SharedPostPreview({ postId, go }) {
@@ -1704,68 +1723,151 @@ function PostSkeleton() {
         React.createElement("div", { className: "w-2/3 h-3 rounded skeleton" })));
 }
 /* ============================== COMMENTS ============================== */
-function Comments({ postId, go }) {
-    const { profile } = useAuth();
-    const [comments, setComments] = useState([]);
+// Reusable input row used both for top-level comments and for replies (including
+// replies to replies). Supports text, optional bold/tag controls, and a single
+// image attachment that gets uploaded on submit.
+function CommentComposer({ avatarUser, placeholder, onSubmit, onCancel, compact, autoFocus }) {
+    const toast = useToast();
+    const fileRef = useRef();
     const [text, setText] = useState('');
     const [bold, setBold] = useState(false);
     const [tagged, setTagged] = useState([]);
     const [showTagPicker, setShowTagPicker] = useState(false);
+    const [imageFile, setImageFile] = useState(null);
+    const [imagePreview, setImagePreview] = useState(null);
+    const [sending, setSending] = useState(false);
+    const onPickImage = (e) => {
+        const file = e.target.files && e.target.files[0];
+        e.target.value = '';
+        if (!file)
+            return;
+        if (!file.type.startsWith('image/')) {
+            toast('Please choose an image file', 'error');
+            return;
+        }
+        if (file.size > 15 * 1024 * 1024) {
+            toast('Image exceeds 15MB', 'error');
+            return;
+        }
+        setImageFile(file);
+        setImagePreview(URL.createObjectURL(file));
+    };
+    const removeImage = () => { setImageFile(null); setImagePreview(null); };
+    const canSend = !sending && (text.trim() || imageFile);
+    const doSubmit = async () => {
+        if (!canSend)
+            return;
+        setSending(true);
+        try {
+            await onSubmit({ text: text.trim(), bold, tagged, imageFile });
+            setText('');
+            setBold(false);
+            setTagged([]);
+            removeImage();
+        }
+        catch (e) {
+            toast(e.message || 'Could not post comment', 'error');
+        }
+        finally {
+            setSending(false);
+        }
+    };
+    return (React.createElement("div", { className: "flex items-start gap-2" },
+        React.createElement(Avatar, { user: avatarUser, size: compact ? 6 : 7 }),
+        React.createElement("div", { className: "flex-1 min-w-0" },
+            imagePreview && (React.createElement("div", { className: "relative inline-block mb-1.5" },
+                React.createElement("img", { src: imagePreview, className: "h-20 rounded-lg object-cover" }),
+                React.createElement("button", { onClick: removeImage, className: "absolute -top-1.5 -right-1.5 bg-black/70 text-white rounded-full w-5 h-5 text-[10px] flex items-center justify-center" }, "\u2715"))),
+            React.createElement("div", { className: "flex items-center gap-2" },
+                React.createElement("input", { value: text, onChange: e => setText(e.target.value), onKeyDown: e => e.key === 'Enter' && doSubmit(), placeholder: placeholder || "Write a comment\u2026", autoFocus: autoFocus, className: "flex-1 min-w-0 bg-slate-50 dark:bg-ink-700 rounded-full px-4 py-1.5 text-sm " + (bold ? 'font-bold' : '') }),
+                React.createElement("input", { ref: fileRef, type: "file", accept: "image/*", hidden: true, onChange: onPickImage }),
+                React.createElement("button", { onClick: () => { var _a; return (_a = fileRef.current) === null || _a === void 0 ? void 0 : _a.click(); }, title: "Attach photo", className: "text-slate-500 shrink-0" },
+                    React.createElement("i", { className: "fa-regular fa-image" })),
+                !compact && React.createElement("button", { onClick: () => setBold(b => !b), title: "Bold", className: "text-xs font-bold w-6 h-6 rounded shrink-0 " + (bold ? "bg-brand-600 text-white" : "text-slate-500 hover:bg-slate-100 dark:hover:bg-ink-700") }, "B"),
+                !compact && (React.createElement("div", { className: "relative shrink-0" },
+                    React.createElement("button", { onClick: () => setShowTagPicker(v => !v), title: "Tag people", className: "text-slate-500" },
+                        React.createElement("i", { className: "fa-solid fa-user-tag" })),
+                    showTagPicker && React.createElement(TagPeoplePicker, { selected: tagged, onChange: setTagged, onClose: () => setShowTagPicker(false) }))),
+                React.createElement("button", { onClick: doSubmit, disabled: !canSend, className: "text-brand-600 text-sm font-semibold shrink-0 disabled:opacity-40" }, sending ? '…' : 'Send'),
+                onCancel && React.createElement("button", { onClick: onCancel, className: "text-slate-400 text-xs font-semibold shrink-0" }, "Cancel")),
+            tagged.length > 0 && (React.createElement("div", { className: "flex flex-wrap gap-1 mt-1" }, tagged.map(u => (React.createElement("span", { key: u.uid, className: "bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 text-xs px-2 py-0.5 rounded-full" }, "@" + u.username))))))));
+}
+function Comments({ postId, go }) {
+    const { profile } = useAuth();
+    const [comments, setComments] = useState([]);
     useEffect(() => {
-        const unsub = db.collection('posts').doc(postId).collection('comments').orderBy('createdAt', 'asc').limit(100)
+        const unsub = db.collection('posts').doc(postId).collection('comments').orderBy('createdAt', 'asc').limit(500)
             .onSnapshot(snap => setComments(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))));
         return unsub;
     }, [postId]);
-    const submit = async () => {
-        if (!text.trim())
-            return;
+    // Shared by the top-level composer and every reply composer in the thread below.
+    // parentId is null for a top-level comment, or the id of the comment being replied to
+    // (which may itself be a reply, enabling reply-to-reply). replyToUser is passed so we
+    // can notify the specific person being replied to, and prefix the text with @Name.
+    const postComment = async ({ text, bold, tagged, imageFile, parentId, replyToUser }) => {
         const postSnap = await db.collection('posts').doc(postId).get();
         const post = postSnap.data();
+        let image = null;
+        if (imageFile)
+            image = await uploadCommentImage(postId, profile.id, imageFile);
         await db.collection('posts').doc(postId).collection('comments').add({
-            authorId: profile.id, text: text.trim(), bold, taggedUsers: tagged, createdAt: FieldValue.serverTimestamp()
+            authorId: profile.id, text, bold, taggedUsers: tagged || [], image,
+            parentId: parentId || null, replyToDisplayName: (parentId && replyToUser) ? replyToUser.displayName : null,
+            createdAt: FieldValue.serverTimestamp()
         });
         // Best-effort denormalized counter (see PostCard's live commentsCount for why).
         db.collection('posts').doc(postId).update({ commentsCount: FieldValue.increment(1) }).catch(() => { });
-        if (post.authorId !== profile.id) {
-            db.collection('notifications').doc(post.authorId).collection('items').add({
-                type: 'comment', fromUserId: profile.id, postId, read: false, createdAt: FieldValue.serverTimestamp()
+        const notifyUid = parentId && replyToUser ? replyToUser.id : post.authorId;
+        if (notifyUid && notifyUid !== profile.id) {
+            db.collection('notifications').doc(notifyUid).collection('items').add({
+                type: parentId ? 'reply' : 'comment', fromUserId: profile.id, postId, read: false, createdAt: FieldValue.serverTimestamp()
             });
         }
         notifyTagged(tagged, profile.id, postId, 'tag');
-        setText('');
-        setBold(false);
-        setTagged([]);
     };
+    const topLevel = comments.filter(c => !c.parentId);
     return (React.createElement("div", { className: "mt-3 pt-3 border-t border-slate-100 dark:border-ink-700 space-y-3" },
-        comments.map(c => React.createElement(CommentRow, { key: c.id, comment: c, go: go })),
-        tagged.length > 0 && (React.createElement("div", { className: "flex flex-wrap gap-1 pl-9" }, tagged.map(u => (React.createElement("span", { key: u.uid, className: "bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 text-xs px-2 py-0.5 rounded-full" }, "@" + u.username))))),
-        React.createElement("div", { className: "flex items-center gap-2" },
-            React.createElement(Avatar, { user: profile, size: 7 }),
-            React.createElement("input", { value: text, onChange: e => setText(e.target.value), onKeyDown: e => e.key === 'Enter' && submit(), placeholder: "Write a comment\u2026", className: "flex-1 bg-slate-50 dark:bg-ink-700 rounded-full px-4 py-1.5 text-sm " + (bold ? 'font-bold' : '') }),
-            React.createElement("button", { onClick: () => setBold(b => !b), title: "Bold", className: "text-xs font-bold w-6 h-6 rounded shrink-0 " + (bold ? "bg-brand-600 text-white" : "text-slate-500 hover:bg-slate-100 dark:hover:bg-ink-700") }, "B"),
-            React.createElement("div", { className: "relative shrink-0" },
-                React.createElement("button", { onClick: () => setShowTagPicker(v => !v), title: "Tag people", className: "text-slate-500" },
-                    React.createElement("i", { className: "fa-solid fa-user-tag" })),
-                showTagPicker && React.createElement(TagPeoplePicker, { selected: tagged, onChange: setTagged, onClose: () => setShowTagPicker(false) })),
-            React.createElement("button", { onClick: submit, className: "text-brand-600 text-sm font-semibold shrink-0" }, "Send"))));
+        topLevel.map(c => React.createElement(CommentThread, { key: c.id, comment: c, allComments: comments, depth: 0, go: go, postComment: postComment })),
+        React.createElement(CommentComposer, { avatarUser: profile, onSubmit: (p) => postComment(Object.assign({}, p, { parentId: null })) })));
 }
-function CommentRow({ comment, go }) {
+// Renders one comment plus, recursively, every reply beneath it — replies to
+// replies included — so a full threaded conversation renders from a flat
+// Firestore query. Nesting is visually capped after a few levels to stay
+// readable on a phone screen, while still remaining fully threaded in the data.
+function CommentThread({ comment, allComments, depth, go, postComment }) {
+    const { profile } = useAuth();
     const [author, setAuthor] = useState(null);
+    const [replying, setReplying] = useState(false);
     useEffect(() => {
         const unsub = db.collection('users').doc(comment.authorId).onSnapshot(s => setAuthor(s.exists ? s.data() : null));
         return unsub;
     }, [comment.authorId]);
+    const children = allComments.filter(c => c.parentId === comment.id);
+    const indent = Math.min(depth, 3) * 28;
     if (!author)
         return null;
-    return (React.createElement("div", { className: "flex items-start gap-2" },
-        React.createElement(Avatar, { user: author, size: 7, onClick: () => go({ name: 'profile', uid: comment.authorId }) }),
-        React.createElement("div", { className: "bg-slate-50 dark:bg-ink-700 rounded-2xl px-3 py-2 flex-1" },
-            React.createElement("p", { className: "text-xs font-semibold" },
-                React.createElement("span", { className: "cursor-pointer", onClick: () => go({ name: 'profile', uid: comment.authorId }) }, author.displayName),
-                " ",
-                React.createElement("span", { className: "text-slate-400 font-normal ml-1" }, timeAgo(comment.createdAt))),
-            React.createElement(TaggedLine, { users: comment.taggedUsers, go: go }),
-            React.createElement("p", { className: "text-sm " + (comment.bold ? 'font-bold' : '') }, formatRichText(comment.text)))));
+    return (React.createElement("div", { style: { marginLeft: indent } },
+        React.createElement("div", { className: "flex items-start gap-2" },
+            React.createElement(Avatar, { user: author, size: 7, onClick: () => go({ name: 'profile', uid: comment.authorId }) }),
+            React.createElement("div", { className: "flex-1 min-w-0" },
+                React.createElement("div", { className: "bg-slate-50 dark:bg-ink-700 rounded-2xl px-3 py-2 inline-block max-w-full" },
+                    React.createElement("p", { className: "text-xs font-semibold" },
+                        React.createElement("span", { className: "cursor-pointer", onClick: () => go({ name: 'profile', uid: comment.authorId }) }, author.displayName),
+                        " ",
+                        React.createElement("span", { className: "text-slate-400 font-normal ml-1" }, timeAgo(comment.createdAt))),
+                    React.createElement(TaggedLine, { users: comment.taggedUsers, go: go }),
+                    comment.text && (React.createElement("p", { className: "text-sm " + (comment.bold ? 'font-bold' : '') },
+                        comment.replyToDisplayName && React.createElement("span", { className: "text-brand-600 font-semibold mr-1" }, "@" + comment.replyToDisplayName),
+                        formatRichText(comment.text))),
+                    comment.image && React.createElement("img", { src: comment.image, onClick: () => window.open(comment.image, '_blank'), loading: "lazy", className: "mt-1.5 rounded-lg max-h-56 max-w-full object-cover cursor-pointer" })),
+                React.createElement("div", { className: "flex items-center gap-3 mt-1 pl-3 text-[11px] font-semibold text-slate-400" },
+                    React.createElement("button", { onClick: () => setReplying(r => !r), className: "hover:underline" }, "Reply")),
+                replying && (React.createElement("div", { className: "mt-2" },
+                    React.createElement(CommentComposer, { avatarUser: profile, compact: true, autoFocus: true, placeholder: "Reply to " + author.displayName + "\u2026", onCancel: () => setReplying(false), onSubmit: async (p) => {
+                            await postComment(Object.assign({}, p, { parentId: comment.id, replyToUser: author }));
+                            setReplying(false);
+                        } })))),
+        children.length > 0 && (React.createElement("div", { className: "mt-2 space-y-2" }, children.map(c => React.createElement(CommentThread, { key: c.id, comment: c, allComments: allComments, depth: depth + 1, go: go, postComment: postComment })))))));
 }
 /* ============================== HOME FEED ============================== */
 function StoriesRow({ go }) {
