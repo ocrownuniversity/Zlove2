@@ -127,6 +127,31 @@ const db = firebase.firestore();
 const storage = firebase.storage();
 const FieldValue = firebase.firestore.FieldValue;
 const Timestamp = firebase.firestore.Timestamp;
+
+/* ============================== SUPER ADMIN ACCESS ==============================
+   This file is public source code (that's how GitHub Pages / static hosting works),
+   so nothing in this JS file is itself the security boundary — it's just UI logic.
+
+   The REAL, unbypassable security boundary is Firestore Security Rules (see
+   firestore.rules), which hard-code that only request.auth.uid == SUPER_ADMIN_UID
+   below may set/keep the isAdmin field true — enforced on Google's servers, not
+   in this file. You sign in the normal way (same login screen as everyone else);
+   the app checks your UID against SUPER_ADMIN_UID and routes you to the admin
+   panel automatically if it matches and Firestore confirms isAdmin: true.
+*/
+const SUPER_ADMIN_EMAIL = 'Zlove@gmail.com';
+const SUPER_ADMIN_UID = '9XYqDjiCpDfl3xoNNC3OKBTrxVO2'; // <-- your Firebase Auth UID
+const SUPER_ADMIN_SESSION_KEY = 'zlove_sa_session';
+function isSuperAdminEmail(email) {
+    return !!email && email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
+}
+// Writes a row to the audit log. Best-effort: never blocks the admin action it's attached to.
+function logAdminAction(adminUid, adminEmail, action, targetType, targetId, details) {
+    db.collection('auditLog').add({
+        adminUid, adminEmail, action, targetType: targetType || null, targetId: targetId || null,
+        details: details || null, createdAt: FieldValue.serverTimestamp()
+    }).catch(() => { });
+}
 /* ============================== HELPERS ============================== */
 function timeAgo(ts) {
     if (!ts)
@@ -535,6 +560,60 @@ async function setListingPromotion(listing, approve) {
 async function resolveReport(collectionName, reportId) {
     await db.collection(collectionName).doc(reportId).update({ status: 'resolved' });
 }
+/* ============================== SUPER ADMIN: POSTS ============================== */
+async function adminTogglePin(post) { await db.collection('posts').doc(post.id).update({ pinned: !post.pinned }); }
+async function adminToggleFeature(post) { await db.collection('posts').doc(post.id).update({ featured: !post.featured }); }
+async function adminHidePost(post) { await db.collection('posts').doc(post.id).update({ hiddenByAdmin: true, hiddenAt: FieldValue.serverTimestamp() }); }
+async function adminRestorePost(post) { await db.collection('posts').doc(post.id).update({ hiddenByAdmin: false, hiddenAt: null }); }
+async function adminDeletePostPermanently(post) { await db.collection('posts').doc(post.id).delete(); }
+/* ============================== SUPER ADMIN: USERS ============================== */
+async function adminVerifyUser(u) { await db.collection('users').doc(u.id).update({ verified: !u.verified }); }
+async function adminBanUser(u) { await db.collection('users').doc(u.id).update({ banned: true, suspended: true, bannedAt: FieldValue.serverTimestamp() }); }
+async function adminUnbanUser(u) { await db.collection('users').doc(u.id).update({ banned: false, suspended: false, bannedAt: null }); }
+async function adminDeleteUserPermanently(u) { await db.collection('users').doc(u.id).delete(); }
+async function adminUpdateUserFields(uid, fields) { await db.collection('users').doc(uid).update(fields); }
+/* ============================== SUPER ADMIN: REPORTS (generic) ============================== */
+// Generic report bucket for content types that don't have their own dedicated collection yet
+// (listings/sellers keep their existing listingReports/sellerReports collections above).
+async function reportContent(targetType, targetId, targetOwnerId, reporterId, reason) {
+    await db.collection('reports').add({
+        targetType, targetId, targetOwnerId: targetOwnerId || null, reporterId, reason,
+        status: 'open', createdAt: FieldValue.serverTimestamp()
+    });
+}
+/* ============================== SUPER ADMIN: ANNOUNCEMENTS ============================== */
+async function broadcastAnnouncement(adminUid, title, message, audienceUids) {
+    const targets = (audienceUids && audienceUids.length) ? audienceUids : (await db.collection('users').get()).docs.map(d => d.id);
+    await db.collection('announcements').add({
+        title, message, sentBy: adminUid, audienceCount: targets.length, createdAt: FieldValue.serverTimestamp()
+    });
+    // Fan out as a notification item per user (batched in chunks of 400 writes).
+    let batch = db.batch(), count = 0;
+    for (const uid of targets) {
+        const ref = db.collection('notifications').doc(uid).collection('items').doc();
+        batch.set(ref, { type: 'announcement', title, message, read: false, createdAt: FieldValue.serverTimestamp() });
+        count++;
+        if (count % 400 === 0) { await batch.commit(); batch = db.batch(); }
+    }
+    await batch.commit();
+}
+/* ============================== SUPER ADMIN: SITE SETTINGS ============================== */
+async function saveSiteSettings(fields) {
+    await db.collection('settings').doc('site').set(Object.assign({}, fields, { updatedAt: FieldValue.serverTimestamp() }), { merge: true });
+}
+/* ============================== SUPER ADMIN: CSV EXPORT ============================== */
+function exportToCsv(filename, rows) {
+    if (!rows || !rows.length) return;
+    const headers = Object.keys(rows[0]);
+    const escape = (v) => { const s = v === null || v === undefined ? '' : String(v); return '"' + s.replace(/"/g, '""') + '"'; };
+    const csv = [headers.join(',')].concat(rows.map(r => headers.map(h => escape(r[h])).join(','))).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
 /* ============================== CONTEXTS ============================== */
 const AuthContext = createContext(null);
 const ThemeContext = createContext(null);
@@ -818,6 +897,9 @@ function App() {
     const [theme, setTheme] = useState(localStorage.getItem('zlove-theme') || 'light');
     const [route, setRoute] = useState({ name: 'home' });
     const [pageKey, setPageKey] = useState(null);
+    // Admin access: same login as everyone else. If the signed-in UID matches
+    // SUPER_ADMIN_UID, the effect below grants/keeps the admin flag automatically.
+    const [saSession, setSaSession] = useState(sessionStorage.getItem(SUPER_ADMIN_SESSION_KEY) === '1');
     const pagesValue = useMemo(() => ({ openPage: setPageKey, closePage: () => setPageKey(null) }), []);
     useEffect(() => {
         document.documentElement.classList.toggle('dark', theme === 'dark');
@@ -837,6 +919,25 @@ function App() {
         });
         return unsub;
     }, [firebaseUser]);
+    // Same login flow as any other user — no separate URL/door needed. If this is the one
+    // account whose UID matches SUPER_ADMIN_UID, make sure its isAdmin flag is set (Firestore
+    // rules only allow this exact UID to set isAdmin on itself, so this is safe to run every
+    // login) and route it into the admin panel automatically.
+    useEffect(() => {
+        if (!firebaseUser) {
+            sessionStorage.removeItem(SUPER_ADMIN_SESSION_KEY);
+            setSaSession(false);
+            return;
+        }
+        if (firebaseUser.uid === SUPER_ADMIN_UID) {
+            db.collection('users').doc(firebaseUser.uid).set({ isAdmin: true }, { merge: true }).catch(() => {});
+            sessionStorage.setItem(SUPER_ADMIN_SESSION_KEY, '1');
+            setSaSession(true);
+        } else {
+            sessionStorage.removeItem(SUPER_ADMIN_SESSION_KEY);
+            setSaSession(false);
+        }
+    }, [firebaseUser]);
     const authValue = useMemo(() => ({ firebaseUser, profile }), [firebaseUser, profile]);
     if (firebaseUser === undefined) {
         return React.createElement(SplashScreen, null);
@@ -844,7 +945,7 @@ function App() {
     return (React.createElement(ThemeContext.Provider, { value: { theme, setTheme } },
         React.createElement(ToastProvider, null,
             React.createElement(PagesContext.Provider, { value: pagesValue },
-                React.createElement(AuthContext.Provider, { value: authValue }, !firebaseUser ? (React.createElement(AuthScreen, null)) : !profile ? (React.createElement(SplashScreen, null)) : !profile.username ? (React.createElement(OnboardingScreen, null)) : profile.suspended ? (React.createElement(SuspendedScreen, null)) : (React.createElement(MainApp, { route: route, setRoute: setRoute }))),
+                React.createElement(AuthContext.Provider, { value: authValue }, !firebaseUser ? (React.createElement(AuthScreen, null)) : !profile ? (React.createElement(SplashScreen, null)) : !profile.username ? (React.createElement(OnboardingScreen, null)) : profile.suspended ? (React.createElement(SuspendedScreen, null)) : (saSession && firebaseUser.uid === SUPER_ADMIN_UID && profile.isAdmin) ? (React.createElement(SuperAdminApp, { theme: theme, setTheme: setTheme })) : (React.createElement(MainApp, { route: route, setRoute: setRoute }))),
                 pageKey && React.createElement(StaticPageOverlay, { pageKey: pageKey, onClose: () => setPageKey(null) })))));
 }
 function SplashScreen() {
@@ -929,7 +1030,8 @@ function AuthScreen() {
                 const cred = await auth.createUserWithEmailAndPassword(email, password);
                 await db.collection('users').doc(cred.user.uid).set({
                     uid: cred.user.uid, email, createdAt: FieldValue.serverTimestamp(),
-                    followersCount: 0, followingCount: 0, postsCount: 0, isAdmin: false, suspended: false
+                    followersCount: 0, followingCount: 0, postsCount: 0,
+                    isAdmin: cred.user.uid === SUPER_ADMIN_UID, suspended: false
                 }, { merge: true });
             }
         }
@@ -955,7 +1057,8 @@ function AuthScreen() {
                 await ref.set({
                     uid: cred.user.uid, email: cred.user.email, displayName: cred.user.displayName || '',
                     photoURL: cred.user.photoURL || '', createdAt: FieldValue.serverTimestamp(),
-                    followersCount: 0, followingCount: 0, postsCount: 0, isAdmin: false, suspended: false
+                    followersCount: 0, followingCount: 0, postsCount: 0,
+                    isAdmin: cred.user.uid === SUPER_ADMIN_UID, suspended: false
                 }, { merge: true });
             }
         }
@@ -1101,8 +1204,9 @@ function MainApp({ route, setRoute }) {
         { name: 'bookmarks', icon: 'fa-bookmark', label: 'Saved' },
         { name: 'profile', icon: 'fa-user', label: 'Profile', params: { uid: profile.id } },
     ];
-    if (profile.isAdmin)
-        nav.push({ name: 'admin', icon: 'fa-shield-halved', label: 'Admin' });
+    // NOTE: intentionally no "Admin" nav entry here, even for isAdmin users — the super
+    // admin panel is only reachable through the hidden secret-URL door (see App()), never
+    // through visible navigation, per the "not discoverable by regular users" requirement.
     const go = (r) => { setRoute(r); setSidebarOpen(false); };
     return (React.createElement("div", { className: "min-h-screen flex" },
         React.createElement("aside", { className: "hidden md:flex flex-col w-64 shrink-0 border-r border-slate-100 dark:border-ink-800 px-4 py-6 sticky top-0 h-screen" },
@@ -1140,9 +1244,6 @@ function MainApp({ route, setRoute }) {
                     React.createElement("button", { onClick: () => setTheme(theme === 'dark' ? 'light' : 'dark'), className: "flex items-center gap-3 px-2 py-2 rounded-lg text-sm font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-ink-800" },
                         React.createElement("i", { className: "fa-solid " + (theme === 'dark' ? 'fa-sun' : 'fa-moon') + " w-5" }),
                         theme === 'dark' ? 'Light mode' : 'Dark mode'),
-                    profile.isAdmin && React.createElement("button", { onClick: () => go({ name: 'admin' }), className: "flex items-center gap-3 px-2 py-2 rounded-lg text-sm font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-ink-800" },
-                        React.createElement("i", { className: "fa-solid fa-shield-halved w-5" }),
-                        "Admin"),
                     React.createElement("button", { onClick: () => auth.signOut(), className: "flex items-center gap-3 px-2 py-2 rounded-lg text-sm font-semibold text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20" },
                         React.createElement("i", { className: "fa-solid fa-arrow-right-from-bracket w-5" }),
                         "Sign out")),
@@ -1166,7 +1267,6 @@ function MainApp({ route, setRoute }) {
                 route.name === 'notifications' && React.createElement(NotificationsScreen, { go: go }),
                 route.name === 'bookmarks' && React.createElement(BookmarksScreen, { go: go }),
                 route.name === 'profile' && React.createElement(ProfileScreen, { uid: route.uid, go: go }),
-                route.name === 'admin' && profile.isAdmin && React.createElement(AdminScreen, null),
                 route.name !== 'chat' && React.createElement(Footer, { compact: true })))));
 }
 /* ============================== AVATAR ============================== */
@@ -1660,7 +1760,9 @@ function HomeFeed({ go }) {
     const [refreshing, setRefreshing] = useState(false);
     useEffect(() => {
         const unsub = db.collection('posts').orderBy('createdAt', 'desc').limit(30)
-            .onSnapshot(snap => setPosts(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))));
+            .onSnapshot(snap => setPosts(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))
+                .filter(p => !p.hiddenByAdmin)
+                .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0))));
         return unsub;
     }, []);
     return (React.createElement("div", null,
@@ -1871,7 +1973,7 @@ function ProfileScreen({ uid, go }) {
     useEffect(() => {
         const unsub = db.collection('posts').where('authorId', '==', uid).limit(50)
             .onSnapshot(snap => {
-            const list = snap.docs.map(d => (Object.assign({ id: d.id }, d.data())));
+            const list = snap.docs.map(d => (Object.assign({ id: d.id }, d.data()))).filter(p => !p.hiddenByAdmin);
             list.sort((a, b) => { var _a, _b; return (((_a = b.createdAt) === null || _a === void 0 ? void 0 : _a.toMillis) ? b.createdAt.toMillis() : 0) - (((_b = a.createdAt) === null || _b === void 0 ? void 0 : _b.toMillis) ? a.createdAt.toMillis() : 0); });
             setPosts(list);
         });
@@ -2159,82 +2261,206 @@ function EditProfileModal({ user, onClose }) {
             React.createElement("button", { onClick: save, disabled: busy, className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl py-2.5 font-semibold text-sm mt-5" }, busy ? 'Saving…' : 'Save changes'))));
 }
 /* ============================== ADMIN ============================== */
-function AdminScreen() {
+function SuperAdminApp({ theme, setTheme }) {
+    const { profile, firebaseUser } = useAuth();
+    const SA_TABS = [
+        { key: 'dashboard', label: 'Dashboard', icon: 'fa-gauge-high' },
+        { key: 'users', label: 'Users', icon: 'fa-users' },
+        { key: 'posts', label: 'Posts', icon: 'fa-note-sticky' },
+        { key: 'marketplace', label: 'Marketplace', icon: 'fa-store' },
+        { key: 'reports', label: 'Reports', icon: 'fa-flag' },
+        { key: 'announcements', label: 'Announcements', icon: 'fa-bullhorn' },
+        { key: 'settings', label: 'Site Settings', icon: 'fa-gear' },
+        { key: 'auditlog', label: 'Audit Log', icon: 'fa-clock-rotate-left' },
+    ];
+    const [tab, setTab] = useState('dashboard');
+    const exitAdmin = () => {
+        sessionStorage.removeItem(SUPER_ADMIN_SESSION_KEY);
+        auth.signOut();
+    };
+    return (React.createElement("div", { className: "min-h-screen flex bg-slate-50 dark:bg-ink-900" },
+        React.createElement("aside", { className: "hidden md:flex flex-col w-64 shrink-0 bg-ink-900 text-white px-4 py-6 sticky top-0 h-screen" },
+            React.createElement("div", { className: "flex items-center gap-2 px-2 mb-1 text-brand-400" },
+                React.createElement("i", { className: "fa-solid fa-shield-halved text-2xl" }),
+                React.createElement("span", { className: "font-display font-extrabold text-lg" }, "Super Admin")),
+            React.createElement("p", { className: "px-2 text-[11px] text-slate-500 mb-6 truncate" }, firebaseUser.email),
+            React.createElement("nav", { className: "space-y-1 flex-1 overflow-y-auto" }, SA_TABS.map(t => (React.createElement("button", { key: t.key, onClick: () => setTab(t.key), className: "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition " +
+                    (tab === t.key ? "bg-brand-600 text-white" : "hover:bg-ink-800 text-slate-300") },
+                React.createElement("i", { className: "fa-solid " + t.icon + " w-5" }),
+                t.label)))),
+            React.createElement("button", { onClick: () => setTheme(theme === 'dark' ? 'light' : 'dark'), className: "flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold hover:bg-ink-800 text-slate-300" },
+                React.createElement("i", { className: "fa-solid " + (theme === 'dark' ? 'fa-sun' : 'fa-moon') + " w-5" }),
+                theme === 'dark' ? 'Light mode' : 'Dark mode'),
+            React.createElement("button", { onClick: exitAdmin, className: "flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold hover:bg-red-900/30 text-red-400 mt-1" },
+                React.createElement("i", { className: "fa-solid fa-arrow-right-from-bracket w-5" }),
+                "Sign out")),
+        React.createElement("div", { className: "flex-1 min-w-0" },
+            React.createElement("header", { className: "md:hidden sticky top-0 z-30 bg-ink-900 text-white px-4 py-3 flex items-center justify-between" },
+                React.createElement("div", { className: "flex items-center gap-2 text-brand-400" },
+                    React.createElement("i", { className: "fa-solid fa-shield-halved text-lg" }),
+                    React.createElement("span", { className: "font-display font-extrabold" }, "Super Admin")),
+                React.createElement("button", { onClick: exitAdmin, className: "text-red-400 text-sm font-semibold" }, "Sign out")),
+            React.createElement("div", { className: "md:hidden flex gap-2 overflow-x-auto px-3 py-2 bg-white dark:bg-ink-800 border-b border-slate-100 dark:border-ink-700", style: { scrollbarWidth: 'none' } }, SA_TABS.map(t => (React.createElement("button", { key: t.key, onClick: () => setTab(t.key), className: "shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold " + (tab === t.key ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, t.label)))),
+            React.createElement("main", { className: "max-w-6xl mx-auto px-4 md:px-8 py-6" },
+                React.createElement(SuperAdminPanel, { tab: tab, adminUid: profile.id, adminEmail: firebaseUser.email })))));
+}
+/* ============================== SUPER ADMIN: PANEL CONTENT ============================== */
+function SuperAdminPanel({ tab, adminUid, adminEmail }) {
     const [stats, setStats] = useState(null);
     const [users, setUsers] = useState([]);
-    const [tab, setTab] = useState('dashboard');
+    const [posts, setPosts] = useState([]);
     const [search, setSearch] = useState('');
     const [mtab, setMtab] = useState('pending');
     const [listings, setListings] = useState([]);
     const [listingReports, setListingReports] = useState([]);
     const [sellerReports, setSellerReports] = useState([]);
+    const [genericReports, setGenericReports] = useState([]);
+    const [auditLog, setAuditLog] = useState([]);
+    const [settingsForm, setSettingsForm] = useState(null);
     const toast = useToast();
     useEffect(() => {
+        if (tab !== 'dashboard') return;
         (async () => {
-            const [usersSnap, postsSnap] = await Promise.all([
-                db.collection('users').get(), db.collection('posts').get()
+            const [usersSnap, postsSnap, listingsSnap, chatsSnap, notifSnap, reportsA, reportsB, reportsC] = await Promise.all([
+                db.collection('users').get(), db.collection('posts').get(), db.collection('listings').get(),
+                db.collection('chatMembers').get().catch(() => ({ size: 0 })),
+                db.collection('announcements').get().catch(() => ({ size: 0 })),
+                db.collection('listingReports').where('status', '==', 'open').get().catch(() => ({ size: 0 })),
+                db.collection('sellerReports').where('status', '==', 'open').get().catch(() => ({ size: 0 })),
+                db.collection('reports').where('status', '==', 'open').get().catch(() => ({ size: 0 })),
             ]);
-            let comments = 0, likes = 0, shares = 0;
+            let comments = 0, likes = 0, shares = 0, newToday = 0;
+            const dayAgo = Date.now() - 86400000;
             postsSnap.docs.forEach(d => { const p = d.data(); comments += p.commentsCount || 0; likes += p.likesCount || 0; shares += p.sharesCount || 0; });
-            setStats({ users: usersSnap.size, posts: postsSnap.size, comments, likes, shares });
+            usersSnap.docs.forEach(d => { var _a; const u = d.data(); if (((_a = u.createdAt) === null || _a === void 0 ? void 0 : _a.toMillis) && u.createdAt.toMillis() > dayAgo) newToday++; });
+            setStats({
+                users: usersSnap.size, newToday, posts: postsSnap.size, comments, likes, shares,
+                marketplace: listingsSnap.size, messages: chatsSnap.size, announcements: notifSnap.size,
+                reports: (reportsA.size || 0) + (reportsB.size || 0) + (reportsC.size || 0),
+            });
         })();
-    }, []);
+    }, [tab]);
     useEffect(() => {
-        if (tab !== 'users')
-            return;
-        const unsub = db.collection('users').limit(100).onSnapshot(snap => setUsers(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))));
+        if (tab !== 'users') return;
+        const unsub = db.collection('users').limit(200).onSnapshot(snap => setUsers(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))));
         return unsub;
     }, [tab]);
     useEffect(() => {
-        if (tab !== 'marketplace')
-            return;
+        if (tab !== 'posts') return;
+        const unsub = db.collection('posts').orderBy('createdAt', 'desc').limit(200).onSnapshot(snap => setPosts(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))));
+        return unsub;
+    }, [tab]);
+    useEffect(() => {
+        if (tab !== 'marketplace') return;
         const u1 = db.collection('listings').limit(300).onSnapshot(snap => setListings(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))));
         const u2 = db.collection('listingReports').where('status', '==', 'open').limit(100).onSnapshot(snap => setListingReports(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))));
         const u3 = db.collection('sellerReports').where('status', '==', 'open').limit(100).onSnapshot(snap => setSellerReports(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))));
         return () => { u1(); u2(); u3(); };
     }, [tab]);
+    useEffect(() => {
+        if (tab !== 'reports') return;
+        const u1 = db.collection('listingReports').where('status', '==', 'open').limit(100).onSnapshot(snap => setListingReports(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))));
+        const u2 = db.collection('sellerReports').where('status', '==', 'open').limit(100).onSnapshot(snap => setSellerReports(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))));
+        const u3 = db.collection('reports').where('status', '==', 'open').limit(200).onSnapshot(snap => setGenericReports(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setGenericReports([]));
+        return () => { u1(); u2(); u3(); };
+    }, [tab]);
+    useEffect(() => {
+        if (tab !== 'auditlog') return;
+        const unsub = db.collection('auditLog').orderBy('createdAt', 'desc').limit(200).onSnapshot(snap => setAuditLog(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setAuditLog([]));
+        return unsub;
+    }, [tab]);
+    useEffect(() => {
+        if (tab !== 'settings') return;
+        db.collection('settings').doc('site').get().then(s => setSettingsForm(s.exists ? s.data() : {})).catch(() => setSettingsForm({}));
+    }, [tab]);
     const toggleSuspend = async (u) => {
         await db.collection('users').doc(u.id).update({ suspended: !u.suspended });
+        logAdminAction(adminUid, adminEmail, u.suspended ? 'reactivate_user' : 'suspend_user', 'user', u.id, u.username);
         toast(u.suspended ? 'User reactivated' : 'User suspended', 'success');
     };
-    const filtered = users.filter(u => { var _a, _b; return !search || ((_a = u.username) === null || _a === void 0 ? void 0 : _a.includes(search.toLowerCase())) || ((_b = u.displayName) === null || _b === void 0 ? void 0 : _b.toLowerCase().includes(search.toLowerCase())); });
-    return (React.createElement("div", null,
-        React.createElement("h2", { className: "font-display text-lg font-bold mb-4" }, "Admin panel"),
-        React.createElement("div", { className: "flex gap-2 mb-4" }, ['dashboard', 'users', 'marketplace'].map(t => (React.createElement("button", { key: t, onClick: () => setTab(t), className: "px-4 py-1.5 rounded-full text-sm font-semibold " + (tab === t ? "bg-brand-600 text-white" : "bg-white dark:bg-ink-800 border border-slate-200 dark:border-ink-700") }, t[0].toUpperCase() + t.slice(1))))),
-        tab === 'dashboard' && (React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-3" }, stats ? Object.entries({ 'Total users': stats.users, 'Total posts': stats.posts, 'Total comments': stats.comments, 'Total likes': stats.likes, 'Total shares': stats.shares }).map(([label, val]) => (React.createElement("div", { key: label, className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-4" },
-            React.createElement("p", { className: "text-2xl font-display font-bold" }, val),
-            React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, label)))) : React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026"))),
-        tab === 'users' && (React.createElement("div", null,
-            React.createElement("input", { value: search, onChange: e => setSearch(e.target.value), placeholder: "Search users\u2026", className: "w-full mb-3 px-4 py-2 rounded-xl border border-slate-200 dark:border-ink-700 bg-white dark:bg-ink-800 text-sm" }),
-            React.createElement("div", { className: "space-y-2" }, filtered.map(u => (React.createElement("div", { key: u.id, className: "flex items-center justify-between bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
-                React.createElement("div", { className: "flex items-center gap-3" },
-                    React.createElement(Avatar, { user: u, size: 9 }),
-                    React.createElement("div", null,
-                        React.createElement("p", { className: "text-sm font-semibold" },
-                            u.displayName,
-                            " ",
-                            u.suspended && React.createElement("span", { className: "text-red-500 text-xs ml-1" }, "(suspended)")),
-                        React.createElement("p", { className: "text-xs text-slate-400" },
-                            "@",
-                            u.username))),
-                React.createElement("button", { onClick: () => toggleSuspend(u), className: "text-xs font-semibold px-3 py-1.5 rounded-full " + (u.suspended ? "bg-emerald-500 text-white" : "bg-red-500 text-white") }, u.suspended ? 'Reactivate' : 'Suspend')))))))),
-        tab === 'marketplace' && (React.createElement("div", null,
+    const filtered = users.filter(u => { var _a, _b; return !search || ((_a = u.username) === null || _a === void 0 ? void 0 : _a.includes(search.toLowerCase())) || ((_b = u.displayName) === null || _b === void 0 ? void 0 : _b.toLowerCase().includes(search.toLowerCase())) || ((_c = u.email) === null || _c === void 0 ? void 0 : _c.toLowerCase().includes(search.toLowerCase())); var _c; });
+    if (tab === 'dashboard') {
+        const cards = stats ? {
+            'Total users': stats.users, 'New registrations (24h)': stats.newToday, 'Total posts': stats.posts,
+            'Total comments': stats.comments, 'Total likes': stats.likes, 'Total shares': stats.shares,
+            'Marketplace listings': stats.marketplace, 'Chat threads': stats.messages,
+            'Open reports': stats.reports, 'Announcements sent': stats.announcements,
+        } : null;
+        return React.createElement("div", null,
+            React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, "Super Admin Dashboard"),
+            React.createElement("p", { className: "text-sm text-slate-400 mb-5" }, "Platform-wide statistics, live from Firestore."),
+            React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" }, cards ? Object.entries(cards).map(([label, val]) => (React.createElement("div", { key: label, className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-4" },
+                React.createElement("p", { className: "text-2xl font-display font-bold" }, val),
+                React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, label)))) : React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026")),
+            React.createElement("p", { className: "text-xs text-slate-400 mt-6" }, "Note: \"Online users\" needs a presence heartbeat query and \"Advertisements\" reuses marketplace ad-promotion data (see Marketplace tab \u2192 Ad Requests). Wire in dedicated collections if you want them broken out separately."));
+    }
+    if (tab === 'users') {
+        return React.createElement("div", null,
+            React.createElement("div", { className: "flex items-center justify-between mb-3 gap-3" },
+                React.createElement("h2", { className: "font-display text-lg font-bold" }, "Users"),
+                React.createElement("button", { onClick: () => exportToCsv('users.csv', users.map(u => ({ id: u.id, email: u.email || '', username: u.username || '', displayName: u.displayName || '', verified: !!u.verified, suspended: !!u.suspended, banned: !!u.banned, followers: u.followersCount || 0, posts: u.postsCount || 0 }))), className: "text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-100 dark:bg-ink-700" }, React.createElement("i", { className: "fa-solid fa-file-arrow-down mr-1.5" }), "Export CSV")),
+            React.createElement("input", { value: search, onChange: e => setSearch(e.target.value), placeholder: "Search by username, name, or email\u2026", className: "w-full mb-3 px-4 py-2 rounded-xl border border-slate-200 dark:border-ink-700 bg-white dark:bg-ink-800 text-sm" }),
+            React.createElement("div", { className: "space-y-2" }, filtered.map(u => React.createElement(AdminUserRow, { key: u.id, u: u, adminUid: adminUid, adminEmail: adminEmail, onToggleSuspend: () => toggleSuspend(u) }))));
+    }
+    if (tab === 'posts') {
+        return React.createElement("div", null,
+            React.createElement("h2", { className: "font-display text-lg font-bold mb-3" }, "Posts"),
+            posts.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No posts yet."),
+            React.createElement("div", { className: "space-y-2" }, posts.map(p => React.createElement(AdminPostRow, { key: p.id, post: p, adminUid: adminUid, adminEmail: adminEmail }))));
+    }
+    if (tab === 'marketplace') {
+        return React.createElement("div", null,
+            React.createElement("div", { className: "flex items-center justify-between mb-3 gap-3" },
+                React.createElement("h2", { className: "font-display text-lg font-bold" }, "Marketplace"),
+                React.createElement("button", { onClick: () => exportToCsv('listings.csv', listings.map(l => ({ id: l.id, title: l.title, price: l.price, status: l.status, sellerId: l.sellerId, featured: !!l.featured, sponsored: !!l.sponsored }))), className: "text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-100 dark:bg-ink-700" }, React.createElement("i", { className: "fa-solid fa-file-arrow-down mr-1.5" }), "Export CSV")),
             React.createElement("div", { className: "flex gap-2 mb-3 overflow-x-auto", style: { scrollbarWidth: 'none' } }, [['pending', 'Pending'], ['promotions', 'Ad Requests'], ['reportedListings', 'Reported Listings'], ['reportedSellers', 'Reported Sellers'], ['all', 'All Listings']].map(([k, l]) => (React.createElement("button", { key: k, onClick: () => setMtab(k), className: "shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold " + (mtab === k ? "bg-brand-600 text-white" : "bg-white dark:bg-ink-800 border border-slate-200 dark:border-ink-700") }, l)))),
             mtab === 'pending' && React.createElement("div", { className: "space-y-2" },
                 listings.filter(l => l.status === 'pending').length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No pending listings."),
-                listings.filter(l => l.status === 'pending').map(l => React.createElement(AdminListingRow, { key: l.id, listing: l }))),
+                listings.filter(l => l.status === 'pending').map(l => React.createElement(AdminListingRow, { key: l.id, listing: l, adminUid: adminUid, adminEmail: adminEmail }))),
             mtab === 'promotions' && React.createElement("div", { className: "space-y-2" },
                 listings.filter(l => l.promotionStatus === 'pending').length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No pending ad requests."),
-                listings.filter(l => l.promotionStatus === 'pending').map(l => React.createElement(AdminListingRow, { key: l.id, listing: l }))),
+                listings.filter(l => l.promotionStatus === 'pending').map(l => React.createElement(AdminListingRow, { key: l.id, listing: l, adminUid: adminUid, adminEmail: adminEmail }))),
             mtab === 'reportedListings' && React.createElement("div", { className: "space-y-2" },
                 listingReports.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No open listing reports."),
-                listingReports.map(r => React.createElement(AdminListingReportRow, { key: r.id, report: r }))),
+                listingReports.map(r => React.createElement(AdminListingReportRow, { key: r.id, report: r, adminUid: adminUid, adminEmail: adminEmail }))),
             mtab === 'reportedSellers' && React.createElement("div", { className: "space-y-2" },
                 sellerReports.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No open seller reports."),
-                sellerReports.map(r => React.createElement(AdminSellerReportRow, { key: r.id, report: r }))),
+                sellerReports.map(r => React.createElement(AdminSellerReportRow, { key: r.id, report: r, adminUid: adminUid, adminEmail: adminEmail }))),
             mtab === 'all' && React.createElement("div", { className: "space-y-2" },
                 listings.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No listings yet."),
-                listings.map(l => React.createElement(AdminListingRow, { key: l.id, listing: l }))))));
+                listings.map(l => React.createElement(AdminListingRow, { key: l.id, listing: l, adminUid: adminUid, adminEmail: adminEmail }))));
+    }
+    if (tab === 'reports') {
+        const total = listingReports.length + sellerReports.length + genericReports.length;
+        return React.createElement("div", null,
+            React.createElement("h2", { className: "font-display text-lg font-bold mb-3" }, "Reports"),
+            React.createElement("button", { onClick: () => exportToCsv('reports.csv', [
+                ...listingReports.map(r => ({ type: 'listing', targetId: r.listingId, reporterId: r.reporterId, reason: r.reason, status: r.status })),
+                ...sellerReports.map(r => ({ type: 'seller', targetId: r.sellerId, reporterId: r.reporterId, reason: r.reason, status: r.status })),
+                ...genericReports.map(r => ({ type: r.targetType, targetId: r.targetId, reporterId: r.reporterId, reason: r.reason, status: r.status })),
+            ]), className: "text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-100 dark:bg-ink-700 mb-3" }, React.createElement("i", { className: "fa-solid fa-file-arrow-down mr-1.5" }), "Export CSV"),
+            total === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No open reports across users, posts, comments, messages, or marketplace listings."),
+            React.createElement("div", { className: "space-y-2" },
+                listingReports.map(r => React.createElement(AdminListingReportRow, { key: 'l' + r.id, report: r, adminUid: adminUid, adminEmail: adminEmail })),
+                sellerReports.map(r => React.createElement(AdminSellerReportRow, { key: 's' + r.id, report: r, adminUid: adminUid, adminEmail: adminEmail })),
+                genericReports.map(r => React.createElement(AdminGenericReportRow, { key: 'g' + r.id, report: r, adminUid: adminUid, adminEmail: adminEmail }))));
+    }
+    if (tab === 'announcements') {
+        return React.createElement(AdminAnnouncementForm, { adminUid: adminUid, adminEmail: adminEmail });
+    }
+    if (tab === 'settings') {
+        return React.createElement(AdminSettingsForm, { form: settingsForm, adminUid: adminUid, adminEmail: adminEmail });
+    }
+    if (tab === 'auditlog') {
+        return React.createElement("div", null,
+            React.createElement("div", { className: "flex items-center justify-between mb-3 gap-3" },
+                React.createElement("h2", { className: "font-display text-lg font-bold" }, "Audit Log"),
+                React.createElement("button", { onClick: () => exportToCsv('audit-log.csv', auditLog.map(a => { var _a; return ({ time: ((_a = a.createdAt) === null || _a === void 0 ? void 0 : _a.toDate) ? a.createdAt.toDate().toISOString() : '', admin: a.adminEmail, action: a.action, targetType: a.targetType || '', targetId: a.targetId || '', details: a.details || '' }); })), className: "text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-100 dark:bg-ink-700" }, React.createElement("i", { className: "fa-solid fa-file-arrow-down mr-1.5" }), "Export CSV")),
+            React.createElement("p", { className: "text-xs text-slate-400 mb-3" }, "Every admin action taken from this panel is recorded here with a timestamp."),
+            auditLog.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No admin actions logged yet."),
+            React.createElement("div", { className: "space-y-1.5" }, auditLog.map(a => React.createElement(AuditLogRow, { key: a.id, entry: a }))));
+    }
+    return null;
 }
 function AdminUserLabel({ uid }) {
     const [u, setU] = useState(null);
@@ -2246,13 +2472,14 @@ function AdminListingLabel({ id }) {
     useEffect(() => { db.collection('listings').doc(id).get().then(s => setL(s.exists ? s.data() : null)).catch(() => { }); }, [id]);
     return React.createElement("span", null, l ? l.title : id);
 }
-function AdminListingRow({ listing }) {
+function AdminListingRow({ listing, adminUid, adminEmail }) {
     const toast = useToast();
     const [busy, setBusy] = useState(false);
-    const run = async (fn) => {
+    const run = async (fn, action) => {
         setBusy(true);
         try {
             await fn();
+            logAdminAction(adminUid, adminEmail, action, 'listing', listing.id, listing.title);
             toast('Done', 'success');
         }
         catch (e) {
@@ -2268,20 +2495,21 @@ function AdminListingRow({ listing }) {
             React.createElement("p", { className: "text-sm font-semibold truncate" }, listing.title),
             React.createElement("p", { className: "text-xs text-slate-400" }, formatNaira(listing.price), " \u00B7 ", listing.status, listing.promotionStatus === 'pending' ? ' \u00B7 ad requested' : '')),
         React.createElement("div", { className: "flex flex-wrap gap-1 justify-end shrink-0" },
-            listing.status === 'pending' && React.createElement("button", { disabled: busy, onClick: () => run(() => approveListing(listing)), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-500 text-white" }, "Approve"),
-            listing.status !== 'removed' && React.createElement("button", { disabled: busy, onClick: () => run(() => adminRemoveListing(listing)), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-500 text-white" }, "Remove"),
-            React.createElement("button", { disabled: busy, onClick: () => run(() => toggleListingFeatured(listing)), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-slate-100 dark:bg-ink-700" }, listing.featured ? 'Unfeature' : 'Feature'),
-            listing.promotionStatus === 'pending' && React.createElement("button", { disabled: busy, onClick: () => run(() => setListingPromotion(listing, true)), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-amber-500 text-white" }, "Approve Ad"),
-            listing.promotionStatus === 'pending' && React.createElement("button", { disabled: busy, onClick: () => run(() => setListingPromotion(listing, false)), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-slate-100 dark:bg-ink-700" }, "Decline Ad"),
-            React.createElement("button", { disabled: busy, onClick: () => confirm('Permanently delete this listing?') && run(() => deleteListing(listing.id)), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Delete")));
+            listing.status === 'pending' && React.createElement("button", { disabled: busy, onClick: () => run(() => approveListing(listing), 'approve_listing'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-500 text-white" }, "Approve"),
+            listing.status !== 'removed' && React.createElement("button", { disabled: busy, onClick: () => run(() => adminRemoveListing(listing), 'remove_listing'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-500 text-white" }, "Remove"),
+            React.createElement("button", { disabled: busy, onClick: () => run(() => toggleListingFeatured(listing), 'toggle_feature_listing'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-slate-100 dark:bg-ink-700" }, listing.featured ? 'Unfeature' : 'Feature'),
+            listing.promotionStatus === 'pending' && React.createElement("button", { disabled: busy, onClick: () => run(() => setListingPromotion(listing, true), 'approve_ad'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-amber-500 text-white" }, "Approve Ad"),
+            listing.promotionStatus === 'pending' && React.createElement("button", { disabled: busy, onClick: () => run(() => setListingPromotion(listing, false), 'decline_ad'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-slate-100 dark:bg-ink-700" }, "Decline Ad"),
+            React.createElement("button", { disabled: busy, onClick: () => confirm('Permanently delete this listing?') && run(() => deleteListing(listing.id), 'delete_listing'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Delete")));
 }
-function AdminListingReportRow({ report }) {
+function AdminListingReportRow({ report, adminUid, adminEmail }) {
     const toast = useToast();
     const [busy, setBusy] = useState(false);
     const resolve = async () => {
         setBusy(true);
         try {
             await resolveReport('listingReports', report.id);
+            logAdminAction(adminUid, adminEmail, 'resolve_listing_report', 'listing', report.listingId, report.reason);
             toast('Marked resolved', 'success');
         }
         finally {
@@ -2293,13 +2521,14 @@ function AdminListingReportRow({ report }) {
         React.createElement("p", { className: "text-xs text-slate-400 mb-2" }, "Reported by ", React.createElement(AdminUserLabel, { uid: report.reporterId }), ": ", report.reason),
         React.createElement("button", { disabled: busy, onClick: resolve, className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-500 text-white" }, "Mark Resolved"));
 }
-function AdminSellerReportRow({ report }) {
+function AdminSellerReportRow({ report, adminUid, adminEmail }) {
     const toast = useToast();
     const [busy, setBusy] = useState(false);
-    const run = async (fn) => {
+    const run = async (fn, action) => {
         setBusy(true);
         try {
             await fn();
+            logAdminAction(adminUid, adminEmail, action, 'user', report.sellerId, report.reason);
             toast('Done', 'success');
         }
         finally {
@@ -2310,8 +2539,163 @@ function AdminSellerReportRow({ report }) {
         React.createElement("p", { className: "text-sm font-semibold" }, "Seller: ", React.createElement(AdminUserLabel, { uid: report.sellerId })),
         React.createElement("p", { className: "text-xs text-slate-400 mb-2" }, "Reported by ", React.createElement(AdminUserLabel, { uid: report.reporterId }), ": ", report.reason),
         React.createElement("div", { className: "flex gap-2" },
-            React.createElement("button", { disabled: busy, onClick: () => run(() => db.collection('users').doc(report.sellerId).update({ suspended: true })), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-500 text-white" }, "Suspend Seller"),
-            React.createElement("button", { disabled: busy, onClick: () => run(() => resolveReport('sellerReports', report.id)), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-slate-100 dark:bg-ink-700" }, "Mark Resolved")));
+            React.createElement("button", { disabled: busy, onClick: () => run(() => db.collection('users').doc(report.sellerId).update({ suspended: true }), 'suspend_seller'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-500 text-white" }, "Suspend Seller"),
+            React.createElement("button", { disabled: busy, onClick: () => run(() => resolveReport('sellerReports', report.id), 'resolve_seller_report'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-slate-100 dark:bg-ink-700" }, "Mark Resolved")));
+}
+function AdminGenericReportRow({ report, adminUid, adminEmail }) {
+    const toast = useToast();
+    const [busy, setBusy] = useState(false);
+    const resolve = async () => {
+        setBusy(true);
+        try {
+            await resolveReport('reports', report.id);
+            logAdminAction(adminUid, adminEmail, 'resolve_report', report.targetType, report.targetId, report.reason);
+            toast('Marked resolved', 'success');
+        }
+        finally {
+            setBusy(false);
+        }
+    };
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
+        React.createElement("p", { className: "text-sm font-semibold" }, (report.targetType || 'content').replace(/^\w/, c => c.toUpperCase()), " report"),
+        React.createElement("p", { className: "text-xs text-slate-400 mb-2" }, "Reported by ", React.createElement(AdminUserLabel, { uid: report.reporterId }), ": ", report.reason),
+        React.createElement("button", { disabled: busy, onClick: resolve, className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-500 text-white" }, "Mark Resolved"));
+}
+/* ============================== SUPER ADMIN: USER ROW ============================== */
+function AdminUserRow({ u, adminUid, adminEmail, onToggleSuspend }) {
+    const toast = useToast();
+    const [busy, setBusy] = useState(false);
+    const [open, setOpen] = useState(false);
+    const run = async (fn, action) => {
+        setBusy(true);
+        try {
+            await fn();
+            logAdminAction(adminUid, adminEmail, action, 'user', u.id, u.username || u.email);
+            toast('Done', 'success');
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
+        React.createElement("div", { className: "flex items-center justify-between" },
+            React.createElement("div", { className: "flex items-center gap-3 cursor-pointer min-w-0", onClick: () => setOpen(v => !v) },
+                React.createElement(Avatar, { user: u, size: 9 }),
+                React.createElement("div", { className: "min-w-0" },
+                    React.createElement("p", { className: "text-sm font-semibold truncate" },
+                        u.displayName, " ",
+                        u.verified && React.createElement("i", { className: "fa-solid fa-badge-check text-brand-500 text-xs" }),
+                        u.suspended && React.createElement("span", { className: "text-amber-500 text-xs ml-1" }, "(suspended)"),
+                        u.banned && React.createElement("span", { className: "text-red-500 text-xs ml-1" }, "(banned)")),
+                    React.createElement("p", { className: "text-xs text-slate-400 truncate" }, "@", u.username, " \u00B7 ", u.email))),
+            React.createElement("button", { onClick: () => setOpen(v => !v), className: "text-slate-300 shrink-0" }, React.createElement("i", { className: "fa-solid " + (open ? 'fa-chevron-up' : 'fa-chevron-down') }))),
+        open && React.createElement("div", { className: "mt-3 pt-3 border-t border-slate-100 dark:border-ink-700" },
+            React.createElement("div", { className: "grid grid-cols-3 gap-2 text-center mb-3 text-xs text-slate-400" },
+                React.createElement("div", null, React.createElement("p", { className: "text-sm font-bold text-slate-700 dark:text-slate-200" }, u.postsCount || 0), "Posts"),
+                React.createElement("div", null, React.createElement("p", { className: "text-sm font-bold text-slate-700 dark:text-slate-200" }, u.followersCount || 0), "Followers"),
+                React.createElement("div", null, React.createElement("p", { className: "text-sm font-bold text-slate-700 dark:text-slate-200" }, u.followingCount || 0), "Following")),
+            React.createElement("div", { className: "flex flex-wrap gap-1.5" },
+                React.createElement("button", { disabled: busy, onClick: () => run(() => adminVerifyUser(u), 'toggle_verify_user'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-900/20" }, u.verified ? 'Unverify' : 'Verify'),
+                React.createElement("button", { disabled: busy, onClick: onToggleSuspend, className: "text-[11px] font-semibold px-2 py-1 rounded-lg " + (u.suspended ? "bg-emerald-500 text-white" : "bg-amber-500 text-white") }, u.suspended ? 'Reactivate' : 'Suspend'),
+                !u.banned ? React.createElement("button", { disabled: busy, onClick: () => confirm('Ban this user? They will be signed out and blocked from the platform.') && run(() => adminBanUser(u), 'ban_user'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-500 text-white" }, "Ban") :
+                    React.createElement("button", { disabled: busy, onClick: () => run(() => adminUnbanUser(u), 'unban_user'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-500 text-white" }, "Unban"),
+                React.createElement("button", { disabled: busy, onClick: () => confirm('Permanently delete this user\'s account document? This cannot be undone.') && run(() => adminDeleteUserPermanently(u), 'delete_user'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Delete Permanently"))));
+}
+/* ============================== SUPER ADMIN: POST ROW ============================== */
+function AdminPostRow({ post, adminUid, adminEmail }) {
+    const toast = useToast();
+    const [busy, setBusy] = useState(false);
+    const run = async (fn, action) => {
+        setBusy(true);
+        try {
+            await fn();
+            logAdminAction(adminUid, adminEmail, action, 'post', post.id, (post.text || '').slice(0, 60));
+            toast('Done', 'success');
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
+        React.createElement("p", { className: "text-sm mb-1 line-clamp-3" }, post.text || React.createElement("span", { className: "italic text-slate-400" }, "(no text \u2014 media post)")),
+        React.createElement("p", { className: "text-xs text-slate-400 mb-2" },
+            React.createElement(AdminUserLabel, { uid: post.authorId }), " \u00B7 ", post.likesCount || 0, " likes \u00B7 ", post.commentsCount || 0, " comments",
+            post.pinned && " \u00B7 pinned", post.featured && " \u00B7 featured", post.hiddenByAdmin && " \u00B7 hidden by admin"),
+        React.createElement("div", { className: "flex flex-wrap gap-1.5" },
+            React.createElement("button", { disabled: busy, onClick: () => run(() => adminTogglePin(post), 'toggle_pin_post'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-slate-100 dark:bg-ink-700" }, post.pinned ? 'Unpin' : 'Pin'),
+            React.createElement("button", { disabled: busy, onClick: () => run(() => adminToggleFeature(post), 'toggle_feature_post'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-slate-100 dark:bg-ink-700" }, post.featured ? 'Unfeature' : 'Feature'),
+            !post.hiddenByAdmin ? React.createElement("button", { disabled: busy, onClick: () => run(() => adminHidePost(post), 'hide_post'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-amber-500 text-white" }, "Remove (hide)") :
+                React.createElement("button", { disabled: busy, onClick: () => run(() => adminRestorePost(post), 'restore_post'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-500 text-white" }, "Restore"),
+            React.createElement("button", { disabled: busy, onClick: () => confirm('Permanently delete this post? This cannot be undone.') && run(() => adminDeletePostPermanently(post), 'delete_post'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Delete Permanently")));
+}
+/* ============================== SUPER ADMIN: ANNOUNCEMENTS ============================== */
+function AdminAnnouncementForm({ adminUid, adminEmail }) {
+    const [title, setTitle] = useState('');
+    const [message, setMessage] = useState('');
+    const [busy, setBusy] = useState(false);
+    const toast = useToast();
+    const send = async (e) => {
+        e.preventDefault();
+        if (!title.trim() || !message.trim()) return;
+        setBusy(true);
+        try {
+            await broadcastAnnouncement(adminUid, title.trim(), message.trim());
+            logAdminAction(adminUid, adminEmail, 'broadcast_announcement', 'announcement', null, title.trim());
+            toast('Announcement sent to all users', 'success');
+            setTitle(''); setMessage('');
+        }
+        catch (e2) { toast(e2.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    return React.createElement("div", null,
+        React.createElement("h2", { className: "font-display text-lg font-bold mb-1" }, "Announcements"),
+        React.createElement("p", { className: "text-xs text-slate-400 mb-4" }, "Sends a notification to every user's inbox. For push notifications on mobile you'll also need Firebase Cloud Messaging configured server-side."),
+        React.createElement("form", { onSubmit: send, className: "bg-white dark:bg-ink-800 rounded-xl p-4 border border-slate-100 dark:border-ink-700 max-w-lg" },
+            React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Title"),
+            React.createElement("input", { value: title, onChange: e => setTitle(e.target.value), required: true, className: "w-full mb-3 mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-700 bg-transparent text-sm" }),
+            React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Message"),
+            React.createElement("textarea", { value: message, onChange: e => setMessage(e.target.value), required: true, rows: 4, className: "w-full mb-4 mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-700 bg-transparent text-sm resize-none" }),
+            React.createElement("button", { disabled: busy, type: "submit", className: "px-4 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 disabled:opacity-40 text-white text-sm font-semibold" }, busy ? 'Sending…' : 'Broadcast to all users')));
+}
+/* ============================== SUPER ADMIN: SITE SETTINGS ============================== */
+function AdminSettingsForm({ form, adminUid, adminEmail }) {
+    const [local, setLocal] = useState(form || {});
+    const [busy, setBusy] = useState(false);
+    const toast = useToast();
+    useEffect(() => { setLocal(form || {}); }, [form]);
+    const set = (k) => (e) => setLocal(l => (Object.assign({}, l, { [k]: e.target.value })));
+    const save = async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        try {
+            await saveSiteSettings(local);
+            logAdminAction(adminUid, adminEmail, 'update_site_settings', 'settings', 'site', null);
+            toast('Settings saved', 'success');
+        }
+        catch (e2) { toast(e2.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    if (!form) return React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026");
+    const fields = [
+        ['siteName', 'Site name'], ['logoUrl', 'Logo URL'], ['bannerUrl', 'Homepage banner URL'],
+        ['contactEmail', 'Contact email'], ['contactPhone', 'Contact phone'],
+        ['facebookUrl', 'Facebook URL'], ['twitterUrl', 'Twitter / X URL'], ['instagramUrl', 'Instagram URL'],
+    ];
+    return React.createElement("div", null,
+        React.createElement("h2", { className: "font-display text-lg font-bold mb-1" }, "Site Settings"),
+        React.createElement("p", { className: "text-xs text-slate-400 mb-4" }, "Stored in Firestore at settings/site. Wire these fields into the header/footer/homepage components wherever you want them to render."),
+        React.createElement("form", { onSubmit: save, className: "bg-white dark:bg-ink-800 rounded-xl p-4 border border-slate-100 dark:border-ink-700 max-w-lg space-y-3" },
+            fields.map(([key, label]) => React.createElement("div", { key: key },
+                React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, label),
+                React.createElement("input", { value: local[key] || '', onChange: set(key), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-700 bg-transparent text-sm" }))),
+            React.createElement("button", { disabled: busy, type: "submit", className: "px-4 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 disabled:opacity-40 text-white text-sm font-semibold" }, busy ? 'Saving…' : 'Save Settings')));
+}
+/* ============================== SUPER ADMIN: AUDIT LOG ROW ============================== */
+function AuditLogRow({ entry }) {
+    return React.createElement("div", { className: "flex items-center justify-between bg-white dark:bg-ink-800 rounded-lg px-3 py-2 border border-slate-100 dark:border-ink-700 text-xs" },
+        React.createElement("div", { className: "min-w-0" },
+            React.createElement("span", { className: "font-semibold" }, entry.action), " ",
+            entry.targetType && React.createElement("span", { className: "text-slate-400" }, "\u00B7 ", entry.targetType, entry.targetId ? ': ' + entry.targetId : ''),
+            React.createElement("p", { className: "text-slate-400 truncate" }, "by ", entry.adminEmail)),
+        React.createElement("span", { className: "text-slate-400 shrink-0 ml-2" }, timeAgo(entry.createdAt)));
 }
 /* ============================== MESSAGING: CHAT LIST ============================== */
 function ChatListScreen({ go }) {
