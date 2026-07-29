@@ -483,7 +483,7 @@ async function uploadListingImages(sellerId, files) {
 async function createListing(sellerId, fields, files) {
     const images = await uploadListingImages(sellerId, files);
     const doc = await db.collection('listings').add(Object.assign({}, fields, {
-        sellerId, images, status: 'pending', featured: false, sponsored: false, promotionStatus: 'none',
+        sellerId, images, status: 'active', featured: false, sponsored: false, promotionStatus: 'none',
         createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp()
     }));
     return doc.id;
