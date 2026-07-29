@@ -29,9 +29,9 @@
           },
           colors: {
             brand: {
-              50: '#eef4ff', 100: '#dbe6ff', 200: '#b8ceff', 300: '#8aacff',
-              400: '#5c86ff', 500: '#2f5dff', 600: '#1a3fe0', 700: '#152fb0',
-              800: '#132789', 900: '#111f6b'
+              50: '#f0f9ff', 100: '#e0f2fe', 200: '#bae6fd', 300: '#7dd3fc',
+              400: '#38bdf8', 500: '#0ea5e9', 600: '#0284c7', 700: '#0369a1',
+              800: '#075985', 900: '#0c4a6e'
             },
             ink: { 900: '#0a0e1a', 800: '#121729', 700: '#1b2138' }
           }
@@ -71,7 +71,7 @@
   }
   .fade-in { animation: fadein .25s ease-out; }
   @keyframes fadein { from { opacity:0; transform: translateY(4px);} to {opacity:1; transform:none;} }
-  textarea:focus, input:focus, button:focus-visible { outline: 2px solid #2f5dff; outline-offset: 2px; }
+  textarea:focus, input:focus, button:focus-visible { outline: 2px solid #0ea5e9; outline-offset: 2px; }
   @media (prefers-reduced-motion: reduce) { *, .fade-in, .skeleton { animation: none !important; transition: none !important; } }
 </style>
 </head>
@@ -104,7 +104,7 @@
       rows +
       (googleBlocked ? '<div style="font-size:13px; margin-top:16px; line-height:1.5; color:#b91c1c; background:#fef2f2; padding:10px; border-radius:8px;"><b>Firebase (gstatic.com) is unreachable on this network.</b> Firebase is Google infrastructure — login, posts and messaging cannot work here regardless of anything else. This needs a network/VPN that can reach Google\'s servers, not a code fix.</div>' : '') +
       '<div style="font-size:13px; margin-top:12px; line-height:1.5; color:#64748b;">Anything marked <b style="color:#dc2626;">failed</b> or stuck on <b style="color:#d97706;">pending</b> is being blocked — by a VPN, private DNS (AdGuard/NextDNS), ad-blocker, firewall, or region-level restriction. Try turning those off, switching networks, or opening this page in a different browser, then retry.</div>' +
-      '<button onclick="location.reload()" style="margin-top:16px;width:100%;padding:10px;border-radius:10px;background:#2f5dff;color:#fff;border:none;font-weight:600;font-size:14px;">Retry</button>' +
+      '<button onclick="location.reload()" style="margin-top:16px;width:100%;padding:10px;border-radius:10px;background:#0ea5e9;color:#fff;border:none;font-weight:600;font-size:14px;">Retry</button>' +
       '</div>';
   }
   window.addEventListener('error', function () { setTimeout(renderDiagnostics, 300); }, true);
@@ -242,20 +242,137 @@ const POST_BG_STYLES = [
     { id: 'solid-black', className: 'bg-slate-900' },
 ];
 function bgStyleClass(id) { var _a; return ((_a = POST_BG_STYLES.find(s => s.id === id)) === null || _a === void 0 ? void 0 : _a.className) || ''; }
-// Renders **bold** markdown spans and @username mentions as styled inline nodes.
+// Renders **bold**/*bold* markdown spans and @username mentions as styled inline nodes.
 function formatRichText(text) {
     if (!text)
         return null;
-    const parts = String(text).split(/(\*\*[^*]+\*\*|@[a-zA-Z0-9_.]+)/g).filter(p => p !== '');
+    const parts = String(text).split(/(\*\*[^*]+\*\*|\*[^*]+\*|@[a-zA-Z0-9_.]+)/g).filter(p => p !== '');
     return parts.map((part, i) => {
         if (part.length > 4 && part.startsWith('**') && part.endsWith('**')) {
             return React.createElement('b', { key: i }, part.slice(2, -2));
+        }
+        if (part.length > 2 && part.startsWith('*') && part.endsWith('*')) {
+            return React.createElement('b', { key: i }, part.slice(1, -1));
         }
         if (part.startsWith('@') && part.length > 1) {
             return React.createElement('span', { key: i, className: 'text-brand-600 dark:text-brand-400 font-semibold' }, part);
         }
         return part;
     });
+}
+// Truncates long text to a preview and lets the user expand/collapse it with a "See more"/"See less" toggle.
+function ExpandableText({ text, className, limit }) {
+    const [expanded, setExpanded] = useState(false);
+    const maxChars = limit || 220;
+    if (!text)
+        return null;
+    const isLong = String(text).length > maxChars;
+    const shown = expanded || !isLong ? text : String(text).slice(0, maxChars).trimEnd() + '…';
+    return React.createElement("p", { className: className }, formatRichText(shown), isLong && React.createElement("span", { onClick: (e) => { e.stopPropagation(); setExpanded(v => !v); }, className: "text-brand-600 dark:text-brand-400 font-semibold cursor-pointer ml-1 select-none" }, expanded ? ' See less' : ' See more'));
+}
+/* ---- global zoomable image lightbox: any image on the site can call openLightbox(src|[srcs], index) ---- */
+let _lightboxSetState = null;
+function openLightbox(images, startIndex) {
+    const list = (Array.isArray(images) ? images : [images]).filter(Boolean);
+    if (!list.length || !_lightboxSetState)
+        return;
+    _lightboxSetState({ images: list, index: startIndex || 0 });
+}
+// Pinch-to-zoom / scroll-to-zoom / drag-to-pan / double-tap-to-zoom image viewer used inside the lightbox.
+function ZoomableImage({ src }) {
+    const [scale, setScale] = useState(1);
+    const [pos, setPos] = useState({ x: 0, y: 0 });
+    const dragRef = useRef(null);
+    const pinchRef = useRef(null);
+    const clampScale = (s) => Math.min(5, Math.max(1, s));
+    const onWheel = (e) => {
+        e.preventDefault();
+        const next = clampScale(scale - e.deltaY * 0.0015);
+        setScale(next);
+        if (next === 1)
+            setPos({ x: 0, y: 0 });
+    };
+    const onDoubleClick = () => {
+        if (scale > 1) {
+            setScale(1);
+            setPos({ x: 0, y: 0 });
+        }
+        else
+            setScale(2.5);
+    };
+    const onPointerDown = (e) => {
+        if (scale <= 1)
+            return;
+        dragRef.current = { startX: e.clientX - pos.x, startY: e.clientY - pos.y };
+    };
+    const onPointerMove = (e) => {
+        if (!dragRef.current)
+            return;
+        setPos({ x: e.clientX - dragRef.current.startX, y: e.clientY - dragRef.current.startY });
+    };
+    const onPointerUp = () => { dragRef.current = null; };
+    const touchDist = (touches) => {
+        const a = touches[0], b = touches[1];
+        return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    };
+    const onTouchStart = (e) => {
+        if (e.touches.length === 2) {
+            pinchRef.current = { dist: touchDist(e.touches), startScale: scale };
+        }
+        else if (e.touches.length === 1 && scale > 1) {
+            dragRef.current = { startX: e.touches[0].clientX - pos.x, startY: e.touches[0].clientY - pos.y };
+        }
+    };
+    const onTouchMove = (e) => {
+        if (e.touches.length === 2 && pinchRef.current) {
+            e.preventDefault();
+            const newDist = touchDist(e.touches);
+            setScale(clampScale(pinchRef.current.startScale * (newDist / pinchRef.current.dist)));
+        }
+        else if (e.touches.length === 1 && dragRef.current) {
+            setPos({ x: e.touches[0].clientX - dragRef.current.startX, y: e.touches[0].clientY - dragRef.current.startY });
+        }
+    };
+    const onTouchEnd = (e) => {
+        if (e.touches.length < 2)
+            pinchRef.current = null;
+        if (e.touches.length === 0)
+            dragRef.current = null;
+    };
+    return React.createElement("div", { className: "w-full h-full flex items-center justify-center overflow-hidden", style: { touchAction: 'none' }, onWheel: onWheel, onDoubleClick: onDoubleClick, onPointerDown: onPointerDown, onPointerMove: onPointerMove, onPointerUp: onPointerUp, onPointerLeave: onPointerUp, onTouchStart: onTouchStart, onTouchMove: onTouchMove, onTouchEnd: onTouchEnd }, React.createElement("img", { src: src, draggable: false, className: "max-w-full max-h-full object-contain select-none", style: { transform: `translate(${pos.x}px, ${pos.y}px) scale(${scale})`, transition: dragRef.current || pinchRef.current ? 'none' : 'transform 0.15s ease-out', cursor: scale > 1 ? 'grab' : 'zoom-in' } }));
+}
+// Full-screen lightbox mounted once at the app root; opened from anywhere via openLightbox().
+function ImageLightbox() {
+    const [state, setState] = useState(null);
+    useEffect(() => {
+        _lightboxSetState = setState;
+        return () => { _lightboxSetState = null; };
+    }, []);
+    useEffect(() => {
+        if (!state)
+            return;
+        const onKey = (e) => {
+            if (e.key === 'Escape')
+                setState(null);
+            if (e.key === 'ArrowRight')
+                setState(s => (s && s.images.length > 1) ? Object.assign({}, s, { index: (s.index + 1) % s.images.length }) : s);
+            if (e.key === 'ArrowLeft')
+                setState(s => (s && s.images.length > 1) ? Object.assign({}, s, { index: (s.index - 1 + s.images.length) % s.images.length }) : s);
+        };
+        window.addEventListener('keydown', onKey);
+        document.body.style.overflow = 'hidden';
+        return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
+    }, [state]);
+    if (!state)
+        return null;
+    const { images, index } = state;
+    return React.createElement("div", { className: "fixed inset-0 z-[200] bg-black/95 flex items-center justify-center", onClick: () => setState(null) },
+        React.createElement("button", { onClick: (e) => { e.stopPropagation(); setState(null); }, className: "absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-xl z-10" }, React.createElement("i", { className: "fa-solid fa-xmark" })),
+        images.length > 1 && React.createElement("button", { onClick: (e) => { e.stopPropagation(); setState(s => Object.assign({}, s, { index: (s.index - 1 + images.length) % images.length })); }, className: "absolute left-2 sm:left-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-xl z-10" }, React.createElement("i", { className: "fa-solid fa-chevron-left" })),
+        React.createElement("div", { className: "w-full h-full p-4 sm:p-10", onClick: (e) => e.stopPropagation() }, React.createElement(ZoomableImage, { key: index + '_' + images[index], src: images[index] })),
+        images.length > 1 && React.createElement("button", { onClick: (e) => { e.stopPropagation(); setState(s => Object.assign({}, s, { index: (s.index + 1) % images.length })); }, className: "absolute right-2 sm:right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-xl z-10" }, React.createElement("i", { className: "fa-solid fa-chevron-right" })),
+        images.length > 1 && React.createElement("div", { className: "absolute bottom-4 left-1/2 -translate-x-1/2 text-white/80 text-xs font-semibold bg-white/10 px-3 py-1 rounded-full" }, (index + 1) + " / " + images.length),
+        React.createElement("p", { className: "absolute bottom-4 right-4 text-white/40 text-[11px] hidden sm:block" }, "Scroll or pinch to zoom \u00b7 double-click to reset"));
 }
 // Small "with @a, @b" line shown under an author's name when a post/comment tags people.
 function TaggedLine({ users, go }) {
@@ -963,7 +1080,8 @@ function App() {
         React.createElement(ToastProvider, null,
             React.createElement(PagesContext.Provider, { value: pagesValue },
                 React.createElement(AuthContext.Provider, { value: authValue }, !firebaseUser ? (React.createElement(AuthScreen, null)) : !profile ? (React.createElement(SplashScreen, null)) : !profile.username ? (React.createElement(OnboardingScreen, null)) : profile.suspended ? (React.createElement(SuspendedScreen, null)) : (saSession && firebaseUser.uid === SUPER_ADMIN_UID && profile.isAdmin) ? (React.createElement(SuperAdminApp, { theme: theme, setTheme: setTheme })) : (React.createElement(MainApp, { route: route, setRoute: setRoute }))),
-                pageKey && React.createElement(StaticPageOverlay, { pageKey: pageKey, onClose: () => setPageKey(null) })))));
+                pageKey && React.createElement(StaticPageOverlay, { pageKey: pageKey, onClose: () => setPageKey(null) }),
+                React.createElement(ImageLightbox, null)))));
 }
 function SplashScreen() {
     return (React.createElement("div", { className: "h-screen flex items-center justify-center bg-white dark:bg-ink-900" },
@@ -1494,10 +1612,10 @@ function CreatePostScreen({ go, route }) {
                 [
                     { icon: 'fa-regular fa-image', color: 'text-emerald-500', label: 'Photos/Videos', onClick: () => fileRef.current.click() },
                     { icon: 'fa-solid fa-music', color: 'text-pink-500', label: 'Music', badge: 'New', onClick: soon },
-                    { icon: 'fa-solid fa-user-plus', color: 'text-blue-500', label: 'Tag people', onClick: () => setShowTagPicker(v => !v) },
+                    { icon: 'fa-solid fa-user-plus', color: 'text-sky-500', label: 'Tag people', onClick: () => setShowTagPicker(v => !v) },
                     { icon: 'fa-solid fa-location-dot', color: 'text-red-500', label: 'Add location', onClick: soon },
                     { icon: 'fa-regular fa-face-smile', color: 'text-amber-500', label: 'Feeling/activity', onClick: soon },
-                    { icon: 'fa-brands fa-facebook-messenger', color: 'text-blue-500', label: 'Get messages', onClick: soon },
+                    { icon: 'fa-brands fa-facebook-messenger', color: 'text-sky-500', label: 'Get messages', onClick: soon },
                     { icon: 'fa-solid fa-calendar-days', color: 'text-red-500', label: 'Create Event', onClick: soon },
                     { icon: 'fa-solid fa-video', color: 'text-red-500', label: 'Go live', onClick: soon },
                 ].map((item, i) => (React.createElement("button", { key: i, onClick: item.onClick, className: "w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-slate-50 dark:hover:bg-ink-800 transition" },
@@ -1655,8 +1773,8 @@ function PostCard({ post, go }) {
                 React.createElement("div", { className: "flex gap-2 mt-1" },
                     React.createElement("button", { onClick: saveEdit, className: "text-xs font-semibold text-brand-600" }, "Save"),
                     React.createElement("button", { onClick: () => setEditing(false), className: "text-xs font-semibold text-slate-400" }, "Cancel")))) : post.text && (post.bgStyle && !((_a = post.images) === null || _a === void 0 ? void 0 : _a.length) ? (React.createElement("div", { className: `rounded-xl mb-2 p-6 min-h-[160px] flex items-center justify-center text-center ${bgStyleClass(post.bgStyle)}` },
-                React.createElement("p", { className: "text-white text-xl font-bold whitespace-pre-wrap" }, formatRichText(post.text)))) : (React.createElement("p", { className: "text-base whitespace-pre-wrap mb-2 leading-relaxed " + (post.bold ? 'font-bold' : '') }, formatRichText(post.text))))),
-        ((_a = post.images) === null || _a === void 0 ? void 0 : _a.length) > 0 && (React.createElement("div", { className: `grid gap-0.5 overflow-hidden mb-2 ${post.images.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}` }, post.images.map((img, i) => React.createElement("img", { key: i, src: img, loading: "lazy", className: "w-full object-cover max-h-[420px]" })))),
+                React.createElement("p", { className: "text-white text-xl font-bold whitespace-pre-wrap" }, formatRichText(post.text)))) : (React.createElement(ExpandableText, { text: post.text, limit: 220, className: "text-base whitespace-pre-wrap mb-2 leading-relaxed " + (post.bold ? 'font-bold' : '') })))),
+        ((_a = post.images) === null || _a === void 0 ? void 0 : _a.length) > 0 && (React.createElement("div", { className: `grid gap-0.5 overflow-hidden mb-2 ${post.images.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}` }, post.images.map((img, i) => React.createElement("img", { key: i, src: img, loading: "lazy", onClick: () => openLightbox(post.images, i), className: "w-full object-cover max-h-[420px] cursor-zoom-in" })))),
         React.createElement("div", { className: "px-3 sm:px-4" },
             post.sharedPostId && React.createElement(SharedPostPreview, { postId: post.sharedPostId, go: go }),
             (likesCount > 0 || commentsCount > 0 || sharesCount > 0) && (React.createElement("div", { className: "flex items-center justify-between pb-2 text-[13px] text-slate-500 dark:text-slate-400" },
@@ -1711,8 +1829,8 @@ function SharedPostPreview({ postId, go }) {
             React.createElement("div", null,
                 React.createElement("p", { className: "font-semibold text-xs" }, author ? author.displayName : '…'),
                 React.createElement("p", { className: "text-[11px] text-slate-400" }, timeAgo(orig.createdAt)))),
-        orig.text && React.createElement("p", { className: "text-sm whitespace-pre-wrap" }, formatRichText(orig.text)),
-        (orig.images || []).length > 0 && React.createElement("img", { src: orig.images[0], loading: "lazy", className: "w-full rounded-lg mt-2 max-h-64 object-cover" }));
+        orig.text && React.createElement(ExpandableText, { text: orig.text, limit: 160, className: "text-sm whitespace-pre-wrap" }),
+        (orig.images || []).length > 0 && React.createElement("img", { src: orig.images[0], loading: "lazy", onClick: (e) => { e.stopPropagation(); openLightbox(orig.images, 0); }, className: "w-full rounded-lg mt-2 max-h-64 object-cover cursor-zoom-in" }));
 }
 function PostSkeleton() {
     return (React.createElement("div", { className: "bg-white dark:bg-ink-800 -mx-2 sm:mx-0 rounded-none sm:rounded-2xl border-y sm:border border-slate-100 dark:border-ink-700 mb-2 p-3 sm:p-4" },
@@ -1861,7 +1979,7 @@ function CommentThread({ comment, allComments, depth, go, postComment }) {
                     comment.text && (React.createElement("p", { className: "text-sm " + (comment.bold ? 'font-bold' : '') },
                         comment.replyToDisplayName && React.createElement("span", { className: "text-brand-600 font-semibold mr-1" }, "@" + comment.replyToDisplayName),
                         formatRichText(comment.text))),
-                    comment.image && React.createElement("img", { src: comment.image, onClick: () => window.open(comment.image, '_blank'), loading: "lazy", className: "mt-1.5 rounded-lg max-h-56 max-w-full object-cover cursor-pointer" })),
+                    comment.image && React.createElement("img", { src: comment.image, onClick: () => openLightbox(comment.image), loading: "lazy", className: "mt-1.5 rounded-lg max-h-56 max-w-full object-cover cursor-zoom-in" })),
                 React.createElement("div", { className: "flex items-center gap-3 mt-1 pl-3 text-[11px] font-semibold text-slate-400" },
                     React.createElement("button", { onClick: () => setReplying(r => !r), className: "hover:underline" }, "Reply")),
                 replying && (React.createElement("div", { className: "mt-2" },
@@ -2244,14 +2362,14 @@ function ProfileScreen({ uid, go }) {
     return (React.createElement("div", null,
         React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 overflow-hidden mb-4" },
             React.createElement("div", { className: "h-44 md:h-56 bg-gradient-to-r from-brand-500 to-brand-700 relative" },
-                user.coverURL && React.createElement("img", { src: user.coverURL, className: "w-full h-full object-cover" }),
+                user.coverURL && React.createElement("img", { src: user.coverURL, onClick: () => openLightbox(user.coverURL), className: "w-full h-full object-cover cursor-zoom-in" }),
                 isMe && (React.createElement("button", { onClick: () => coverInputRef.current.click(), disabled: uploadingCover, className: "absolute bottom-3 right-3 bg-black/50 hover:bg-black/60 text-white rounded-full w-9 h-9 flex items-center justify-center backdrop-blur" },
                     React.createElement("i", { className: "fa-solid " + (uploadingCover ? "fa-spinner fa-spin" : "fa-camera") + " text-sm" }))),
                 React.createElement("input", { ref: coverInputRef, type: "file", accept: "image/*", hidden: true, onChange: e => quickUpload(e.target.files[0], 'covers') })),
             React.createElement("div", { className: "px-5 pb-5" },
                 React.createElement("div", { className: "flex justify-between items-end -mt-12 mb-3" },
                     React.createElement("div", { className: "relative" },
-                        React.createElement("img", { src: user.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${user.displayName}`, className: "w-24 h-24 rounded-full border-4 border-white dark:border-ink-800 object-cover bg-white dark:bg-ink-800" }),
+                        React.createElement("img", { src: user.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${user.displayName}`, onClick: () => openLightbox(user.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${user.displayName}`), className: "w-24 h-24 rounded-full border-4 border-white dark:border-ink-800 object-cover bg-white dark:bg-ink-800 cursor-zoom-in" }),
                         isMe && (React.createElement("button", { onClick: () => avatarInputRef.current.click(), disabled: uploadingAvatar, className: "absolute bottom-0 right-0 bg-brand-600 hover:bg-brand-700 text-white rounded-full w-8 h-8 flex items-center justify-center border-2 border-white dark:border-ink-800" },
                             React.createElement("i", { className: "fa-solid " + (uploadingAvatar ? "fa-spinner fa-spin" : "fa-camera") + " text-xs" }))),
                         React.createElement("input", { ref: avatarInputRef, type: "file", accept: "image/*", hidden: true, onChange: e => quickUpload(e.target.files[0], 'avatars') }))),
@@ -3004,7 +3122,7 @@ function MessageBubble({ message, isMe, otherUid, menuOpen, setMenuOpen, onReply
                 React.createElement("p", { className: "truncate opacity-70 max-w-[220px]" }, message.replyTo.text))),
             React.createElement("div", { className: "relative px-3.5 py-2 rounded-2xl text-sm " + (isMe ? "bg-brand-600 text-white rounded-br-sm" : "bg-slate-100 dark:bg-ink-700 rounded-bl-sm") },
                 message.type === 'text' && React.createElement("p", { className: "whitespace-pre-wrap break-words" }, message.text),
-                message.type === 'image' && React.createElement("img", { src: message.mediaURL, onClick: () => window.open(message.mediaURL, '_blank'), loading: "lazy", className: "rounded-lg max-w-[240px] cursor-pointer" }),
+                message.type === 'image' && React.createElement("img", { src: message.mediaURL, onClick: () => openLightbox(message.mediaURL), loading: "lazy", className: "rounded-lg max-w-[240px] cursor-zoom-in" }),
                 message.type === 'video' && React.createElement("video", { src: message.mediaURL, controls: true, className: "rounded-lg max-w-[240px]" }),
                 message.type === 'audio' && React.createElement("audio", { src: message.mediaURL, controls: true, className: "w-56" }),
                 message.type === 'document' && (React.createElement("a", { href: message.mediaURL, target: "_blank", className: "flex items-center gap-2 " + (isMe ? "text-white" : "text-brand-600") },
@@ -3707,7 +3825,7 @@ function ListingDetailScreen({ id, go }) {
         React.createElement("div", { className: "flex items-center gap-3 mb-4" },
             React.createElement("button", { onClick: () => go({ name: 'marketplace' }) }, React.createElement("i", { className: "fa-solid fa-arrow-left" })),
             React.createElement("h2", { className: "font-display text-lg font-bold truncate" }, listing.title)),
-        React.createElement("div", { className: "flex gap-2 overflow-x-auto rounded-xl mb-3", style: { scrollbarWidth: 'none' } }, (listing.images || []).length > 0 ? listing.images.map((img, i) => React.createElement("img", { key: i, src: img, className: "w-full max-w-md shrink-0 aspect-square object-cover rounded-xl" })) : React.createElement("div", { className: "w-full aspect-square rounded-xl bg-slate-100 dark:bg-ink-800 flex items-center justify-center text-slate-300" }, React.createElement("i", { className: "fa-solid fa-image text-4xl" }))),
+        React.createElement("div", { className: "flex gap-2 overflow-x-auto rounded-xl mb-3", style: { scrollbarWidth: 'none' } }, (listing.images || []).length > 0 ? listing.images.map((img, i) => React.createElement("img", { key: i, src: img, onClick: () => openLightbox(listing.images, i), className: "w-full max-w-md shrink-0 aspect-square object-cover rounded-xl cursor-zoom-in" })) : React.createElement("div", { className: "w-full aspect-square rounded-xl bg-slate-100 dark:bg-ink-800 flex items-center justify-center text-slate-300" }, React.createElement("i", { className: "fa-solid fa-image text-4xl" }))),
         listing.status === 'sold' && React.createElement("div", { className: "bg-slate-800 text-white text-center text-sm font-semibold py-2 rounded-lg mb-3" }, "This item has been sold"),
         listing.status === 'pending' && isOwner && React.createElement("div", { className: "bg-amber-50 dark:bg-amber-900/20 text-amber-600 text-center text-xs font-semibold py-2 rounded-lg mb-3" }, "Pending admin review \u2014 only visible to you until approved"),
         React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-4 border border-slate-100 dark:border-ink-700 mb-3" },
@@ -3728,7 +3846,7 @@ function ListingDetailScreen({ id, go }) {
                     React.createElement("i", { className: "fa-solid fa-eye mr-1" }),
                     viewCount,
                     " views")),
-            React.createElement("p", { className: "text-sm whitespace-pre-wrap text-slate-600 dark:text-slate-300" }, listing.description)),
+            React.createElement(ExpandableText, { text: listing.description, limit: 220, className: "text-sm whitespace-pre-wrap text-slate-600 dark:text-slate-300" })),
         React.createElement("div", { onClick: () => go({ name: 'profile', uid: listing.sellerId }), className: "flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700 mb-3 cursor-pointer" },
             React.createElement(Avatar, { user: seller, size: 11 }),
             React.createElement("div", { className: "flex-1 min-w-0" },
