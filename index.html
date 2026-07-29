@@ -1282,6 +1282,7 @@ function MainApp({ route, setRoute }) {
                         route.name === n.name && n.name !== 'profile' && React.createElement("span", { className: "absolute -bottom-0 left-1/2 -translate-x-1/2 w-6 h-[3px] rounded-full bg-brand-600" }))))),
             React.createElement("main", { className: route.name === 'chat' ? "flex-1 max-w-2xl w-full mx-auto md:px-6 md:py-4" : "flex-1 max-w-2xl w-full mx-auto px-3 md:px-6 py-4 pb-8" },
                 route.name === 'home' && React.createElement(HomeFeed, { go: go }),
+                route.name === 'createPost' && React.createElement(CreatePostScreen, { go: go, route: route }),
                 route.name === 'search' && React.createElement(SearchScreen, { go: go, route: route }),
                 route.name === 'marketplace' && React.createElement(MarketplaceScreen, { go: go }),
                 route.name === 'listing' && React.createElement(ListingDetailScreen, { id: route.id, go: go }),
@@ -1346,9 +1347,22 @@ function FriendActionButton({ meId, otherId, compact }) {
         confirmOpen && React.createElement("div", { onClick: e => e.stopPropagation(), className: "absolute right-0 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-600 z-20 w-40" },
             React.createElement("button", { onClick: () => run(() => removeFriend(meId, otherId)).then(() => setConfirmOpen(false)), disabled: busy, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Remove Friend")));
 }
-/* ============================== COMPOSER ============================== */
-function Composer({ onPosted }) {
-    var _a;
+/* ============================== POST TRIGGER BAR (Facebook-style "What's on your mind?") ============================== */
+function PostTriggerBar({ go }) {
+    const { profile } = useAuth();
+    return (React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-3 mb-4 flex items-center gap-3" },
+        React.createElement(Avatar, { user: profile, size: 10 }),
+        React.createElement("button", { onClick: () => go({ name: 'createPost' }), className: "flex-1 text-left bg-slate-100 dark:bg-ink-700 hover:bg-slate-200 dark:hover:bg-ink-600 transition rounded-full px-4 py-2.5 text-slate-500 dark:text-slate-400 text-sm" }, "What's on your mind?"),
+        React.createElement("button", { onClick: () => go({ name: 'createPost', openPhotoPicker: true }), title: "Photo/Video", className: "shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-emerald-500 hover:bg-slate-100 dark:hover:bg-ink-700 transition" },
+            React.createElement("i", { className: "fa-solid fa-image text-lg" }))));
+}
+/* ============================== CREATE POST (full page, Facebook-style) ============================== */
+const AUDIENCE_OPTIONS = [
+    { id: 'public', label: 'Public', icon: 'fa-earth-africa' },
+    { id: 'friends', label: 'Friends', icon: 'fa-user-group' },
+    { id: 'onlyMe', label: 'Only me', icon: 'fa-lock' },
+];
+function CreatePostScreen({ go, route }) {
     const { profile } = useAuth();
     const toast = useToast();
     const [text, setText] = useState('');
@@ -1358,11 +1372,16 @@ function Composer({ onPosted }) {
     const [progress, setProgress] = useState(0);
     const [bold, setBold] = useState(false);
     const [bgStyle, setBgStyle] = useState(null);
-    const [showBg, setShowBg] = useState(false);
     const [tagged, setTagged] = useState([]);
     const [showTagPicker, setShowTagPicker] = useState(false);
-    const [expanded, setExpanded] = useState(false);
+    const [audience, setAudience] = useState('public');
+    const [showAudiencePicker, setShowAudiencePicker] = useState(false);
     const fileRef = useRef();
+    useEffect(() => {
+        if (route === null || route === void 0 ? void 0 : route.openPhotoPicker) {
+            setTimeout(() => { var _a; return (_a = fileRef.current) === null || _a === void 0 ? void 0 : _a.click(); }, 150);
+        }
+    }, []);
     const onFiles = (e) => {
         const chosen = Array.from(e.target.files).slice(0, 10 - files.length);
         const valid = chosen.filter(f => {
@@ -1378,11 +1397,14 @@ function Composer({ onPosted }) {
         });
         setFiles(f => [...f, ...valid]);
         setPreviews(p => [...p, ...valid.map(f => URL.createObjectURL(f))]);
+        if (valid.length)
+            setBgStyle(null);
     };
     const removeFile = (idx) => {
         setFiles(f => f.filter((_, i) => i !== idx));
         setPreviews(p => p.filter((_, i) => i !== idx));
     };
+    const soon = () => toast('Coming soon', 'info');
     const submit = async () => {
         if (!text.trim() && files.length === 0)
             return;
@@ -1405,20 +1427,13 @@ function Composer({ onPosted }) {
             }
             const postRef = await db.collection('posts').add({
                 authorId: profile.id, text: text.trim(), images: imageUrls,
-                bold, bgStyle: imageUrls.length ? null : bgStyle, taggedUsers: tagged,
+                bold, bgStyle: imageUrls.length ? null : bgStyle, taggedUsers: tagged, audience,
                 createdAt: FieldValue.serverTimestamp(), likesCount: 0, commentsCount: 0, sharesCount: 0
             });
             await db.collection('users').doc(profile.id).update({ postsCount: FieldValue.increment(1) });
             notifyTagged(tagged, profile.id, postRef.id, 'tag');
-            setText('');
-            setFiles([]);
-            setPreviews([]);
-            setBold(false);
-            setBgStyle(null);
-            setTagged([]);
-            setExpanded(false);
             toast('Posted!', 'success');
-            onPosted && onPosted();
+            go({ name: 'home' });
         }
         catch (err) {
             toast(err.message, 'error');
@@ -1428,35 +1443,55 @@ function Composer({ onPosted }) {
             setProgress(0);
         }
     };
-    return (React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-4 mb-4" },
-        React.createElement("div", { className: "flex gap-3" },
-            React.createElement(Avatar, { user: profile, size: 10 }),
-            React.createElement("div", { className: "flex-1 min-w-0" },
-                bgStyle ? (React.createElement("textarea", { value: text, onChange: e => setText(e.target.value), onFocus: () => setExpanded(true), placeholder: "What's on your mind?", className: `w-full resize-none rounded-xl text-white text-lg font-bold text-center placeholder-white/70 focus:outline-none min-h-[160px] p-6 ${bgStyleClass(bgStyle)} ${bold ? '' : 'font-bold'}`, rows: 5 })) : (React.createElement("textarea", { value: text, onChange: e => setText(e.target.value), onFocus: () => setExpanded(true), placeholder: `What's on your mind, ${(_a = profile.displayName) === null || _a === void 0 ? void 0 : _a.split(' ')[0]}?`, className: "w-full resize-none bg-transparent text-base py-2 focus:outline-none min-h-[44px] " + (bold ? 'font-bold' : ''), rows: 2 })),
-                previews.length > 0 && (React.createElement("div", { className: "grid grid-cols-3 gap-2 mb-2" }, previews.map((p, i) => (React.createElement("div", { key: i, className: "relative rounded-lg overflow-hidden aspect-square group" },
-                    React.createElement("img", { src: p, className: "w-full h-full object-cover" }),
-                    React.createElement("button", { onClick: () => removeFile(i), className: "absolute top-1 right-1 bg-black/60 text-white rounded-full w-6 h-6 text-xs" }, "\u2715")))))),
-                showBg && !previews.length && (React.createElement("div", { className: "flex gap-2 overflow-x-auto pb-2 mb-1" }, POST_BG_STYLES.map(s => (React.createElement("button", { key: s.id, onClick: () => setBgStyle(bg => bg === s.id ? null : s.id), className: `w-9 h-9 shrink-0 rounded-full ${s.className} ${bgStyle === s.id ? 'ring-2 ring-offset-2 ring-brand-600 dark:ring-offset-ink-800' : ''}` }))))),
-                tagged.length > 0 && (React.createElement("div", { className: "flex flex-wrap gap-1 mb-1" }, tagged.map(u => (React.createElement("span", { key: u.uid, className: "bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 text-xs px-2 py-0.5 rounded-full" }, "@" + u.username))))),
-                busy && progress > 0 && (React.createElement("div", { className: "w-full h-1.5 bg-slate-100 dark:bg-ink-700 rounded-full overflow-hidden mb-2" },
-                    React.createElement("div", { className: "h-full bg-brand-600 transition-all", style: { width: progress + '%' } }))),
-                !expanded && !previews.length && !text && !bgStyle ? (
-                    React.createElement("button", { onClick: () => setExpanded(true), className: "text-brand-600 dark:text-brand-400 text-sm font-semibold pt-2 border-t border-slate-100 dark:border-ink-700 mt-1 flex items-center gap-1.5" },
-                        React.createElement("i", { className: "fa-regular fa-image" }),
-                        "Photo/Video")
-                ) : (React.createElement("div", { className: "flex items-center justify-between pt-2 border-t border-slate-100 dark:border-ink-700 mt-1" },
-                    React.createElement("div", { className: "flex items-center gap-3" },
-                        React.createElement("button", { onClick: () => fileRef.current.click(), disabled: files.length >= 10 || !!bgStyle, title: "Photo", className: "text-brand-600 dark:text-brand-400 text-sm disabled:opacity-30" },
-                            React.createElement("i", { className: "fa-regular fa-image" })),
-                        React.createElement("button", { onClick: () => setBold(b => !b), title: "Bold", className: "text-sm font-bold w-6 h-6 rounded " + (bold ? "bg-brand-600 text-white" : "text-slate-500 hover:bg-slate-100 dark:hover:bg-ink-700") }, "B"),
-                        React.createElement("button", { onClick: () => setShowBg(v => !v), disabled: files.length > 0, title: "Background color", className: "text-slate-500 disabled:opacity-30" },
-                            React.createElement("i", { className: "fa-solid fa-palette" })),
-                        React.createElement("div", { className: "relative" },
-                            React.createElement("button", { onClick: () => setShowTagPicker(v => !v), title: "Tag people", className: "text-slate-500" },
-                                React.createElement("i", { className: "fa-solid fa-user-tag" })),
-                            showTagPicker && React.createElement(TagPeoplePicker, { selected: tagged, onChange: setTagged, onClose: () => setShowTagPicker(false) })),
-                        React.createElement("input", { ref: fileRef, type: "file", accept: "image/*", multiple: true, hidden: true, onChange: onFiles })),
-                    React.createElement("button", { onClick: submit, disabled: busy || (!text.trim() && files.length === 0), className: "bg-brand-600 hover:bg-brand-700 disabled:opacity-40 text-white text-sm font-semibold px-5 py-1.5 rounded-full transition" }, busy ? 'Posting…' : 'Post')))))));
+    const canPost = !busy && (text.trim() || files.length > 0);
+    const audienceOpt = AUDIENCE_OPTIONS.find(a => a.id === audience);
+    return (React.createElement("div", { className: "fixed inset-0 bg-white dark:bg-ink-900 z-50 flex flex-col" },
+        React.createElement("div", { className: "flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-ink-700 shrink-0" },
+            React.createElement("button", { onClick: () => go({ name: 'home' }), className: "text-slate-600 dark:text-slate-300 w-9 h-9 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-ink-800" },
+                React.createElement("i", { className: "fa-solid fa-arrow-left text-lg" })),
+            React.createElement("h2", { className: "font-display font-bold text-lg" }, "Create post"),
+            React.createElement("button", { onClick: submit, disabled: !canPost, className: "text-brand-600 font-bold text-base disabled:opacity-30" }, busy ? 'Posting…' : 'POST')),
+        React.createElement("div", { className: "flex-1 overflow-y-auto px-4 py-4" },
+            React.createElement("div", { className: "flex items-center gap-3 mb-4" },
+                React.createElement(Avatar, { user: profile, size: 11 }),
+                React.createElement("div", null,
+                    React.createElement("p", { className: "font-bold text-sm" }, profile.displayName),
+                    React.createElement("div", { className: "relative" },
+                        React.createElement("button", { onClick: () => setShowAudiencePicker(v => !v), className: "flex items-center gap-1.5 bg-slate-100 dark:bg-ink-700 rounded-full px-2.5 py-1 text-xs font-semibold mt-0.5" },
+                            React.createElement("i", { className: `fa-solid ${audienceOpt.icon}` }),
+                            audienceOpt.label,
+                            React.createElement("i", { className: "fa-solid fa-chevron-down text-[10px] opacity-60" })),
+                        showAudiencePicker && (React.createElement("div", { className: "absolute left-0 mt-1 bg-white dark:bg-ink-800 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-700 z-20 w-40" }, AUDIENCE_OPTIONS.map(a => (React.createElement("button", { key: a.id, onClick: () => { setAudience(a.id); setShowAudiencePicker(false); }, className: "w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-ink-700" },
+                            React.createElement("i", { className: `fa-solid ${a.icon} w-4 text-slate-400` }),
+                            a.label)))))))),
+            bgStyle ? (React.createElement("textarea", { autoFocus: true, value: text, onChange: e => setText(e.target.value), placeholder: "Share a highlight from your day\u2026", className: `w-full resize-none rounded-xl text-white text-xl font-bold text-center placeholder-white/70 focus:outline-none min-h-[260px] p-6 ${bgStyleClass(bgStyle)}`, rows: 6 })) : (React.createElement("textarea", { autoFocus: true, value: text, onChange: e => setText(e.target.value), placeholder: "Share a highlight from your day\u2026", className: "w-full resize-none bg-transparent text-2xl text-slate-500 dark:text-slate-400 focus:outline-none min-h-[160px] " + (bold ? 'font-bold text-slate-900 dark:text-slate-100' : ''), rows: 6 })),
+            previews.length > 0 && (React.createElement("div", { className: "grid grid-cols-3 gap-2 mb-3" }, previews.map((p, i) => (React.createElement("div", { key: i, className: "relative rounded-lg overflow-hidden aspect-square group" },
+                React.createElement("img", { src: p, className: "w-full h-full object-cover" }),
+                React.createElement("button", { onClick: () => removeFile(i), className: "absolute top-1 right-1 bg-black/60 text-white rounded-full w-6 h-6 text-xs" }, "\u2715")))))),
+            !previews.length && (React.createElement("div", { className: "flex items-center gap-2.5 overflow-x-auto pb-3 mb-2" },
+                React.createElement("button", { onClick: () => setBgStyle(null), title: "No background", className: `w-9 h-9 shrink-0 rounded-full bg-white border-2 ${!bgStyle ? 'border-brand-600' : 'border-slate-200 dark:border-ink-600'} flex items-center justify-center text-slate-400 text-xs` }, "Aa"),
+                POST_BG_STYLES.map(s => (React.createElement("button", { key: s.id, onClick: () => setBgStyle(s.id), className: `w-9 h-9 shrink-0 rounded-full ${s.className} ${bgStyle === s.id ? 'ring-2 ring-offset-2 ring-brand-600 dark:ring-offset-ink-900' : ''}` }))))),
+            tagged.length > 0 && (React.createElement("div", { className: "flex flex-wrap gap-1 mb-2" }, tagged.map(u => (React.createElement("span", { key: u.uid, className: "bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 text-xs px-2 py-0.5 rounded-full" }, "@" + u.username))))),
+            busy && progress > 0 && (React.createElement("div", { className: "w-full h-1.5 bg-slate-100 dark:bg-ink-700 rounded-full overflow-hidden mb-3" },
+                React.createElement("div", { className: "h-full bg-brand-600 transition-all", style: { width: progress + '%' } }))),
+            React.createElement("input", { ref: fileRef, type: "file", accept: "image/*", multiple: true, hidden: true, onChange: onFiles }),
+            React.createElement("div", { className: "border border-slate-200 dark:border-ink-700 rounded-xl divide-y divide-slate-100 dark:divide-ink-700 mt-2" },
+                [
+                    { icon: 'fa-regular fa-image', color: 'text-emerald-500', label: 'Photos/Videos', onClick: () => fileRef.current.click() },
+                    { icon: 'fa-solid fa-music', color: 'text-pink-500', label: 'Music', badge: 'New', onClick: soon },
+                    { icon: 'fa-solid fa-user-plus', color: 'text-blue-500', label: 'Tag people', onClick: () => setShowTagPicker(v => !v) },
+                    { icon: 'fa-solid fa-location-dot', color: 'text-red-500', label: 'Add location', onClick: soon },
+                    { icon: 'fa-regular fa-face-smile', color: 'text-amber-500', label: 'Feeling/activity', onClick: soon },
+                    { icon: 'fa-brands fa-facebook-messenger', color: 'text-blue-500', label: 'Get messages', onClick: soon },
+                    { icon: 'fa-solid fa-calendar-days', color: 'text-red-500', label: 'Create Event', onClick: soon },
+                    { icon: 'fa-solid fa-video', color: 'text-red-500', label: 'Go live', onClick: soon },
+                ].map((item, i) => (React.createElement("button", { key: i, onClick: item.onClick, className: "w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-slate-50 dark:hover:bg-ink-800 transition" },
+                    React.createElement("i", { className: `${item.icon} ${item.color} text-lg w-6 text-center` }),
+                    React.createElement("span", { className: "flex-1 text-[15px]" }, item.label),
+                    item.badge && React.createElement("span", { className: "bg-brand-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full" }, item.badge))))),
+            showTagPicker && React.createElement(TagPeoplePicker, { selected: tagged, onChange: setTagged, onClose: () => setShowTagPicker(false) })),
+        React.createElement("div", { className: "px-4 pb-4 pt-2 border-t border-slate-100 dark:border-ink-700 shrink-0" },
+            React.createElement("button", { onClick: submit, disabled: !canPost, className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-40 text-white text-base font-bold py-3 rounded-xl transition" }, busy ? 'Posting…' : 'POST'))));
 }
 /* ============================== POST CARD ============================== */
 function PostCard({ post, go }) {
@@ -1796,7 +1831,7 @@ function HomeFeed({ go }) {
         return unsub;
     }, []);
     return (React.createElement("div", null,
-        React.createElement(Composer, { onPosted: () => window.scrollTo({ top: 0, behavior: 'smooth' }) }),
+        React.createElement(PostTriggerBar, { go: go }),
         React.createElement(StoriesRow, { go: go }),
         posts === null && React.createElement(React.Fragment, null, [1, 2, 3].map(i => React.createElement(PostSkeleton, { key: i }))),
         (posts === null || posts === void 0 ? void 0 : posts.length) === 0 && (React.createElement("div", { className: "text-center py-16 text-slate-400" },
