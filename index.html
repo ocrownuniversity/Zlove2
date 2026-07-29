@@ -1331,6 +1331,7 @@ function Composer({ onPosted }) {
     const [showBg, setShowBg] = useState(false);
     const [tagged, setTagged] = useState([]);
     const [showTagPicker, setShowTagPicker] = useState(false);
+    const [expanded, setExpanded] = useState(false);
     const fileRef = useRef();
     const onFiles = (e) => {
         const chosen = Array.from(e.target.files).slice(0, 10 - files.length);
@@ -1385,6 +1386,7 @@ function Composer({ onPosted }) {
             setBold(false);
             setBgStyle(null);
             setTagged([]);
+            setExpanded(false);
             toast('Posted!', 'success');
             onPosted && onPosted();
         }
@@ -1400,7 +1402,7 @@ function Composer({ onPosted }) {
         React.createElement("div", { className: "flex gap-3" },
             React.createElement(Avatar, { user: profile, size: 10 }),
             React.createElement("div", { className: "flex-1 min-w-0" },
-                bgStyle ? (React.createElement("textarea", { value: text, onChange: e => setText(e.target.value), placeholder: "What's on your mind?", className: `w-full resize-none rounded-xl text-white text-lg font-bold text-center placeholder-white/70 focus:outline-none min-h-[160px] p-6 ${bgStyleClass(bgStyle)} ${bold ? '' : 'font-bold'}`, rows: 5 })) : (React.createElement("textarea", { value: text, onChange: e => setText(e.target.value), placeholder: `What's on your mind, ${(_a = profile.displayName) === null || _a === void 0 ? void 0 : _a.split(' ')[0]}?`, className: "w-full resize-none bg-transparent text-base py-2 focus:outline-none min-h-[44px] " + (bold ? 'font-bold' : ''), rows: 2 })),
+                bgStyle ? (React.createElement("textarea", { value: text, onChange: e => setText(e.target.value), onFocus: () => setExpanded(true), placeholder: "What's on your mind?", className: `w-full resize-none rounded-xl text-white text-lg font-bold text-center placeholder-white/70 focus:outline-none min-h-[160px] p-6 ${bgStyleClass(bgStyle)} ${bold ? '' : 'font-bold'}`, rows: 5 })) : (React.createElement("textarea", { value: text, onChange: e => setText(e.target.value), onFocus: () => setExpanded(true), placeholder: `What's on your mind, ${(_a = profile.displayName) === null || _a === void 0 ? void 0 : _a.split(' ')[0]}?`, className: "w-full resize-none bg-transparent text-base py-2 focus:outline-none min-h-[44px] " + (bold ? 'font-bold' : ''), rows: 2 })),
                 previews.length > 0 && (React.createElement("div", { className: "grid grid-cols-3 gap-2 mb-2" }, previews.map((p, i) => (React.createElement("div", { key: i, className: "relative rounded-lg overflow-hidden aspect-square group" },
                     React.createElement("img", { src: p, className: "w-full h-full object-cover" }),
                     React.createElement("button", { onClick: () => removeFile(i), className: "absolute top-1 right-1 bg-black/60 text-white rounded-full w-6 h-6 text-xs" }, "\u2715")))))),
@@ -1408,7 +1410,11 @@ function Composer({ onPosted }) {
                 tagged.length > 0 && (React.createElement("div", { className: "flex flex-wrap gap-1 mb-1" }, tagged.map(u => (React.createElement("span", { key: u.uid, className: "bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 text-xs px-2 py-0.5 rounded-full" }, "@" + u.username))))),
                 busy && progress > 0 && (React.createElement("div", { className: "w-full h-1.5 bg-slate-100 dark:bg-ink-700 rounded-full overflow-hidden mb-2" },
                     React.createElement("div", { className: "h-full bg-brand-600 transition-all", style: { width: progress + '%' } }))),
-                React.createElement("div", { className: "flex items-center justify-between pt-2 border-t border-slate-100 dark:border-ink-700 mt-1" },
+                !expanded && !previews.length && !text && !bgStyle ? (
+                    React.createElement("button", { onClick: () => setExpanded(true), className: "text-brand-600 dark:text-brand-400 text-sm font-semibold pt-2 border-t border-slate-100 dark:border-ink-700 mt-1 flex items-center gap-1.5" },
+                        React.createElement("i", { className: "fa-regular fa-image" }),
+                        "Photo/Video")
+                ) : (React.createElement("div", { className: "flex items-center justify-between pt-2 border-t border-slate-100 dark:border-ink-700 mt-1" },
                     React.createElement("div", { className: "flex items-center gap-3" },
                         React.createElement("button", { onClick: () => fileRef.current.click(), disabled: files.length >= 10 || !!bgStyle, title: "Photo", className: "text-brand-600 dark:text-brand-400 text-sm disabled:opacity-30" },
                             React.createElement("i", { className: "fa-regular fa-image" })),
@@ -1420,7 +1426,7 @@ function Composer({ onPosted }) {
                                 React.createElement("i", { className: "fa-solid fa-user-tag" })),
                             showTagPicker && React.createElement(TagPeoplePicker, { selected: tagged, onChange: setTagged, onClose: () => setShowTagPicker(false) })),
                         React.createElement("input", { ref: fileRef, type: "file", accept: "image/*", multiple: true, hidden: true, onChange: onFiles })),
-                    React.createElement("button", { onClick: submit, disabled: busy || (!text.trim() && files.length === 0), className: "bg-brand-600 hover:bg-brand-700 disabled:opacity-40 text-white text-sm font-semibold px-5 py-1.5 rounded-full transition" }, busy ? 'Posting…' : 'Post'))))));
+                    React.createElement("button", { onClick: submit, disabled: busy || (!text.trim() && files.length === 0), className: "bg-brand-600 hover:bg-brand-700 disabled:opacity-40 text-white text-sm font-semibold px-5 py-1.5 rounded-full transition" }, busy ? 'Posting…' : 'Post')))))));
 }
 /* ============================== POST CARD ============================== */
 function PostCard({ post, go }) {
@@ -1742,7 +1748,7 @@ function StoriesRow({ go }) {
             React.createElement("p", { className: "absolute bottom-1.5 inset-x-0 text-center text-white text-[11px] font-semibold px-1" }, "Your profile")),
         users === null && [1, 2, 3].map(i => React.createElement("div", { key: i, className: "shrink-0 w-[104px] h-[168px] rounded-xl bg-slate-100 dark:bg-ink-800 animate-pulse" })),
         people.map(u => (React.createElement("div", { key: u.id, onClick: () => go({ name: 'profile', uid: u.id }), className: "relative shrink-0 w-[104px] h-[168px] rounded-xl overflow-hidden cursor-pointer bg-slate-200 dark:bg-ink-800" },
-            React.createElement(Avatar, { user: u, size: 26 }),
+            React.createElement("img", { src: u.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(u.displayName || u.username || '?')}`, className: "w-full h-full object-cover" }),
             isUserOnline(u) && React.createElement("span", { className: "absolute top-2 left-2 w-3 h-3 rounded-full bg-emerald-500 border-2 border-white" }),
             React.createElement("div", { className: "absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/75 to-transparent" }),
             React.createElement("button", { onClick: (e) => messageUser(e, u), disabled: messaging === u.id, className: "absolute top-2 right-2 w-7 h-7 rounded-full bg-white/90 text-brand-600 flex items-center justify-center text-xs disabled:opacity-50" },
