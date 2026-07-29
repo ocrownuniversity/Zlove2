@@ -242,6 +242,100 @@ const POST_BG_STYLES = [
     { id: 'solid-black', className: 'bg-slate-900' },
 ];
 function bgStyleClass(id) { var _a; return ((_a = POST_BG_STYLES.find(s => s.id === id)) === null || _a === void 0 ? void 0 : _a.className) || ''; }
+// Curated picks for the "Music" attachment on a post — title/artist only, no playback.
+const MUSIC_LIBRARY = [
+    { id: 'm1', title: 'Sunset Drive', artist: 'Wave Riders' },
+    { id: 'm2', title: 'City Lights', artist: 'Nova Sound' },
+    { id: 'm3', title: 'Golden Hour', artist: 'Amara' },
+    { id: 'm4', title: 'Higher', artist: 'Kelo & Ben' },
+    { id: 'm5', title: 'Ocean Drift', artist: 'Milo James' },
+    { id: 'm6', title: 'Afrobeat Nights', artist: 'DJ Tunde' },
+    { id: 'm7', title: 'Still Here', artist: 'Rina' },
+    { id: 'm8', title: 'Good Vibes Only', artist: 'The Collective' },
+    { id: 'm9', title: 'Homecoming', artist: 'Zaha' },
+    { id: 'm10', title: 'Electric Feel', artist: 'Neon Drift' },
+];
+// "Feeling / activity" options shown when a user taps that item in the composer.
+const FEELINGS_LIST = [
+    { emoji: '😊', label: 'happy', type: 'feeling' },
+    { emoji: '😍', label: 'loved', type: 'feeling' },
+    { emoji: '🥳', label: 'festive', type: 'feeling' },
+    { emoji: '😢', label: 'sad', type: 'feeling' },
+    { emoji: '😴', label: 'sleepy', type: 'feeling' },
+    { emoji: '🤩', label: 'excited', type: 'feeling' },
+    { emoji: '😡', label: 'angry', type: 'feeling' },
+    { emoji: '🙏', label: 'blessed', type: 'feeling' },
+    { emoji: '😎', label: 'cool', type: 'feeling' },
+    { emoji: '🤒', label: 'sick', type: 'feeling' },
+];
+const ACTIVITIES_LIST = [
+    { emoji: '🍔', label: 'eating', type: 'activity' },
+    { emoji: '✈️', label: 'traveling', type: 'activity' },
+    { emoji: '🎬', label: 'watching a movie', type: 'activity' },
+    { emoji: '🎧', label: 'listening to music', type: 'activity' },
+    { emoji: '💪', label: 'working out', type: 'activity' },
+    { emoji: '📚', label: 'studying', type: 'activity' },
+    { emoji: '🎮', label: 'gaming', type: 'activity' },
+    { emoji: '☕', label: 'having coffee', type: 'activity' },
+];
+// Quick-pick suggestions for "Add location" — the user can also type any place freely.
+const LOCATION_SUGGESTIONS = ['Lagos, Nigeria', 'Abuja, Nigeria', 'Port Harcourt, Nigeria', 'Ibadan, Nigeria', 'Enugu, Nigeria', 'Kano, Nigeria', 'Accra, Ghana', 'Nairobi, Kenya', 'London, UK', 'New York, USA'];
+// Generic mobile bottom sheet used by the Music / Feeling / Location pickers and the share sheet.
+function BottomSheet({ title, onClose, children }) {
+    return React.createElement("div", { className: "fixed inset-0 z-[90] flex items-end sm:items-center sm:justify-center", onClick: onClose },
+        React.createElement("div", { className: "absolute inset-0 bg-black/50" }),
+        React.createElement("div", { onClick: (e) => e.stopPropagation(), className: "relative w-full sm:max-w-sm bg-white dark:bg-ink-800 rounded-t-2xl sm:rounded-2xl max-h-[80vh] flex flex-col overflow-hidden" },
+            React.createElement("div", { className: "flex justify-center pt-2 sm:hidden" }, React.createElement("div", { className: "w-10 h-1.5 rounded-full bg-slate-200 dark:bg-ink-600" })),
+            React.createElement("div", { className: "flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-ink-700 shrink-0" },
+                React.createElement("p", { className: "font-bold text-base" }, title),
+                React.createElement("button", { onClick: onClose, className: "text-slate-400 w-8 h-8 rounded-full hover:bg-slate-100 dark:hover:bg-ink-700 flex items-center justify-center" }, React.createElement("i", { className: "fa-solid fa-xmark" }))),
+            React.createElement("div", { className: "overflow-y-auto p-2" }, children)));
+}
+// "Music" attachment picker — searchable list, taps to attach a track to the post being composed.
+function MusicPicker({ onSelect, onClose }) {
+    const [q, setQ] = useState('');
+    const results = MUSIC_LIBRARY.filter(m => (m.title + ' ' + m.artist).toLowerCase().includes(q.toLowerCase()));
+    return React.createElement(BottomSheet, { title: "Add music", onClose: onClose },
+        React.createElement("input", { autoFocus: true, value: q, onChange: e => setQ(e.target.value), placeholder: "Search songs or artists\u2026", className: "w-full px-3 py-2 rounded-full bg-slate-50 dark:bg-ink-700 text-sm mb-2 mx-1 focus:outline-none" }),
+        results.length === 0 && React.createElement("p", { className: "text-center text-sm text-slate-400 py-6" }, "No songs found"),
+        results.map(m => React.createElement("button", { key: m.id, onClick: () => onSelect(m), className: "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-ink-700 text-left" },
+            React.createElement("span", { className: "w-9 h-9 rounded-full bg-pink-50 dark:bg-pink-900/20 text-pink-500 flex items-center justify-center shrink-0" }, React.createElement("i", { className: "fa-solid fa-music" })),
+            React.createElement("span", null,
+                React.createElement("p", { className: "text-sm font-semibold" }, m.title),
+                React.createElement("p", { className: "text-xs text-slate-400" }, m.artist)))));
+}
+// "Feeling / activity" picker — two labeled sections, taps to attach to the post being composed.
+function FeelingPicker({ onSelect, onClose }) {
+    const section = (label, items) => React.createElement(React.Fragment, { key: label },
+        React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase px-3 pt-2 pb-1" }, label),
+        React.createElement("div", { className: "grid grid-cols-2 gap-1 px-1 pb-2" }, items.map(f => React.createElement("button", { key: f.label, onClick: () => onSelect(f), className: "flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-ink-700 text-left" },
+            React.createElement("span", { className: "text-xl" }, f.emoji),
+            React.createElement("span", { className: "text-sm" }, f.label)))));
+    return React.createElement(BottomSheet, { title: "How are you feeling?", onClose: onClose }, section('Feeling', FEELINGS_LIST), section('Activity', ACTIVITIES_LIST));
+}
+// "Add location" picker — free-text entry plus a handful of quick suggestions.
+function LocationPicker({ onSelect, onClose }) {
+    const [q, setQ] = useState('');
+    const suggestions = LOCATION_SUGGESTIONS.filter(l => l.toLowerCase().includes(q.toLowerCase()));
+    return React.createElement(BottomSheet, { title: "Add location", onClose: onClose },
+        React.createElement("div", { className: "flex gap-2 px-1 mb-2" },
+            React.createElement("input", { autoFocus: true, value: q, onChange: e => setQ(e.target.value), placeholder: "Search or type a place\u2026", className: "flex-1 px-3 py-2 rounded-full bg-slate-50 dark:bg-ink-700 text-sm focus:outline-none" }),
+            q.trim() && React.createElement("button", { onClick: () => onSelect(q.trim()), className: "px-3 py-2 rounded-full bg-brand-600 text-white text-xs font-semibold shrink-0" }, "Use")),
+        suggestions.map(l => React.createElement("button", { key: l, onClick: () => onSelect(l), className: "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-ink-700 text-left" },
+            React.createElement("span", { className: "w-9 h-9 rounded-full bg-red-50 dark:bg-red-900/20 text-red-500 flex items-center justify-center shrink-0" }, React.createElement("i", { className: "fa-solid fa-location-dot" })),
+            React.createElement("span", { className: "text-sm font-semibold" }, l))));
+}
+// Small line shown under an author's name: "is feeling happy 😊 — 📍 Lagos, Nigeria".
+function PostMetaLine({ post }) {
+    if (!post.feeling && !post.location)
+        return null;
+    let text = '';
+    if (post.feeling)
+        text += (post.feeling.type === 'activity' ? `is ${post.feeling.label}` : `is feeling ${post.feeling.label}`) + ' ' + post.feeling.emoji;
+    if (post.location)
+        text += (text ? ' — ' : 'is ') + '📍 ' + post.location;
+    return React.createElement("p", { className: "text-xs text-slate-400" }, text);
+}
 // Renders **bold**/*bold* markdown spans and @username mentions as styled inline nodes.
 function formatRichText(text) {
     if (!text)
@@ -1507,6 +1601,12 @@ function CreatePostScreen({ go, route }) {
     const [bgStyle, setBgStyle] = useState(null);
     const [tagged, setTagged] = useState([]);
     const [showTagPicker, setShowTagPicker] = useState(false);
+    const [music, setMusic] = useState(null);
+    const [showMusicPicker, setShowMusicPicker] = useState(false);
+    const [feeling, setFeeling] = useState(null);
+    const [showFeelingPicker, setShowFeelingPicker] = useState(false);
+    const [location, setLocation] = useState('');
+    const [showLocationPicker, setShowLocationPicker] = useState(false);
     const [audience, setAudience] = useState('public');
     const [showAudiencePicker, setShowAudiencePicker] = useState(false);
     const fileRef = useRef();
@@ -1539,7 +1639,7 @@ function CreatePostScreen({ go, route }) {
     };
     const soon = () => toast('Coming soon', 'info');
     const submit = async () => {
-        if (!text.trim() && files.length === 0)
+        if (!text.trim() && files.length === 0 && !feeling && !location && !music)
             return;
         setBusy(true);
         setProgress(0);
@@ -1561,6 +1661,7 @@ function CreatePostScreen({ go, route }) {
             const postRef = await db.collection('posts').add({
                 authorId: profile.id, text: text.trim(), images: imageUrls,
                 bold, bgStyle: imageUrls.length ? null : bgStyle, taggedUsers: tagged, audience,
+                music: music || null, feeling: feeling || null, location: location || null,
                 createdAt: FieldValue.serverTimestamp(), likesCount: 0, commentsCount: 0, sharesCount: 0
             });
             await db.collection('users').doc(profile.id).update({ postsCount: FieldValue.increment(1) });
@@ -1576,7 +1677,7 @@ function CreatePostScreen({ go, route }) {
             setProgress(0);
         }
     };
-    const canPost = !busy && (text.trim() || files.length > 0);
+    const canPost = !busy && (text.trim() || files.length > 0 || feeling || location || music);
     const audienceOpt = AUDIENCE_OPTIONS.find(a => a.id === audience);
     return (React.createElement("div", { className: "fixed inset-0 bg-white dark:bg-ink-900 z-50 flex flex-col" },
         React.createElement("div", { className: "flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-ink-700 shrink-0" },
@@ -1604,27 +1705,147 @@ function CreatePostScreen({ go, route }) {
             !previews.length && (React.createElement("div", { className: "flex items-center gap-2.5 overflow-x-auto pb-3 mb-2" },
                 React.createElement("button", { onClick: () => setBgStyle(null), title: "No background", className: `w-9 h-9 shrink-0 rounded-full bg-white border-2 ${!bgStyle ? 'border-brand-600' : 'border-slate-200 dark:border-ink-600'} flex items-center justify-center text-slate-400 text-xs` }, "Aa"),
                 POST_BG_STYLES.map(s => (React.createElement("button", { key: s.id, onClick: () => setBgStyle(s.id), className: `w-9 h-9 shrink-0 rounded-full ${s.className} ${bgStyle === s.id ? 'ring-2 ring-offset-2 ring-brand-600 dark:ring-offset-ink-900' : ''}` }))))),
-            tagged.length > 0 && (React.createElement("div", { className: "flex flex-wrap gap-1 mb-2" }, tagged.map(u => (React.createElement("span", { key: u.uid, className: "bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 text-xs px-2 py-0.5 rounded-full" }, "@" + u.username))))),
+            (tagged.length > 0 || music || feeling || location) && (React.createElement("div", { className: "flex flex-wrap gap-1 mb-2" },
+                tagged.map(u => (React.createElement("span", { key: u.uid, className: "bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 text-xs px-2 py-0.5 rounded-full" }, "@" + u.username))),
+                music && (React.createElement("span", { className: "bg-pink-50 dark:bg-pink-900/20 text-pink-600 dark:text-pink-400 text-xs px-2 py-0.5 rounded-full flex items-center gap-1" }, React.createElement("i", { className: "fa-solid fa-music" }), music.title + ' · ' + music.artist, React.createElement("button", { onClick: () => setMusic(null), className: "ml-0.5" }, "\u2715"))),
+                feeling && (React.createElement("span", { className: "bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 text-xs px-2 py-0.5 rounded-full flex items-center gap-1" }, feeling.emoji, ' ' + feeling.label, React.createElement("button", { onClick: () => setFeeling(null), className: "ml-0.5" }, "\u2715"))),
+                location && (React.createElement("span", { className: "bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-xs px-2 py-0.5 rounded-full flex items-center gap-1" }, React.createElement("i", { className: "fa-solid fa-location-dot" }), location, React.createElement("button", { onClick: () => setLocation(''), className: "ml-0.5" }, "\u2715"))))),
             busy && progress > 0 && (React.createElement("div", { className: "w-full h-1.5 bg-slate-100 dark:bg-ink-700 rounded-full overflow-hidden mb-3" },
                 React.createElement("div", { className: "h-full bg-brand-600 transition-all", style: { width: progress + '%' } }))),
             React.createElement("input", { ref: fileRef, type: "file", accept: "image/*", multiple: true, hidden: true, onChange: onFiles }),
             React.createElement("div", { className: "border border-slate-200 dark:border-ink-700 rounded-xl divide-y divide-slate-100 dark:divide-ink-700 mt-2" },
                 [
                     { icon: 'fa-regular fa-image', color: 'text-emerald-500', label: 'Photos/Videos', onClick: () => fileRef.current.click() },
-                    { icon: 'fa-solid fa-music', color: 'text-pink-500', label: 'Music', badge: 'New', onClick: soon },
-                    { icon: 'fa-solid fa-user-plus', color: 'text-sky-500', label: 'Tag people', onClick: () => setShowTagPicker(v => !v) },
-                    { icon: 'fa-solid fa-location-dot', color: 'text-red-500', label: 'Add location', onClick: soon },
-                    { icon: 'fa-regular fa-face-smile', color: 'text-amber-500', label: 'Feeling/activity', onClick: soon },
+                    { icon: 'fa-solid fa-music', color: 'text-pink-500', label: music ? music.title + ' · ' + music.artist : 'Music', badge: !music ? 'New' : null, onClick: () => setShowMusicPicker(true) },
+                    { icon: 'fa-solid fa-user-plus', color: 'text-sky-500', label: tagged.length ? tagged.length + ' tagged' : 'Tag people', onClick: () => setShowTagPicker(v => !v) },
+                    { icon: 'fa-solid fa-location-dot', color: 'text-red-500', label: location || 'Add location', onClick: () => setShowLocationPicker(true) },
+                    { icon: 'fa-regular fa-face-smile', color: 'text-amber-500', label: feeling ? `${feeling.emoji} ${feeling.label}` : 'Feeling/activity', onClick: () => setShowFeelingPicker(true) },
                     { icon: 'fa-brands fa-facebook-messenger', color: 'text-sky-500', label: 'Get messages', onClick: soon },
                     { icon: 'fa-solid fa-calendar-days', color: 'text-red-500', label: 'Create Event', onClick: soon },
                     { icon: 'fa-solid fa-video', color: 'text-red-500', label: 'Go live', onClick: soon },
                 ].map((item, i) => (React.createElement("button", { key: i, onClick: item.onClick, className: "w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-slate-50 dark:hover:bg-ink-800 transition" },
                     React.createElement("i", { className: `${item.icon} ${item.color} text-lg w-6 text-center` }),
-                    React.createElement("span", { className: "flex-1 text-[15px]" }, item.label),
+                    React.createElement("span", { className: "flex-1 text-[15px] truncate" }, item.label),
                     item.badge && React.createElement("span", { className: "bg-brand-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full" }, item.badge))))),
-            showTagPicker && React.createElement(TagPeoplePicker, { selected: tagged, onChange: setTagged, onClose: () => setShowTagPicker(false) })),
+            showTagPicker && React.createElement(TagPeoplePicker, { selected: tagged, onChange: setTagged, onClose: () => setShowTagPicker(false) }),
+            showMusicPicker && React.createElement(MusicPicker, { onSelect: (m) => { setMusic(m); setShowMusicPicker(false); }, onClose: () => setShowMusicPicker(false) }),
+            showFeelingPicker && React.createElement(FeelingPicker, { onSelect: (f) => { setFeeling(f); setShowFeelingPicker(false); }, onClose: () => setShowFeelingPicker(false) }),
+            showLocationPicker && React.createElement(LocationPicker, { onSelect: (l) => { setLocation(l); setShowLocationPicker(false); }, onClose: () => setShowLocationPicker(false) })),
         React.createElement("div", { className: "px-4 pb-4 pt-2 border-t border-slate-100 dark:border-ink-700 shrink-0" },
             React.createElement("button", { onClick: submit, disabled: !canPost, className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-40 text-white text-base font-bold py-3 rounded-xl transition" }, busy ? 'Posting…' : 'POST'))));
+}
+/* ============================== SHARE SHEET ============================== */
+// Facebook-style "Share" bottom sheet used from a post's Share button (see screenshot reference).
+function ShareSheet({ post, onClose }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const [step, setStep] = useState('menu'); // 'menu' | 'timeline' | 'message'
+    const [comment, setComment] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [friends, setFriends] = useState(null);
+    const [fq, setFq] = useState('');
+    useEffect(() => {
+        if (step !== 'message')
+            return;
+        (async () => {
+            const snap = await db.collection('friendships').where('users', 'array-contains', profile.id).where('status', '==', 'accepted').get().catch(() => null);
+            if (!snap) {
+                setFriends([]);
+                return;
+            }
+            const otherIds = snap.docs.map(d => otherUidOfFriendship(d.data(), profile.id));
+            const users = await Promise.all(otherIds.map(uid => db.collection('users').doc(uid).get()));
+            setFriends(users.filter(u => u.exists).map(u => Object.assign({ id: u.id }, u.data())));
+        })();
+    }, [step]);
+    const postLink = window.location.href.split('#')[0] + '#post-' + post.id;
+    const logShare = () => db.collection('posts').doc(post.id).collection('shares').doc(profile.id).set({ uid: profile.id, createdAt: FieldValue.serverTimestamp() }, { merge: true }).catch(() => { });
+    const shareToTimelineNow = async () => {
+        setBusy(true);
+        try {
+            await shareToTimeline(post, profile.id, comment);
+            await logShare();
+            toast('Shared to your timeline', 'success');
+            onClose();
+        }
+        catch (e) {
+            toast(e.message, 'error');
+        }
+        finally {
+            setBusy(false);
+        }
+    };
+    const sendToFriend = async (u) => {
+        setBusy(true);
+        try {
+            const chatId = chatIdFor(profile.id, u.id);
+            await sendChatMessage(profile.id, chatId, u.id, { type: 'text', text: `Check out this post: ${postLink}` });
+            await logShare();
+            toast('Sent to ' + (u.displayName || u.username), 'success');
+            onClose();
+        }
+        catch (e) {
+            toast(e.message, 'error');
+        }
+        finally {
+            setBusy(false);
+        }
+    };
+    const copyLink = async () => {
+        var _a;
+        await logShare();
+        (_a = navigator.clipboard) === null || _a === void 0 ? void 0 : _a.writeText(postLink);
+        toast('Link copied to clipboard', 'success');
+        onClose();
+    };
+    const openWhatsApp = async () => {
+        await logShare();
+        window.open('https://wa.me/?text=' + encodeURIComponent(postLink), '_blank');
+        onClose();
+    };
+    const moreOptions = async () => {
+        if (navigator.share) {
+            try {
+                await navigator.share({ url: postLink });
+                await logShare();
+            }
+            catch (e) { }
+            onClose();
+        }
+        else {
+            copyLink();
+        }
+    };
+    const soon = () => toast('Coming soon', 'info');
+    if (step === 'timeline') {
+        return React.createElement(BottomSheet, { title: "Share to Blueface", onClose: onClose },
+            React.createElement("div", { className: "p-2" },
+                React.createElement("textarea", { autoFocus: true, value: comment, onChange: e => setComment(e.target.value), placeholder: "Say something about this\u2026", className: "w-full bg-slate-50 dark:bg-ink-700 rounded-lg p-3 text-sm resize-none mb-3", rows: 3 }),
+                React.createElement("button", { onClick: shareToTimelineNow, disabled: busy, className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white text-sm font-semibold py-2.5 rounded-lg" }, busy ? 'Sharing…' : 'Share now')));
+    }
+    if (step === 'message') {
+        return React.createElement(BottomSheet, { title: "Send as a message", onClose: onClose },
+            React.createElement("input", { autoFocus: true, value: fq, onChange: e => setFq(e.target.value), placeholder: "Search friends\u2026", className: "w-full px-3 py-2 rounded-full bg-slate-50 dark:bg-ink-700 text-sm mb-2 mx-1 focus:outline-none" }),
+            friends === null && React.createElement("p", { className: "text-center text-sm text-slate-400 py-6" }, "Loading\u2026"),
+            friends && friends.length === 0 && React.createElement("p", { className: "text-center text-sm text-slate-400 py-6" }, "No friends yet"),
+            friends && friends.filter(u => !fq.trim() || (u.displayName || u.username || '').toLowerCase().includes(fq.toLowerCase())).map(u => React.createElement("button", { key: u.id, disabled: busy, onClick: () => sendToFriend(u), className: "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-ink-700 text-left" },
+                React.createElement(Avatar, { user: u, size: 9 }),
+                React.createElement("span", { className: "text-sm font-semibold flex-1 truncate" }, u.displayName || u.username),
+                React.createElement("i", { className: "fa-solid fa-paper-plane text-brand-600" }))));
+    }
+    const rows = [
+        { icon: 'fa-regular fa-pen-to-square', label: 'Share to Blueface', onClick: () => setStep('timeline') },
+        { icon: 'fa-regular fa-circle-plus', label: 'Share to your story now', onClick: soon },
+        { icon: 'fa-solid fa-user-plus', label: "Share to a friend's profile", onClick: soon },
+        { icon: 'fa-solid fa-people-group', label: 'Share in a group', onClick: soon },
+        { icon: 'fa-brands fa-facebook-messenger', label: 'Send as a message', onClick: () => setStep('message') },
+        { icon: 'fa-solid fa-share-nodes', label: 'More options\u2026', onClick: moreOptions },
+        { icon: 'fa-brands fa-whatsapp', label: 'Send in WhatsApp', onClick: openWhatsApp },
+        { icon: 'fa-regular fa-copy', label: 'Copy link', onClick: copyLink },
+    ];
+    return React.createElement(BottomSheet, { title: "Share", onClose: onClose }, rows.map((r, i) => React.createElement("button", { key: i, onClick: r.onClick, className: "w-full flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-slate-50 dark:hover:bg-ink-700 text-left" },
+        React.createElement("span", { className: "w-9 h-9 rounded-full bg-slate-100 dark:bg-ink-700 flex items-center justify-center shrink-0 text-slate-600 dark:text-slate-300" }, React.createElement("i", { className: r.icon })),
+        React.createElement("span", { className: "text-sm font-medium" }, r.label))));
 }
 /* ============================== POST CARD ============================== */
 function PostCard({ post, go }) {
@@ -1641,9 +1862,7 @@ function PostCard({ post, go }) {
     const [editing, setEditing] = useState(false);
     const [editText, setEditText] = useState(post.text);
     const [sharesCount, setSharesCount] = useState(post.sharesCount || 0);
-    const [shareMenuOpen, setShareMenuOpen] = useState(false);
-    const [shareComment, setShareComment] = useState('');
-    const [sharing, setSharing] = useState(false);
+    const [shareSheetOpen, setShareSheetOpen] = useState(false);
     useEffect(() => {
         const unsub = db.collection('users').doc(post.authorId).onSnapshot(s => setAuthor(s.exists ? s.data() : null));
         return unsub;
@@ -1712,28 +1931,6 @@ function PostCard({ post, go }) {
             toast('Saved', 'success');
         }
     };
-    const copyLink = async () => {
-        var _a;
-        await db.collection('posts').doc(post.id).collection('shares').doc(profile.id).set({ uid: profile.id, createdAt: FieldValue.serverTimestamp() }, { merge: true });
-        (_a = navigator.clipboard) === null || _a === void 0 ? void 0 : _a.writeText(window.location.href.split('#')[0] + '#post-' + post.id);
-        toast('Link copied to clipboard', 'success');
-        setShareMenuOpen(false);
-    };
-    const shareNow = async () => {
-        setSharing(true);
-        try {
-            await shareToTimeline(post, profile.id, shareComment);
-            toast('Shared to your timeline', 'success');
-            setShareComment('');
-            setShareMenuOpen(false);
-        }
-        catch (e) {
-            toast(e.message, 'error');
-        }
-        finally {
-            setSharing(false);
-        }
-    };
     const deletePost = async () => {
         if (!confirm('Delete this post?'))
             return;
@@ -1759,7 +1956,9 @@ function PostCard({ post, go }) {
                         " \u00B7 ",
                         timeAgo(post.createdAt),
                         post.edited ? ' · edited' : ''),
-                    React.createElement(TaggedLine, { users: post.taggedUsers, go: go }))),
+                    React.createElement(TaggedLine, { users: post.taggedUsers, go: go }),
+                    React.createElement(PostMetaLine, { post: post }),
+                    post.music && React.createElement("p", { className: "text-xs text-brand-600 dark:text-brand-400 flex items-center gap-1 mt-0.5" }, React.createElement("i", { className: "fa-solid fa-music" }), post.music.title + ' · ' + post.music.artist))),
             React.createElement("div", { className: "relative" },
                 React.createElement("button", { onClick: () => setMenuOpen(m => !m), className: "text-slate-400 px-2" },
                     React.createElement("i", { className: "fa-solid fa-ellipsis text-lg" })),
@@ -1784,7 +1983,7 @@ function PostCard({ post, go }) {
                     formatCompactCount(likesCount))) : React.createElement("span", null),
                 (commentsCount > 0 || sharesCount > 0) && (React.createElement("div", { className: "flex items-center gap-3" },
                     commentsCount > 0 && React.createElement("button", { onClick: () => setShowComments(s => !s), className: "hover:underline" }, formatCompactCount(commentsCount) + (commentsCount === 1 ? ' comment' : ' comments')),
-                    sharesCount > 0 && React.createElement("button", { onClick: () => setShareMenuOpen(v => !v), className: "hover:underline" }, formatCompactCount(sharesCount) + (sharesCount === 1 ? ' share' : ' shares')))))),
+                    sharesCount > 0 && React.createElement("button", { onClick: () => setShareSheetOpen(true), className: "hover:underline" }, formatCompactCount(sharesCount) + (sharesCount === 1 ? ' share' : ' shares')))))),
             React.createElement("div", { className: "grid grid-cols-3 border-t border-slate-100 dark:border-ink-700 -mx-1" },
                 React.createElement("button", { onClick: toggleLike, className: "flex items-center justify-center gap-2 py-2 mt-1 mx-1 rounded-lg text-[15px] font-semibold transition " + (liked ? "text-brand-600" : "text-slate-500 dark:text-slate-400") + " hover:bg-slate-50 dark:hover:bg-ink-700" },
                     React.createElement("i", { className: (liked ? "fa-solid" : "fa-regular") + " fa-thumbs-up text-lg" }),
@@ -1792,18 +1991,10 @@ function PostCard({ post, go }) {
                 React.createElement("button", { onClick: () => setShowComments(s => !s), className: "flex items-center justify-center gap-2 py-2 mt-1 mx-1 rounded-lg text-[15px] font-semibold text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-ink-700 transition" },
                     React.createElement("i", { className: "fa-regular fa-comment text-lg" }),
                     "Comment"),
-                React.createElement("div", { className: "relative mt-1 mx-1" },
-                    React.createElement("button", { onClick: () => setShareMenuOpen(v => !v), className: "w-full flex items-center justify-center gap-2 py-2 rounded-lg text-[15px] font-semibold text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-ink-700 transition" },
-                        React.createElement("i", { className: "fa-solid fa-share text-lg" }),
-                        "Share"),
-                    shareMenuOpen && (React.createElement("div", { className: "absolute bottom-full right-0 mb-2 bg-white dark:bg-ink-700 shadow-lg rounded-xl border border-slate-100 dark:border-ink-600 z-20 w-64 p-3" },
-                        React.createElement("textarea", { value: shareComment, onChange: e => setShareComment(e.target.value), placeholder: "Say something about this (optional)\u2026", className: "w-full bg-slate-50 dark:bg-ink-800 rounded-lg p-2 text-xs resize-none mb-2", rows: 2 }),
-                        React.createElement("button", { onClick: shareNow, disabled: sharing, className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white text-xs font-semibold py-2 rounded-lg mb-1.5" },
-                            React.createElement("i", { className: "fa-solid fa-share mr-1.5" }),
-                            sharing ? 'Sharing…' : 'Share to Your Timeline'),
-                        React.createElement("button", { onClick: copyLink, className: "w-full bg-slate-100 dark:bg-ink-600 text-xs font-semibold py-2 rounded-lg" },
-                            React.createElement("i", { className: "fa-regular fa-link mr-1.5" }),
-                            "Copy Link"))))),
+                React.createElement("button", { onClick: () => setShareSheetOpen(true), className: "flex items-center justify-center gap-2 py-2 mt-1 mx-1 rounded-lg text-[15px] font-semibold text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-ink-700 transition" },
+                    React.createElement("i", { className: "fa-solid fa-share text-lg" }),
+                    "Share")),
+            shareSheetOpen && React.createElement(ShareSheet, { post: post, onClose: () => setShareSheetOpen(false) }),
             showComments && React.createElement(Comments, { postId: post.id, go: go }), React.createElement("div", { className: "pb-3" }))));
 }
 function SharedPostPreview({ postId, go }) {
