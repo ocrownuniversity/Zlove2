@@ -29,9 +29,9 @@
           },
           colors: {
             brand: {
-              50: '#f0f9ff', 100: '#e0f2fe', 200: '#bae6fd', 300: '#7dd3fc',
-              400: '#38bdf8', 500: '#0ea5e9', 600: '#0284c7', 700: '#0369a1',
-              800: '#075985', 900: '#0c4a6e'
+              50: '#eef2f9', 100: '#d9e2f2', 200: '#b3c5e6', 300: '#84a2d1',
+              400: '#5580ba', 500: '#33619e', 600: '#1e3a66', 700: '#152c4d',
+              800: '#0f2038', 900: '#0a1729'
             },
             ink: { 900: '#0a0e1a', 800: '#121729', 700: '#1b2138' }
           }
@@ -1767,10 +1767,10 @@ function CreatePostScreen({ go, route }) {
                 [
                     { icon: 'fa-regular fa-image', color: 'text-emerald-500', label: 'Photos/Videos', onClick: () => fileRef.current.click() },
                     { icon: 'fa-solid fa-music', color: 'text-pink-500', label: music ? music.title + ' · ' + music.artist : 'Music', badge: !music ? 'New' : null, onClick: () => setShowMusicPicker(true) },
-                    { icon: 'fa-solid fa-user-plus', color: 'text-sky-500', label: tagged.length ? tagged.length + ' tagged' : 'Tag people', onClick: () => setShowTagPicker(v => !v) },
+                    { icon: 'fa-solid fa-user-plus', color: 'text-brand-600', label: tagged.length ? tagged.length + ' tagged' : 'Tag people', onClick: () => setShowTagPicker(v => !v) },
                     { icon: 'fa-solid fa-location-dot', color: 'text-red-500', label: location || 'Add location', onClick: () => setShowLocationPicker(true) },
                     { icon: 'fa-regular fa-face-smile', color: 'text-amber-500', label: feeling ? `${feeling.emoji} ${feeling.label}` : 'Feeling/activity', onClick: () => setShowFeelingPicker(true) },
-                    { icon: 'fa-brands fa-facebook-messenger', color: 'text-sky-500', label: 'Get messages', onClick: soon },
+                    { icon: 'fa-brands fa-facebook-messenger', color: 'text-brand-600', label: 'Get messages', onClick: soon },
                     { icon: 'fa-solid fa-calendar-days', color: 'text-red-500', label: 'Create Event', onClick: soon },
                     { icon: 'fa-solid fa-video', color: 'text-red-500', label: 'Go live', onClick: soon },
                 ].map((item, i) => (React.createElement("button", { key: i, onClick: item.onClick, className: "w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-slate-50 dark:hover:bg-ink-800 transition" },
@@ -2204,6 +2204,7 @@ function CommentThread({ comment, allComments, depth, go, postComment }) {
     const { profile } = useAuth();
     const [author, setAuthor] = useState(null);
     const [replying, setReplying] = useState(false);
+    const [showReplies, setShowReplies] = useState(false);
     useEffect(() => {
         const unsub = db.collection('users').doc(comment.authorId).onSnapshot(s => setAuthor(s.exists ? s.data() : null));
         return unsub;
@@ -2228,12 +2229,20 @@ function CommentThread({ comment, allComments, depth, go, postComment }) {
                     comment.image && React.createElement("img", { src: comment.image, onClick: () => openLightbox(comment.image), loading: "lazy", className: "mt-1.5 rounded-lg max-h-56 max-w-full object-cover cursor-zoom-in" })),
                 React.createElement("div", { className: "flex items-center gap-3 mt-1 pl-3 text-[11px] font-semibold text-slate-400" },
                     React.createElement("button", { onClick: () => setReplying(r => !r), className: "hover:underline" }, "Reply")),
-                replying && (React.createElement("div", { className: "mt-2" },
+                replying && React.createElement("div", { className: "mt-2" },
                     React.createElement(CommentComposer, { avatarUser: profile, compact: true, autoFocus: true, placeholder: "Reply to " + author.displayName + "\u2026", onCancel: () => setReplying(false), onSubmit: async (p) => {
                             await postComment(Object.assign({}, p, { parentId: comment.id, replyToUser: author }));
                             setReplying(false);
-                        } })))),
-        children.length > 0 && (React.createElement("div", { className: "mt-2 space-y-2" }, children.map(c => React.createElement(CommentThread, { key: c.id, comment: c, allComments: allComments, depth: depth + 1, go: go, postComment: postComment })))))));
+                            setShowReplies(true);
+                        } })),
+                // Replies are hidden by default — just a "N replies" toggle under this comment —
+                // and only expand (nested right here, under this specific comment) once tapped.
+                children.length > 0 && !showReplies && React.createElement("button", { onClick: () => setShowReplies(true), className: "flex items-center gap-1.5 mt-1.5 pl-3 text-[11px] font-semibold text-slate-400 hover:underline" },
+                    React.createElement("i", { className: "fa-solid fa-share text-[10px] -scale-x-100" }),
+                    children.length + (children.length === 1 ? ' reply' : ' replies')),
+                children.length > 0 && showReplies && React.createElement("div", { className: "mt-2 space-y-2" },
+                    children.map(c => React.createElement(CommentThread, { key: c.id, comment: c, allComments: allComments, depth: depth + 1, go: go, postComment: postComment })),
+                    React.createElement("button", { onClick: () => setShowReplies(false), className: "text-[11px] font-semibold text-slate-400 hover:underline ml-1" }, "Hide replies"))))));
 }
 /* ============================== HOME FEED ============================== */
 function StoriesRow({ go }) {
