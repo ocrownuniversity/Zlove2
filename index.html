@@ -757,6 +757,68 @@ function useMyFanPages(uid) {
     }, [uid]);
     return pages;
 }
+// Live follower count for a Page, derived from the pageFollows collection so it is always
+// correct and instantly consistent everywhere it's shown (page profile, post header, etc.)
+// without needing a denormalized counter that could drift.
+function useFollowersCount(pageId) {
+    const [count, setCount] = useState(0);
+    useEffect(() => {
+        if (!pageId) { setCount(0); return; }
+        const unsub = db.collection('pageFollows').where('pageId', '==', pageId)
+            .onSnapshot(snap => setCount(snap.size), () => { });
+        return unsub;
+    }, [pageId]);
+    return count;
+}
+// Live follow status for the signed-in user against one Page. Reads a single doc
+// (uid_pageId) rather than the whole pageFollows-for-this-page query, so every button on
+// the site (page profile, timeline posts, Page cards) stays in sync the instant a follow
+// or unfollow happens anywhere, with no extra writes or caching to fall out of date.
+function useIsFollowingPage(pageId, uid) {
+    const [following, setFollowing] = useState(false);
+    useEffect(() => {
+        if (!pageId || !uid) { setFollowing(false); return; }
+        const unsub = db.collection('pageFollows').doc(uid + '_' + pageId)
+            .onSnapshot(s => setFollowing(s.exists), () => { });
+        return unsub;
+    }, [pageId, uid]);
+    return following;
+}
+// Shared Follow/Following control — used on the Page profile header and on every Page post
+// in the timeline, so following/unfollowing from either place updates both immediately since
+// they both read the same live doc via useIsFollowingPage.
+function PageFollowButton({ page, size = 'md', className = '' }) {
+    const { profile: me } = useAuth();
+    const toast = useToast();
+    const following = useIsFollowingPage(page === null || page === void 0 ? void 0 : page.id, me === null || me === void 0 ? void 0 : me.id);
+    const [busy, setBusy] = useState(false);
+    if (!page || !me || page.ownerId === me.id) return null;
+    const toggle = async (e) => {
+        if (e) e.stopPropagation();
+        if (busy) return;
+        setBusy(true);
+        try {
+            if (following) await unfollowPage(page.id, me.id);
+            else await followPage(page.id, me.id, page.ownerId);
+        }
+        catch (err) {
+            toast(err.message, 'error');
+        }
+        finally {
+            setBusy(false);
+        }
+    };
+    // `className` fully controls sizing/spacing for callers that need to fit a specific layout
+    // (e.g. the full-width button on the Page profile); the compact `size: 'sm'` variant used in
+    // the timeline supplies its own small padding when no className is given.
+    const small = size === 'sm';
+    const baseCls = className || (small ? "text-xs px-3 py-1.5 rounded-full" : "text-sm px-4 py-2 rounded-xl");
+    return React.createElement("button", {
+        onClick: toggle, disabled: busy,
+        className: baseCls + " font-semibold shrink-0 transition disabled:opacity-60 text-center " +
+            (following ? "bg-slate-100 dark:bg-ink-700 text-slate-600 dark:text-slate-300" : "bg-brand-600 hover:bg-brand-700 text-white")
+    }, busy ? '\u2026' : (following ? (React.createElement(React.Fragment, null, React.createElement("i", { className: "fa-solid fa-check mr-1.5" }), "Following")) : (React.createElement(React.Fragment, null, React.createElement("i", { className: "fa-solid fa-plus mr-1.5" }), "Follow"))));
+}
 /* ============================== POST SHARING ============================== */
 async function shareToTimeline(originalPost, meId, comment) {
     await db.collection('posts').add({
@@ -857,9 +919,26 @@ async function unfollowPage(pageId, uid) {
 async function recordPageView(pageId, uid) {
     await db.collection('fanPages').doc(pageId).collection('views').doc(uid).set({ uid, createdAt: FieldValue.serverTimestamp() }, { merge: true });
 }
+// About-section contact fields are all optional — trimmed to '' then stored as null so
+// PageAbout can cleanly check `page.website && ...` and only render fields the owner actually filled in.
+function cleanPageContactFields(fields) {
+    return {
+        website: (fields.website || '').trim() || null,
+        email: (fields.email || '').trim() || null,
+        phone: (fields.phone || '').trim() || null,
+        location: (fields.location || '').trim() || null,
+    };
+}
+// Prepends https:// to bare domains (e.g. "example.com") so the About section's website
+// link is always a valid, clickable absolute URL regardless of how the owner typed it.
+function normalizeWebsiteUrl(url) {
+    if (!url) return '';
+    return /^https?:\/\//i.test(url) ? url : 'https://' + url;
+}
 async function createFanPage(profileId, fields) {
     const uname = fields.username.toLowerCase();
     let newId = null;
+    const contact = cleanPageContactFields(fields);
     await db.runTransaction(async (tx) => {
         const unameRef = db.collection('pageUsernames').doc(uname);
         const unameSnap = await tx.get(unameRef);
@@ -868,18 +947,18 @@ async function createFanPage(profileId, fields) {
         const pageRef = db.collection('fanPages').doc();
         newId = pageRef.id;
         tx.set(unameRef, { pageId: pageRef.id });
-        tx.set(pageRef, {
+        tx.set(pageRef, Object.assign({
             ownerId: profileId, displayName: fields.displayName.trim(), username: uname,
             category: fields.category, bio: fields.bio.trim(), photoURL: null, coverURL: null,
             verified: false, suspended: false, createdAt: FieldValue.serverTimestamp()
-        });
+        }, contact));
     });
     return newId;
 }
 async function updateFanPage(pageId, fields) {
-    await db.collection('fanPages').doc(pageId).update({
+    await db.collection('fanPages').doc(pageId).update(Object.assign({
         displayName: fields.displayName.trim(), category: fields.category, bio: fields.bio.trim()
-    });
+    }, cleanPageContactFields(fields)));
 }
 async function deleteFanPagePermanently(page) {
     await db.collection('pageUsernames').doc((page.username || '').toLowerCase()).delete().catch(() => { });
@@ -2161,10 +2240,10 @@ function PostCard({ post, go }) {
     if (!author)
         return React.createElement(PostSkeleton, null);
     return (React.createElement("div", { id: 'post-' + post.id, className: "bg-white dark:bg-ink-800 -mx-2 sm:mx-0 rounded-none sm:rounded-2xl border-y sm:border border-slate-100 dark:border-ink-700 mb-2 fade-in overflow-hidden" },
-        React.createElement("div", { className: "flex items-start justify-between px-3 sm:px-4 pt-3 mb-2" },
-            React.createElement("div", { className: "flex items-center gap-3 cursor-pointer", onClick: () => go(post.pageId ? { name: 'page', id: post.pageId } : { name: 'profile', uid: post.authorId }) },
+        React.createElement("div", { className: "flex items-start justify-between gap-2 px-3 sm:px-4 pt-3 mb-2" },
+            React.createElement("div", { className: "flex items-center gap-3 cursor-pointer min-w-0 flex-1", onClick: () => go(post.pageId ? { name: 'page', id: post.pageId } : { name: 'profile', uid: post.authorId }) },
                 React.createElement(Avatar, { user: author, size: 13 }),
-                React.createElement("div", null,
+                React.createElement("div", { className: "min-w-0" },
                     React.createElement("p", { className: "font-bold text-base flex items-center gap-1.5" }, author.displayName,
                         post.pageId && React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-brand-600 bg-brand-50 dark:bg-brand-900/30 dark:text-brand-400 px-1.5 py-0.5 rounded" }, "Page")),
                     React.createElement("p", { className: "text-sm text-slate-400" },
@@ -2176,6 +2255,7 @@ function PostCard({ post, go }) {
                     React.createElement(TaggedLine, { users: post.taggedUsers, go: go }),
                     React.createElement(PostMetaLine, { post: post }),
                     post.music && React.createElement("p", { className: "text-xs text-brand-600 dark:text-brand-400 flex items-center gap-1.5 mt-0.5" }, React.createElement(MusicPlayBadge, { music: post.music, size: 4 }), post.music.title + ' · ' + post.music.artist))),
+            post.pageId && React.createElement(PageFollowButton, { page: author, size: "sm" }),
             React.createElement("div", { className: "relative" },
                 React.createElement("button", { onClick: () => setMenuOpen(m => !m), className: "text-slate-400 px-2" },
                     React.createElement("i", { className: "fa-solid fa-ellipsis text-lg" })),
@@ -3029,6 +3109,13 @@ function MyPagesScreen({ go }) {
             React.createElement("p", null, "You don't manage any Pages yet."))),
         React.createElement("div", { className: "space-y-2" }, (myPages || []).map(p => React.createElement(PageCard, { key: p.id, page: p, go: go })))));
 }
+// Small labeled input helper so every field in the settings form (including the new About
+// & contact fields) shares the same responsive layout, label style, and spacing.
+function PageFormField({ label, children }) {
+    return React.createElement("div", null,
+        React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, label),
+        children);
+}
 function PageFormScreen({ id, go }) {
     const { profile } = useAuth();
     const toast = useToast();
@@ -3038,7 +3125,12 @@ function PageFormScreen({ id, go }) {
     const [username, setUsername] = useState('');
     const [category, setCategory] = useState(PAGE_CATEGORIES[0]);
     const [bio, setBio] = useState('');
+    const [website, setWebsite] = useState('');
+    const [email, setEmail] = useState('');
+    const [phone, setPhone] = useState('');
+    const [location, setLocation] = useState('');
     const [busy, setBusy] = useState(false);
+    const inputCls = "w-full mt-1 px-3 py-2.5 sm:py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm";
     useEffect(() => {
         if (!isEdit)
             return;
@@ -3050,6 +3142,10 @@ function PageFormScreen({ id, go }) {
                 setUsername(d.username || '');
                 setCategory(d.category || PAGE_CATEGORIES[0]);
                 setBio(d.bio || '');
+                setWebsite(d.website || '');
+                setEmail(d.email || '');
+                setPhone(d.phone || '');
+                setLocation(d.location || '');
             }
         });
         return unsub;
@@ -3058,19 +3154,27 @@ function PageFormScreen({ id, go }) {
         return React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026");
     if (isEdit && (page === null || page.ownerId !== profile.id))
         return React.createElement("p", { className: "text-sm text-slate-400" }, "You don't manage this Page.");
+    // Contact fields are all optional, but validate format when something was actually typed
+    // so bad data (e.g. a malformed email) never gets saved and silently breaks the About section.
+    const emailValid = !email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
     const submit = async (e) => {
         e.preventDefault();
         if (!displayName.trim() || (!isEdit && !username.trim()))
             return;
+        if (!emailValid) {
+            toast('Please enter a valid email address', 'error');
+            return;
+        }
         setBusy(true);
         try {
+            const fields = { displayName, category, bio, website, email, phone, location };
             if (isEdit) {
-                await updateFanPage(id, { displayName, category, bio });
+                await updateFanPage(id, fields);
                 toast('Page updated', 'success');
                 go({ name: 'page', id });
             }
             else {
-                const newId = await createFanPage(profile.id, { displayName, username, category, bio });
+                const newId = await createFanPage(profile.id, Object.assign({ username }, fields));
                 toast('Page created!', 'success');
                 go({ name: 'page', id: newId });
             }
@@ -3082,36 +3186,69 @@ function PageFormScreen({ id, go }) {
             setBusy(false);
         }
     };
-    return (React.createElement("div", { className: "max-w-lg mx-auto" },
+    return (React.createElement("div", { className: "max-w-lg mx-auto px-1 sm:px-0" },
         React.createElement("button", { onClick: () => go(isEdit ? { name: 'page', id } : { name: 'myPages' }), className: "text-sm text-slate-400 mb-3" },
             React.createElement("i", { className: "fa-solid fa-arrow-left mr-1.5" }), "Back"),
-        React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, isEdit ? 'Edit Page' : 'Create a Page'),
+        React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, isEdit ? 'Page Settings' : 'Create a Page'),
         React.createElement("p", { className: "text-sm text-slate-400 mb-5" }, "Pages are public and separate from your personal profile."),
         React.createElement("form", { onSubmit: submit, className: "space-y-4" },
-            React.createElement("div", null,
-                React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Page name"),
-                React.createElement("input", { value: displayName, onChange: e => setDisplayName(e.target.value), required: true, className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm", placeholder: "e.g. Blueface Coffee Co." })),
-            !isEdit && React.createElement("div", null,
-                React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Page username"),
+            React.createElement(PageFormField, { label: "Page name" },
+                React.createElement("input", { value: displayName, onChange: e => setDisplayName(e.target.value), required: true, className: inputCls, placeholder: "e.g. Blueface Coffee Co." })),
+            !isEdit && React.createElement(PageFormField, { label: "Page username" },
                 React.createElement("div", { className: "relative mt-1" },
                     React.createElement("span", { className: "absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm" }, "@"),
-                    React.createElement("input", { value: username, onChange: e => setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, '')), required: true, className: "w-full pl-7 pr-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm", placeholder: "bluefacecoffee" }))),
-            React.createElement("div", null,
-                React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Category"),
-                React.createElement("select", { value: category, onChange: e => setCategory(e.target.value), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" },
+                    React.createElement("input", { value: username, onChange: e => setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, '')), required: true, className: "w-full pl-7 pr-3 py-2.5 sm:py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm", placeholder: "bluefacecoffee" }))),
+            React.createElement(PageFormField, { label: "Category" },
+                React.createElement("select", { value: category, onChange: e => setCategory(e.target.value), className: inputCls },
                     PAGE_CATEGORIES.map(c => React.createElement("option", { key: c, value: c }, c)))),
-            React.createElement("div", null,
-                React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "About / bio"),
-                React.createElement("textarea", { value: bio, onChange: e => setBio(e.target.value), rows: 3, className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm", placeholder: "Tell people what this Page is about\u2026" })),
-            React.createElement("button", { disabled: busy, type: "submit", className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl py-2.5 font-semibold text-sm" }, busy ? 'Saving…' : (isEdit ? 'Save changes' : 'Create Page')))));
+            React.createElement(PageFormField, { label: "About / bio" },
+                React.createElement("textarea", { value: bio, onChange: e => setBio(e.target.value), rows: 3, className: inputCls, placeholder: "Tell people what this Page is about\u2026" })),
+            React.createElement("div", { className: "pt-2 border-t border-slate-100 dark:border-ink-700" },
+                React.createElement("p", { className: "text-sm font-bold mb-0.5" }, "Contact info"),
+                React.createElement("p", { className: "text-xs text-slate-400 mb-3" }, "Shown in the Page's About section \u2014 leave any field blank to hide it.")),
+            React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-4" },
+                React.createElement(PageFormField, { label: "Website" },
+                    React.createElement("input", { type: "text", value: website, onChange: e => setWebsite(e.target.value), className: inputCls, placeholder: "www.example.com" })),
+                React.createElement(PageFormField, { label: "Email address" },
+                    React.createElement("input", { type: "email", value: email, onChange: e => setEmail(e.target.value), className: inputCls + (!emailValid ? " border-red-400" : ""), placeholder: "hello@example.com" })),
+                React.createElement(PageFormField, { label: "Phone number" },
+                    React.createElement("input", { type: "tel", value: phone, onChange: e => setPhone(e.target.value), className: inputCls, placeholder: "+1 555 123 4567" })),
+                React.createElement(PageFormField, { label: "Location" },
+                    React.createElement("input", { type: "text", value: location, onChange: e => setLocation(e.target.value), className: inputCls, placeholder: "City, Country" }))),
+            React.createElement("button", { disabled: busy, type: "submit", className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl py-3 sm:py-2.5 font-semibold text-sm" }, busy ? 'Saving…' : (isEdit ? 'Save changes' : 'Create Page')))));
+}
+// Renders the contact/about row for a Page — website, email, and phone are rendered as real
+// clickable links (mailto:/tel:/https:), and any field the owner left blank is simply omitted.
+function PageAboutRow({ icon, children }) {
+    return React.createElement("div", { className: "flex items-center gap-3 text-sm min-w-0" },
+        React.createElement("i", { className: "fa-solid " + icon + " text-slate-400 w-4 text-center shrink-0" }),
+        React.createElement("span", { className: "min-w-0 truncate" }, children));
+}
+function PageAbout({ page }) {
+    if (!page) return null;
+    const hasAnything = page.bio || page.website || page.email || page.phone || page.location || page.category;
+    if (!hasAnything) return null;
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-4 mb-4" },
+        React.createElement("h3", { className: "font-display text-base font-bold mb-3" }, "About"),
+        page.bio && React.createElement("p", { className: "text-sm mb-3 whitespace-pre-wrap" }, page.bio),
+        React.createElement("div", { className: "space-y-2.5" },
+            page.category && React.createElement(PageAboutRow, { icon: "fa-tag" }, page.category),
+            page.location && React.createElement(PageAboutRow, { icon: "fa-location-dot" }, page.location),
+            page.website && React.createElement(PageAboutRow, { icon: "fa-globe" },
+                React.createElement("a", { href: normalizeWebsiteUrl(page.website), target: "_blank", rel: "noopener noreferrer", className: "text-brand-600 dark:text-brand-400 font-semibold hover:underline" }, page.website)),
+            page.email && React.createElement(PageAboutRow, { icon: "fa-envelope" },
+                React.createElement("a", { href: "mailto:" + page.email, className: "text-brand-600 dark:text-brand-400 font-semibold hover:underline" }, page.email)),
+            page.phone && React.createElement(PageAboutRow, { icon: "fa-phone" },
+                React.createElement("a", { href: "tel:" + page.phone.replace(/[^+\d]/g, ''), className: "text-brand-600 dark:text-brand-400 font-semibold hover:underline" }, page.phone))));
 }
 function PageProfileScreen({ id, go }) {
     const { profile: me } = useAuth();
     const toast = useToast();
     const [page, setPage] = useState(undefined);
     const [posts, setPosts] = useState([]);
-    const [followersCount, setFollowersCount] = useState(0);
-    const [following, setFollowing] = useState(false);
+    // Follower count and follow status now come from the same shared hooks used by
+    // PageFollowButton in the timeline, so this screen and every post header are always in sync.
+    const followersCount = useFollowersCount(id);
     const [menuOpen, setMenuOpen] = useState(false);
     const avatarInputRef = useRef();
     const coverInputRef = useRef();
@@ -3127,27 +3264,12 @@ function PageProfileScreen({ id, go }) {
         }, () => setPosts([]));
         return unsub;
     }, [id]);
-    useEffect(() => {
-        const unsub = db.collection('pageFollows').where('pageId', '==', id).onSnapshot(snap => {
-            setFollowersCount(snap.size);
-            setFollowing(snap.docs.some(d => d.id === me.id + '_' + id));
-        }, () => { });
-        return unsub;
-    }, [id, me.id]);
     useEffect(() => { recordPageView(id, me.id).catch(() => { }); }, [id, me.id]);
     if (page === undefined)
         return React.createElement(PostSkeleton, null);
     if (page === null)
         return React.createElement("p", { className: "text-sm text-slate-400" }, "This Page doesn't exist.");
     const isOwner = page.ownerId === me.id;
-    const toggleFollow = async () => {
-        try {
-            following ? await unfollowPage(id, me.id) : await followPage(id, me.id, page.ownerId);
-        }
-        catch (e) {
-            toast(e.message, 'error');
-        }
-    };
     const quickUpload = async (file, kind) => {
         if (!file)
             return;
@@ -3161,35 +3283,35 @@ function PageProfileScreen({ id, go }) {
     };
     return (React.createElement("div", null,
         React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 overflow-hidden mb-4" },
-            React.createElement("div", { className: "h-44 md:h-56 bg-gradient-to-r from-brand-500 to-brand-700 relative" },
+            React.createElement("div", { className: "h-36 sm:h-44 md:h-56 bg-gradient-to-r from-brand-500 to-brand-700 relative" },
                 page.coverURL && React.createElement("img", { src: page.coverURL, onClick: () => openLightbox(page.coverURL), className: "w-full h-full object-cover cursor-zoom-in" }),
-                isOwner && React.createElement("button", { onClick: () => coverInputRef.current.click(), className: "absolute bottom-3 right-3 bg-black/50 text-white text-xs font-semibold px-3 py-1.5 rounded-full" }, React.createElement("i", { className: "fa-solid fa-camera mr-1.5" }), "Edit cover"),
+                isOwner && React.createElement("button", { onClick: () => coverInputRef.current.click(), className: "absolute bottom-3 right-3 bg-black/50 text-white text-xs font-semibold px-2.5 sm:px-3 py-1.5 rounded-full" }, React.createElement("i", { className: "fa-solid fa-camera mr-1.5" }), React.createElement("span", { className: "hidden sm:inline" }, "Edit cover")),
                 React.createElement("input", { ref: coverInputRef, type: "file", accept: "image/*", hidden: true, onChange: e => quickUpload(e.target.files[0], 'covers') })),
-            React.createElement("div", { className: "px-4 pb-4" },
+            React.createElement("div", { className: "px-3 sm:px-4 pb-4" },
                 React.createElement("div", { className: "-mt-10 mb-2 relative inline-block" },
                     React.createElement(Avatar, { user: page, size: 24, onClick: () => page.photoURL && openLightbox(page.photoURL) }),
                     React.createElement("div", { className: "absolute inset-0 rounded-full ring-4 ring-white dark:ring-ink-800 pointer-events-none" }),
                     isOwner && React.createElement("button", { onClick: () => avatarInputRef.current.click(), className: "absolute bottom-0 right-0 bg-brand-600 text-white w-7 h-7 rounded-full flex items-center justify-center text-xs" }, React.createElement("i", { className: "fa-solid fa-camera" })),
                     React.createElement("input", { ref: avatarInputRef, type: "file", accept: "image/*", hidden: true, onChange: e => quickUpload(e.target.files[0], 'avatars') })),
-                React.createElement("p", { className: "font-display text-xl font-bold flex items-center gap-1.5" }, page.displayName,
+                React.createElement("p", { className: "font-display text-lg sm:text-xl font-bold flex items-center gap-1.5 flex-wrap" }, page.displayName,
                     page.verified && React.createElement("i", { className: "fa-solid fa-badge-check text-brand-500 text-base" }),
                     page.suspended && React.createElement("span", { className: "text-amber-500 text-xs font-semibold" }, "(suspended by admin)")),
                 React.createElement("p", { className: "text-sm text-slate-400 mb-2" }, "@", page.username, " \u00B7 ", page.category),
-                page.bio && React.createElement("p", { className: "text-sm mb-3 whitespace-pre-wrap" }, page.bio),
                 React.createElement("div", { className: "flex items-center gap-4 text-sm mb-3" },
                     React.createElement("span", null, React.createElement("b", null, followersCount), " followers"),
                     React.createElement("span", null, React.createElement("b", null, posts.length), " posts")),
-                React.createElement("div", { className: "flex items-center gap-2" },
+                React.createElement("div", { className: "flex flex-wrap items-center gap-2" },
                     isOwner ? (React.createElement(React.Fragment, null,
-                        React.createElement("button", { onClick: () => go({ name: 'createPost', pageId: id }), className: "flex-1 bg-brand-600 hover:bg-brand-700 text-white rounded-xl py-2.5 text-sm font-semibold" }, React.createElement("i", { className: "fa-solid fa-plus mr-2 text-xs" }), "Create post"),
-                        React.createElement("button", { onClick: () => go({ name: 'pageAnalytics', id }), className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center", title: "Insights" }, React.createElement("i", { className: "fa-solid fa-chart-line" })),
-                        React.createElement("div", { className: "relative" },
+                        React.createElement("button", { onClick: () => go({ name: 'createPost', pageId: id }), className: "flex-1 min-w-[140px] bg-brand-600 hover:bg-brand-700 text-white rounded-xl py-2.5 text-sm font-semibold" }, React.createElement("i", { className: "fa-solid fa-plus mr-2 text-xs" }), "Create post"),
+                        React.createElement("button", { onClick: () => go({ name: 'pageAnalytics', id }), className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center shrink-0", title: "Insights" }, React.createElement("i", { className: "fa-solid fa-chart-line" })),
+                        React.createElement("div", { className: "relative shrink-0" },
                             React.createElement("button", { onClick: () => setMenuOpen(v => !v), className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center" }, React.createElement("i", { className: "fa-solid fa-ellipsis" })),
                             menuOpen && React.createElement("div", { className: "absolute right-0 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-600 z-10 w-48" },
-                                React.createElement("button", { onClick: () => { setMenuOpen(false); go({ name: 'pageForm', id }); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Edit Page info"),
+                                React.createElement("button", { onClick: () => { setMenuOpen(false); go({ name: 'pageForm', id }); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Page Settings"),
                                 React.createElement("button", { onClick: async () => { if (confirm('Delete this Page permanently? This cannot be undone.')) { setMenuOpen(false); await deleteFanPagePermanently(page); toast('Page deleted', 'success'); go({ name: 'myPages' }); } }, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Delete Page"))))) : (React.createElement(React.Fragment, null,
-                        React.createElement("button", { onClick: toggleFollow, className: "flex-1 rounded-xl py-2.5 text-sm font-semibold " + (following ? "bg-slate-100 dark:bg-ink-700" : "bg-brand-600 hover:bg-brand-700 text-white") }, following ? 'Following' : 'Follow'),
-                        React.createElement("button", { onClick: () => go({ name: 'chat', chatId: chatIdFor(me.id, page.ownerId), otherUid: page.ownerId }), className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center" }, React.createElement("i", { className: "fa-solid fa-message" }))))))),
+                        React.createElement(PageFollowButton, { page: page, className: "flex-1 min-w-[140px] rounded-xl py-2.5 text-sm" }),
+                        React.createElement("button", { onClick: () => go({ name: 'chat', chatId: chatIdFor(me.id, page.ownerId), otherUid: page.ownerId }), className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center shrink-0" }, React.createElement("i", { className: "fa-solid fa-message" }))))))),
+        React.createElement(PageAbout, { page: page }),
         posts.length === 0 && (React.createElement("div", { className: "text-center py-16 text-slate-400" },
             React.createElement("i", { className: "fa-regular fa-note-sticky text-4xl mb-3" }),
             React.createElement("p", null, "This Page hasn't posted anything yet."))),
