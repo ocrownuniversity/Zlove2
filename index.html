@@ -354,6 +354,25 @@ function LocationPicker({ onSelect, onClose }) {
             React.createElement("span", { className: "w-9 h-9 rounded-full bg-red-50 dark:bg-red-900/20 text-red-500 flex items-center justify-center shrink-0" }, React.createElement("i", { className: "fa-solid fa-location-dot" })),
             React.createElement("span", { className: "text-sm font-semibold" }, l))));
 }
+// "Post as" switcher — lets the composer post as the signed-in user's personal profile or as
+// any Page they manage. Posts made as a Page carry pageId so PostCard displays the Page's
+// identity (name/avatar/link) instead of the poster's personal profile everywhere it renders.
+function PostingAsPicker({ value, myPages, profile, onChange, onClose }) {
+    return React.createElement(BottomSheet, { title: "Post as", onClose: onClose },
+        React.createElement("button", { onClick: () => onChange({ type: 'user' }), className: "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-ink-700 text-left " + (value.type === 'user' ? "bg-brand-50 dark:bg-brand-900/20" : "") },
+            React.createElement(Avatar, { user: profile, size: 9 }),
+            React.createElement("span", { className: "flex-1 min-w-0" },
+                React.createElement("p", { className: "text-sm font-semibold truncate" }, profile.displayName),
+                React.createElement("p", { className: "text-xs text-slate-400" }, "Personal profile")),
+            value.type === 'user' && React.createElement("i", { className: "fa-solid fa-circle-check text-brand-600" })),
+        myPages.length > 0 && React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase px-3 pt-3 pb-1" }, "Your Pages"),
+        myPages.map(p => React.createElement("button", { key: p.id, onClick: () => onChange({ type: 'page', page: p }), className: "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-ink-700 text-left " + (value.type === 'page' && value.page.id === p.id ? "bg-brand-50 dark:bg-brand-900/20" : "") },
+            React.createElement(Avatar, { user: p, size: 9 }),
+            React.createElement("span", { className: "flex-1 min-w-0" },
+                React.createElement("p", { className: "text-sm font-semibold truncate" }, p.displayName),
+                React.createElement("p", { className: "text-xs text-slate-400" }, p.category)),
+            value.type === 'page' && value.page.id === p.id && React.createElement("i", { className: "fa-solid fa-circle-check text-brand-600" }))));
+}
 // Small line shown under an author's name: "is feeling happy 😊 — 📍 Lagos, Nigeria".
 function PostMetaLine({ post }) {
     if (!post.feeling && !post.location)
@@ -721,6 +740,23 @@ function useFriendships(uid) {
     return list;
 }
 function otherUidOfFriendship(f, uid) { return f.users[0] === uid ? f.users[1] : f.users[0]; }
+/* ============================== PAGES (Facebook-style business/fan Pages) ============================== */
+// Live list of every Page the signed-in user owns/manages, used by the composer's "Post as"
+// switcher, the nav "Pages" entry, and the "My Pages" screen. Derived live from fanPages so it
+// never goes stale when a Page is created, edited, or deleted.
+function useMyFanPages(uid) {
+    const [pages, setPages] = useState(null);
+    useEffect(() => {
+        if (!uid) {
+            setPages([]);
+            return;
+        }
+        const unsub = db.collection('fanPages').where('ownerId', '==', uid)
+            .onSnapshot(snap => setPages(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setPages([]));
+        return unsub;
+    }, [uid]);
+    return pages;
+}
 /* ============================== POST SHARING ============================== */
 async function shareToTimeline(originalPost, meId, comment) {
     await db.collection('posts').add({
@@ -796,6 +832,61 @@ async function toggleListingFavorite(listingId, uid, favorited) {
 async function recordListingView(listingId, uid) {
     await db.collection('listings').doc(listingId).collection('views').doc(uid).set({ uid, createdAt: FieldValue.serverTimestamp() }, { merge: true });
 }
+/* ---- Page helpers ---- */
+async function uploadPageImage(pageId, file, kind) {
+    const compressed = await compressImage(file, kind === 'avatars' ? 512 : 1200);
+    const ref = storage.ref(`pageAssets/${pageId}/${kind === 'avatars' ? 'photo' : 'cover'}.jpg`);
+    await ref.put(compressed, { contentType: 'image/jpeg' });
+    const url = await ref.getDownloadURL();
+    await db.collection('fanPages').doc(pageId).update({ [kind === 'avatars' ? 'photoURL' : 'coverURL']: url });
+    return url;
+}
+// Follows are their own doc (uid_pageId) so the count is always derivable live and a follow
+// can never be duplicated — same pattern as the personal `follows` collection.
+async function followPage(pageId, uid, pageOwnerId) {
+    await db.collection('pageFollows').doc(uid + '_' + pageId).set({ uid, pageId, createdAt: FieldValue.serverTimestamp() });
+    if (pageOwnerId && pageOwnerId !== uid) {
+        db.collection('notifications').doc(pageOwnerId).collection('items').add({ type: 'page_follow', fromUserId: uid, pageId, read: false, createdAt: FieldValue.serverTimestamp() }).catch(() => { });
+    }
+}
+async function unfollowPage(pageId, uid) {
+    await db.collection('pageFollows').doc(uid + '_' + pageId).delete();
+}
+// One view doc per unique viewer uid, mirroring recordListingView, so "Page views" in
+// analytics reflects unique visitors rather than every page load.
+async function recordPageView(pageId, uid) {
+    await db.collection('fanPages').doc(pageId).collection('views').doc(uid).set({ uid, createdAt: FieldValue.serverTimestamp() }, { merge: true });
+}
+async function createFanPage(profileId, fields) {
+    const uname = fields.username.toLowerCase();
+    let newId = null;
+    await db.runTransaction(async (tx) => {
+        const unameRef = db.collection('pageUsernames').doc(uname);
+        const unameSnap = await tx.get(unameRef);
+        if (unameSnap.exists)
+            throw new Error('That Page username is already taken.');
+        const pageRef = db.collection('fanPages').doc();
+        newId = pageRef.id;
+        tx.set(unameRef, { pageId: pageRef.id });
+        tx.set(pageRef, {
+            ownerId: profileId, displayName: fields.displayName.trim(), username: uname,
+            category: fields.category, bio: fields.bio.trim(), photoURL: null, coverURL: null,
+            verified: false, suspended: false, createdAt: FieldValue.serverTimestamp()
+        });
+    });
+    return newId;
+}
+async function updateFanPage(pageId, fields) {
+    await db.collection('fanPages').doc(pageId).update({
+        displayName: fields.displayName.trim(), category: fields.category, bio: fields.bio.trim()
+    });
+}
+async function deleteFanPagePermanently(page) {
+    await db.collection('pageUsernames').doc((page.username || '').toLowerCase()).delete().catch(() => { });
+    await db.collection('fanPages').doc(page.id).delete();
+}
+async function adminVerifyPage(p) { await db.collection('fanPages').doc(p.id).update({ verified: !p.verified }); }
+async function adminSuspendPage(p) { await db.collection('fanPages').doc(p.id).update({ suspended: !p.suspended }); }
 async function requestListingPromotion(listingId) {
     await db.collection('listings').doc(listingId).update({ promotionStatus: 'pending' });
 }
@@ -1501,6 +1592,7 @@ function MainApp({ route, setRoute }) {
         { name: 'home', icon: 'fa-house', label: 'Home' },
         { name: 'search', icon: 'fa-user-group', label: 'People', badge: incomingRequestsCount },
         { name: 'marketplace', icon: 'fa-store', label: 'Marketplace' },
+        { name: 'myPages', icon: 'fa-flag', label: 'Pages' },
         { name: 'messages', icon: 'fa-comment-dots', label: 'Messages', badge: unreadMessages },
         { name: 'notifications', icon: 'fa-bell', label: 'Notifications' },
         { name: 'bookmarks', icon: 'fa-bookmark', label: 'Saved' },
@@ -1538,6 +1630,9 @@ function MainApp({ route, setRoute }) {
                         React.createElement("button", { onClick: () => setSidebarOpen(v => !v), className: "w-10 h-10 rounded-full bg-slate-100 dark:bg-ink-800 flex items-center justify-center text-slate-700 dark:text-slate-200" },
                             React.createElement("i", { className: "fa-solid fa-bars text-lg" })))),
                 sidebarOpen && React.createElement("div", { className: "px-4 pb-3 flex flex-col gap-1 border-t border-slate-100 dark:border-ink-800 pt-2" },
+                    React.createElement("button", { onClick: () => go({ name: 'myPages' }), className: "flex items-center gap-3 px-2 py-2.5 rounded-lg text-base font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-ink-800" },
+                        React.createElement("i", { className: "fa-solid fa-flag w-6 text-lg" }),
+                        "Pages"),
                     React.createElement("button", { onClick: () => go({ name: 'bookmarks' }), className: "flex items-center gap-3 px-2 py-2.5 rounded-lg text-base font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-ink-800" },
                         React.createElement("i", { className: "fa-solid fa-bookmark w-6 text-lg" }),
                         "Saved"),
@@ -1548,7 +1643,7 @@ function MainApp({ route, setRoute }) {
                         React.createElement("i", { className: "fa-solid fa-arrow-right-from-bracket w-6 text-lg" }),
                         "Sign out")),
                 React.createElement("div", { className: "flex items-center justify-around border-t border-slate-100 dark:border-ink-800 px-1" },
-                    nav.filter(n => n.name !== 'admin' && n.name !== 'bookmarks').map(n => React.createElement("button", { key: n.name, onClick: () => go(Object.assign({ name: n.name }, (n.params || {}))), className: "relative flex-1 flex items-center justify-center py-3" },
+                    nav.filter(n => n.name !== 'admin' && n.name !== 'bookmarks' && n.name !== 'myPages').map(n => React.createElement("button", { key: n.name, onClick: () => go(Object.assign({ name: n.name }, (n.params || {}))), className: "relative flex-1 flex items-center justify-center py-3" },
                         n.name === 'profile' ?
                             React.createElement("div", { className: "relative" },
                                 React.createElement(Avatar, { user: profile, size: 7 }),
@@ -1568,9 +1663,18 @@ function MainApp({ route, setRoute }) {
                 route.name === 'notifications' && React.createElement(NotificationsScreen, { go: go }),
                 route.name === 'bookmarks' && React.createElement(BookmarksScreen, { go: go }),
                 route.name === 'profile' && React.createElement(ProfileScreen, { uid: route.uid, go: go }),
+                route.name === 'myPages' && React.createElement(MyPagesScreen, { go: go }),
+                route.name === 'pageForm' && React.createElement(PageFormScreen, { id: route.id, go: go }),
+                route.name === 'page' && React.createElement(PageProfileScreen, { id: route.id, go: go }),
+                route.name === 'pageAnalytics' && React.createElement(PageAnalyticsScreen, { id: route.id, go: go }),
                 route.name !== 'chat' && React.createElement(Footer, { compact: true })))));
 }
 /* ============================== AVATAR ============================== */
+const PAGE_CATEGORIES = [
+    'Business', 'Brand', 'Public Figure', 'Community', 'Entertainment', 'Media/News',
+    'Nonprofit', 'Local Service', 'Church/Religious Org', 'Musician/Band', 'Restaurant/Cafe',
+    'Shopping/Retail', 'Education', 'Sports', 'App/Website', 'Other'
+];
 function Avatar({ user, size = 10, onClick }) {
     const src = (user === null || user === void 0 ? void 0 : user.photoURL) || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent((user === null || user === void 0 ? void 0 : user.displayName) || (user === null || user === void 0 ? void 0 : user.username) || '?')}`;
     return React.createElement("img", { onClick: onClick, src: src, className: `w-${size} h-${size} rounded-full object-cover shrink-0 ${onClick ? 'cursor-pointer' : ''}`, style: { width: size * 4, height: size * 4 } });
@@ -1641,6 +1745,9 @@ const AUDIENCE_OPTIONS = [
 function CreatePostScreen({ go, route }) {
     const { profile } = useAuth();
     const toast = useToast();
+    const myPages = useMyFanPages(profile.id);
+    const [postingAs, setPostingAs] = useState({ type: 'user' });
+    const [showIdentityPicker, setShowIdentityPicker] = useState(false);
     const [text, setText] = useState('');
     const [files, setFiles] = useState([]);
     const [previews, setPreviews] = useState([]);
@@ -1664,6 +1771,13 @@ function CreatePostScreen({ go, route }) {
             setTimeout(() => { var _a; return (_a = fileRef.current) === null || _a === void 0 ? void 0 : _a.click(); }, 150);
         }
     }, []);
+    useEffect(() => {
+        if ((route === null || route === void 0 ? void 0 : route.pageId) && myPages) {
+            const p = myPages.find(pg => pg.id === route.pageId);
+            if (p)
+                setPostingAs({ type: 'page', page: p });
+        }
+    }, [route === null || route === void 0 ? void 0 : route.pageId, myPages]);
     const onFiles = (e) => {
         const chosen = Array.from(e.target.files).slice(0, 10 - files.length);
         const valid = chosen.filter(f => {
@@ -1708,12 +1822,18 @@ function CreatePostScreen({ go, route }) {
                 imageUrls.push(await ref.getDownloadURL());
             }
             const postRef = await db.collection('posts').add({
-                authorId: profile.id, text: text.trim(), images: imageUrls,
+                authorId: profile.id, pageId: postingAs.type === 'page' ? postingAs.page.id : null,
+                text: text.trim(), images: imageUrls,
                 bold, bgStyle: imageUrls.length ? null : bgStyle, taggedUsers: tagged, audience,
                 music: music || null, feeling: feeling || null, location: location || null,
                 createdAt: FieldValue.serverTimestamp(), likesCount: 0, commentsCount: 0, sharesCount: 0
             });
-            await db.collection('users').doc(profile.id).update({ postsCount: FieldValue.increment(1) });
+            if (postingAs.type === 'page') {
+                db.collection('fanPages').doc(postingAs.page.id).update({ postsCount: FieldValue.increment(1) }).catch(() => { });
+            }
+            else {
+                await db.collection('users').doc(profile.id).update({ postsCount: FieldValue.increment(1) });
+            }
             notifyTagged(tagged, profile.id, postRef.id, 'tag');
             toast('Posted!', 'success');
             go({ name: 'home' });
@@ -1736,9 +1856,11 @@ function CreatePostScreen({ go, route }) {
             React.createElement("button", { onClick: submit, disabled: !canPost, className: "text-brand-600 font-bold text-base disabled:opacity-30" }, busy ? 'Posting…' : 'POST')),
         React.createElement("div", { className: "flex-1 overflow-y-auto px-4 py-4" },
             React.createElement("div", { className: "flex items-center gap-3 mb-4" },
-                React.createElement(Avatar, { user: profile, size: 11 }),
+                React.createElement(Avatar, { user: postingAs.type === 'page' ? postingAs.page : profile, size: 11 }),
                 React.createElement("div", null,
-                    React.createElement("p", { className: "font-bold text-sm" }, profile.displayName),
+                    (myPages && myPages.length > 0) ? (React.createElement("button", { onClick: () => setShowIdentityPicker(true), className: "flex items-center gap-1 font-bold text-sm" },
+                        postingAs.type === 'page' ? postingAs.page.displayName : profile.displayName,
+                        React.createElement("i", { className: "fa-solid fa-chevron-down text-[10px] text-slate-400 ml-0.5" }))) : (React.createElement("p", { className: "font-bold text-sm" }, profile.displayName)),
                     React.createElement("div", { className: "relative" },
                         React.createElement("button", { onClick: () => setShowAudiencePicker(v => !v), className: "flex items-center gap-1.5 bg-slate-100 dark:bg-ink-700 rounded-full px-2.5 py-1 text-xs font-semibold mt-0.5" },
                             React.createElement("i", { className: `fa-solid ${audienceOpt.icon}` }),
@@ -1747,6 +1869,7 @@ function CreatePostScreen({ go, route }) {
                         showAudiencePicker && (React.createElement("div", { className: "absolute left-0 mt-1 bg-white dark:bg-ink-800 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-700 z-20 w-40" }, AUDIENCE_OPTIONS.map(a => (React.createElement("button", { key: a.id, onClick: () => { setAudience(a.id); setShowAudiencePicker(false); }, className: "w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-ink-700" },
                             React.createElement("i", { className: `fa-solid ${a.icon} w-4 text-slate-400` }),
                             a.label)))))))),
+            showIdentityPicker && React.createElement(PostingAsPicker, { value: postingAs, myPages: myPages || [], profile: profile, onChange: (v) => { setPostingAs(v); setShowIdentityPicker(false); }, onClose: () => setShowIdentityPicker(false) }),
             bgStyle ? (React.createElement("div", { className: "-mx-4 mb-3" },
                 React.createElement("textarea", { autoFocus: true, value: text, onChange: e => setText(e.target.value), placeholder: "Share a highlight from your day\u2026", className: `w-full resize-none text-white text-2xl font-bold text-center placeholder-white/80 focus:outline-none min-h-[320px] px-8 py-10 ${bgStyleClass(bgStyle)}`, rows: 6 }))) : (React.createElement("textarea", { autoFocus: true, value: text, onChange: e => setText(e.target.value), placeholder: "Share a highlight from your day\u2026", className: "w-full resize-none bg-transparent text-2xl text-slate-500 dark:text-slate-400 focus:outline-none min-h-[160px] " + (bold ? 'font-bold text-slate-900 dark:text-slate-100' : ''), rows: 6 })),
             previews.length > 0 && (React.createElement("div", { className: "grid grid-cols-3 gap-2 mb-3" }, previews.map((p, i) => (React.createElement("div", { key: i, className: "relative rounded-lg overflow-hidden aspect-square group" },
@@ -1914,9 +2037,13 @@ function PostCard({ post, go }) {
     const [sharesCount, setSharesCount] = useState(post.sharesCount || 0);
     const [shareSheetOpen, setShareSheetOpen] = useState(false);
     useEffect(() => {
+        if (post.pageId) {
+            const unsub = db.collection('fanPages').doc(post.pageId).onSnapshot(s => setAuthor(s.exists ? Object.assign({ id: s.id }, s.data()) : null));
+            return unsub;
+        }
         const unsub = db.collection('users').doc(post.authorId).onSnapshot(s => setAuthor(s.exists ? s.data() : null));
         return unsub;
-    }, [post.authorId]);
+    }, [post.authorId, post.pageId]);
     useEffect(() => {
         const unsub = db.collection('posts').doc(post.id).collection('likes').doc(profile.id).onSnapshot(s => setLiked(s.exists));
         return unsub;
@@ -1996,10 +2123,11 @@ function PostCard({ post, go }) {
         return React.createElement(PostSkeleton, null);
     return (React.createElement("div", { id: 'post-' + post.id, className: "bg-white dark:bg-ink-800 -mx-2 sm:mx-0 rounded-none sm:rounded-2xl border-y sm:border border-slate-100 dark:border-ink-700 mb-2 fade-in overflow-hidden" },
         React.createElement("div", { className: "flex items-start justify-between px-3 sm:px-4 pt-3 mb-2" },
-            React.createElement("div", { className: "flex items-center gap-3 cursor-pointer", onClick: () => go({ name: 'profile', uid: post.authorId }) },
+            React.createElement("div", { className: "flex items-center gap-3 cursor-pointer", onClick: () => go(post.pageId ? { name: 'page', id: post.pageId } : { name: 'profile', uid: post.authorId }) },
                 React.createElement(Avatar, { user: author, size: 13 }),
                 React.createElement("div", null,
-                    React.createElement("p", { className: "font-bold text-base" }, author.displayName),
+                    React.createElement("p", { className: "font-bold text-base flex items-center gap-1.5" }, author.displayName,
+                        post.pageId && React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-brand-600 bg-brand-50 dark:bg-brand-900/30 dark:text-brand-400 px-1.5 py-0.5 rounded" }, "Page")),
                     React.createElement("p", { className: "text-sm text-slate-400" },
                         "@",
                         author.username,
@@ -2421,7 +2549,7 @@ function SearchScreen({ go, route }) {
                 React.createElement("div", { className: "space-y-2" }, friendUsers.map(u => React.createElement(PersonRow, { key: u.id, u: u })))))))));
 }
 /* ============================== NOTIFICATIONS ============================== */
-const NOTIF_TEXT = { like: 'liked your post', comment: 'commented on your post', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined' };
+const NOTIF_TEXT = { like: 'liked your post', comment: 'commented on your post', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', page_follow: 'started following your Page' };
 const SYSTEM_NOTIF_TYPES = ['listing_approved', 'listing_removed', 'ad_approved', 'ad_declined'];
 function NotificationsScreen({ go }) {
     const { profile } = useAuth();
@@ -2667,6 +2795,8 @@ function ProfileScreen({ uid, go }) {
                     React.createElement("button", { onClick: () => setEditing(true), className: "flex-1 bg-slate-100 dark:bg-ink-700 hover:bg-slate-200 dark:hover:bg-ink-600 rounded-xl py-2.5 text-sm font-semibold" },
                         React.createElement("i", { className: "fa-solid fa-pen mr-2 text-xs" }),
                         "Edit profile"),
+                    React.createElement("button", { onClick: () => go({ name: 'myPages' }), className: "bg-slate-100 dark:bg-ink-700 hover:bg-slate-200 dark:hover:bg-ink-600 rounded-xl w-11 h-11 flex items-center justify-center text-sm shrink-0", title: "Your Pages" },
+                        React.createElement("i", { className: "fa-solid fa-flag" })),
                     React.createElement("button", { onClick: () => confirm('Log out of Blueface?') && auth.signOut(), className: "bg-red-50 dark:bg-red-900/20 text-red-500 rounded-xl w-11 h-11 flex items-center justify-center text-sm shrink-0" },
                         React.createElement("i", { className: "fa-solid fa-arrow-right-from-bracket" })))) : (React.createElement("div", { className: "flex items-center gap-2 flex-wrap" },
                     React.createElement(FriendActionButton, { meId: me.id, otherId: uid }),
@@ -2823,6 +2953,251 @@ function EditProfileModal({ user, onClose }) {
                     React.createElement("div", { className: "flex flex-wrap gap-x-4 gap-y-1.5 text-xs" }, Object.keys(LEGAL_PAGES).map(k => (React.createElement(PageLink, { key: k, pageKey: k, className: "text-brand-600 dark:text-brand-400 hover:underline" }, LEGAL_PAGES[k].title)))))),
             React.createElement("button", { onClick: save, disabled: busy, className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl py-2.5 font-semibold text-sm mt-5" }, busy ? 'Saving…' : 'Save changes'))));
 }
+/* ============================== PAGES: SCREENS ============================== */
+function PageCard({ page, go }) {
+    return React.createElement("button", { onClick: () => go({ name: 'page', id: page.id }), className: "w-full flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-3 text-left" },
+        React.createElement(Avatar, { user: page, size: 12 }),
+        React.createElement("div", { className: "flex-1 min-w-0" },
+            React.createElement("p", { className: "font-bold text-sm truncate flex items-center gap-1.5" }, page.displayName,
+                page.verified && React.createElement("i", { className: "fa-solid fa-badge-check text-brand-500 text-xs" }),
+                page.suspended && React.createElement("span", { className: "text-amber-500 text-[10px] font-semibold" }, "(suspended)")),
+            React.createElement("p", { className: "text-xs text-slate-400 truncate" }, page.category, " \u00B7 @", page.username)),
+        React.createElement("i", { className: "fa-solid fa-chevron-right text-slate-300" }));
+}
+function MyPagesScreen({ go }) {
+    const { profile } = useAuth();
+    const myPages = useMyFanPages(profile.id);
+    return (React.createElement("div", null,
+        React.createElement("div", { className: "flex items-center justify-between mb-4" },
+            React.createElement("h2", { className: "font-display text-xl font-bold" }, "Your Pages"),
+            React.createElement("button", { onClick: () => go({ name: 'pageForm' }), className: "bg-brand-600 hover:bg-brand-700 text-white text-sm font-semibold px-4 py-2 rounded-full" },
+                React.createElement("i", { className: "fa-solid fa-plus mr-1.5" }), "Create Page")),
+        React.createElement("p", { className: "text-sm text-slate-400 mb-4" }, "Pages let you build a presence separate from your personal profile \u2014 for a business, brand, or community \u2014 with its own followers, posts, and analytics."),
+        myPages === null && React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026"),
+        myPages && myPages.length === 0 && (React.createElement("div", { className: "text-center py-16 text-slate-400" },
+            React.createElement("i", { className: "fa-regular fa-flag text-4xl mb-3" }),
+            React.createElement("p", null, "You don't manage any Pages yet."))),
+        React.createElement("div", { className: "space-y-2" }, (myPages || []).map(p => React.createElement(PageCard, { key: p.id, page: p, go: go })))));
+}
+function PageFormScreen({ id, go }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const isEdit = !!id;
+    const [page, setPage] = useState(isEdit ? undefined : null);
+    const [displayName, setDisplayName] = useState('');
+    const [username, setUsername] = useState('');
+    const [category, setCategory] = useState(PAGE_CATEGORIES[0]);
+    const [bio, setBio] = useState('');
+    const [busy, setBusy] = useState(false);
+    useEffect(() => {
+        if (!isEdit)
+            return;
+        const unsub = db.collection('fanPages').doc(id).onSnapshot(s => {
+            const d = s.exists ? Object.assign({ id: s.id }, s.data()) : null;
+            setPage(d);
+            if (d) {
+                setDisplayName(d.displayName || '');
+                setUsername(d.username || '');
+                setCategory(d.category || PAGE_CATEGORIES[0]);
+                setBio(d.bio || '');
+            }
+        });
+        return unsub;
+    }, [id, isEdit]);
+    if (isEdit && page === undefined)
+        return React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026");
+    if (isEdit && (page === null || page.ownerId !== profile.id))
+        return React.createElement("p", { className: "text-sm text-slate-400" }, "You don't manage this Page.");
+    const submit = async (e) => {
+        e.preventDefault();
+        if (!displayName.trim() || (!isEdit && !username.trim()))
+            return;
+        setBusy(true);
+        try {
+            if (isEdit) {
+                await updateFanPage(id, { displayName, category, bio });
+                toast('Page updated', 'success');
+                go({ name: 'page', id });
+            }
+            else {
+                const newId = await createFanPage(profile.id, { displayName, username, category, bio });
+                toast('Page created!', 'success');
+                go({ name: 'page', id: newId });
+            }
+        }
+        catch (err) {
+            toast(err.message, 'error');
+        }
+        finally {
+            setBusy(false);
+        }
+    };
+    return (React.createElement("div", { className: "max-w-lg mx-auto" },
+        React.createElement("button", { onClick: () => go(isEdit ? { name: 'page', id } : { name: 'myPages' }), className: "text-sm text-slate-400 mb-3" },
+            React.createElement("i", { className: "fa-solid fa-arrow-left mr-1.5" }), "Back"),
+        React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, isEdit ? 'Edit Page' : 'Create a Page'),
+        React.createElement("p", { className: "text-sm text-slate-400 mb-5" }, "Pages are public and separate from your personal profile."),
+        React.createElement("form", { onSubmit: submit, className: "space-y-4" },
+            React.createElement("div", null,
+                React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Page name"),
+                React.createElement("input", { value: displayName, onChange: e => setDisplayName(e.target.value), required: true, className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm", placeholder: "e.g. Blueface Coffee Co." })),
+            !isEdit && React.createElement("div", null,
+                React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Page username"),
+                React.createElement("div", { className: "relative mt-1" },
+                    React.createElement("span", { className: "absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm" }, "@"),
+                    React.createElement("input", { value: username, onChange: e => setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, '')), required: true, className: "w-full pl-7 pr-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm", placeholder: "bluefacecoffee" }))),
+            React.createElement("div", null,
+                React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Category"),
+                React.createElement("select", { value: category, onChange: e => setCategory(e.target.value), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" },
+                    PAGE_CATEGORIES.map(c => React.createElement("option", { key: c, value: c }, c)))),
+            React.createElement("div", null,
+                React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "About / bio"),
+                React.createElement("textarea", { value: bio, onChange: e => setBio(e.target.value), rows: 3, className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm", placeholder: "Tell people what this Page is about\u2026" })),
+            React.createElement("button", { disabled: busy, type: "submit", className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl py-2.5 font-semibold text-sm" }, busy ? 'Saving…' : (isEdit ? 'Save changes' : 'Create Page')))));
+}
+function PageProfileScreen({ id, go }) {
+    const { profile: me } = useAuth();
+    const toast = useToast();
+    const [page, setPage] = useState(undefined);
+    const [posts, setPosts] = useState([]);
+    const [followersCount, setFollowersCount] = useState(0);
+    const [following, setFollowing] = useState(false);
+    const [menuOpen, setMenuOpen] = useState(false);
+    const avatarInputRef = useRef();
+    const coverInputRef = useRef();
+    useEffect(() => {
+        const unsub = db.collection('fanPages').doc(id).onSnapshot(s => setPage(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setPage(null));
+        return unsub;
+    }, [id]);
+    useEffect(() => {
+        const unsub = db.collection('posts').where('pageId', '==', id).limit(50).onSnapshot(snap => {
+            const list = snap.docs.map(d => (Object.assign({ id: d.id }, d.data()))).filter(p => !p.hiddenByAdmin);
+            list.sort((a, b) => { var _a, _b; return (((_a = b.createdAt) === null || _a === void 0 ? void 0 : _a.toMillis) ? b.createdAt.toMillis() : 0) - (((_b = a.createdAt) === null || _b === void 0 ? void 0 : _b.toMillis) ? a.createdAt.toMillis() : 0); });
+            setPosts(list);
+        }, () => setPosts([]));
+        return unsub;
+    }, [id]);
+    useEffect(() => {
+        const unsub = db.collection('pageFollows').where('pageId', '==', id).onSnapshot(snap => {
+            setFollowersCount(snap.size);
+            setFollowing(snap.docs.some(d => d.id === me.id + '_' + id));
+        }, () => { });
+        return unsub;
+    }, [id, me.id]);
+    useEffect(() => { recordPageView(id, me.id).catch(() => { }); }, [id, me.id]);
+    if (page === undefined)
+        return React.createElement(PostSkeleton, null);
+    if (page === null)
+        return React.createElement("p", { className: "text-sm text-slate-400" }, "This Page doesn't exist.");
+    const isOwner = page.ownerId === me.id;
+    const toggleFollow = async () => {
+        try {
+            following ? await unfollowPage(id, me.id) : await followPage(id, me.id, page.ownerId);
+        }
+        catch (e) {
+            toast(e.message, 'error');
+        }
+    };
+    const quickUpload = async (file, kind) => {
+        if (!file)
+            return;
+        try {
+            await uploadPageImage(id, file, kind);
+            toast('Photo updated', 'success');
+        }
+        catch (e) {
+            toast(e.message, 'error');
+        }
+    };
+    return (React.createElement("div", null,
+        React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 overflow-hidden mb-4" },
+            React.createElement("div", { className: "h-44 md:h-56 bg-gradient-to-r from-brand-500 to-brand-700 relative" },
+                page.coverURL && React.createElement("img", { src: page.coverURL, onClick: () => openLightbox(page.coverURL), className: "w-full h-full object-cover cursor-zoom-in" }),
+                isOwner && React.createElement("button", { onClick: () => coverInputRef.current.click(), className: "absolute bottom-3 right-3 bg-black/50 text-white text-xs font-semibold px-3 py-1.5 rounded-full" }, React.createElement("i", { className: "fa-solid fa-camera mr-1.5" }), "Edit cover"),
+                React.createElement("input", { ref: coverInputRef, type: "file", accept: "image/*", hidden: true, onChange: e => quickUpload(e.target.files[0], 'covers') })),
+            React.createElement("div", { className: "px-4 pb-4" },
+                React.createElement("div", { className: "-mt-10 mb-2 relative inline-block" },
+                    React.createElement(Avatar, { user: page, size: 24, onClick: () => page.photoURL && openLightbox(page.photoURL) }),
+                    React.createElement("div", { className: "absolute inset-0 rounded-full ring-4 ring-white dark:ring-ink-800 pointer-events-none" }),
+                    isOwner && React.createElement("button", { onClick: () => avatarInputRef.current.click(), className: "absolute bottom-0 right-0 bg-brand-600 text-white w-7 h-7 rounded-full flex items-center justify-center text-xs" }, React.createElement("i", { className: "fa-solid fa-camera" })),
+                    React.createElement("input", { ref: avatarInputRef, type: "file", accept: "image/*", hidden: true, onChange: e => quickUpload(e.target.files[0], 'avatars') })),
+                React.createElement("p", { className: "font-display text-xl font-bold flex items-center gap-1.5" }, page.displayName,
+                    page.verified && React.createElement("i", { className: "fa-solid fa-badge-check text-brand-500 text-base" }),
+                    page.suspended && React.createElement("span", { className: "text-amber-500 text-xs font-semibold" }, "(suspended by admin)")),
+                React.createElement("p", { className: "text-sm text-slate-400 mb-2" }, "@", page.username, " \u00B7 ", page.category),
+                page.bio && React.createElement("p", { className: "text-sm mb-3 whitespace-pre-wrap" }, page.bio),
+                React.createElement("div", { className: "flex items-center gap-4 text-sm mb-3" },
+                    React.createElement("span", null, React.createElement("b", null, followersCount), " followers"),
+                    React.createElement("span", null, React.createElement("b", null, posts.length), " posts")),
+                React.createElement("div", { className: "flex items-center gap-2" },
+                    isOwner ? (React.createElement(React.Fragment, null,
+                        React.createElement("button", { onClick: () => go({ name: 'createPost', pageId: id }), className: "flex-1 bg-brand-600 hover:bg-brand-700 text-white rounded-xl py-2.5 text-sm font-semibold" }, React.createElement("i", { className: "fa-solid fa-plus mr-2 text-xs" }), "Create post"),
+                        React.createElement("button", { onClick: () => go({ name: 'pageAnalytics', id }), className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center", title: "Insights" }, React.createElement("i", { className: "fa-solid fa-chart-line" })),
+                        React.createElement("div", { className: "relative" },
+                            React.createElement("button", { onClick: () => setMenuOpen(v => !v), className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center" }, React.createElement("i", { className: "fa-solid fa-ellipsis" })),
+                            menuOpen && React.createElement("div", { className: "absolute right-0 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-600 z-10 w-48" },
+                                React.createElement("button", { onClick: () => { setMenuOpen(false); go({ name: 'pageForm', id }); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Edit Page info"),
+                                React.createElement("button", { onClick: async () => { if (confirm('Delete this Page permanently? This cannot be undone.')) { setMenuOpen(false); await deleteFanPagePermanently(page); toast('Page deleted', 'success'); go({ name: 'myPages' }); } }, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Delete Page"))))) : (React.createElement(React.Fragment, null,
+                        React.createElement("button", { onClick: toggleFollow, className: "flex-1 rounded-xl py-2.5 text-sm font-semibold " + (following ? "bg-slate-100 dark:bg-ink-700" : "bg-brand-600 hover:bg-brand-700 text-white") }, following ? 'Following' : 'Follow'),
+                        React.createElement("button", { onClick: () => go({ name: 'chat', chatId: chatIdFor(me.id, page.ownerId), otherUid: page.ownerId }), className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center" }, React.createElement("i", { className: "fa-solid fa-message" }))))))),
+        posts.length === 0 && (React.createElement("div", { className: "text-center py-16 text-slate-400" },
+            React.createElement("i", { className: "fa-regular fa-note-sticky text-4xl mb-3" }),
+            React.createElement("p", null, "This Page hasn't posted anything yet."))),
+        posts.map(p => React.createElement(PostCard, { key: p.id, post: p, go: go }))));
+}
+function PageAnalyticsScreen({ id, go }) {
+    const { profile: me } = useAuth();
+    const [page, setPage] = useState(undefined);
+    const [posts, setPosts] = useState([]);
+    const [follows, setFollows] = useState([]);
+    const [viewsCount, setViewsCount] = useState(0);
+    useEffect(() => {
+        const unsub = db.collection('fanPages').doc(id).onSnapshot(s => setPage(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setPage(null));
+        return unsub;
+    }, [id]);
+    useEffect(() => {
+        const unsub = db.collection('posts').where('pageId', '==', id).onSnapshot(snap => setPosts(snap.docs.map(d => d.data())), () => setPosts([]));
+        return unsub;
+    }, [id]);
+    useEffect(() => {
+        const unsub = db.collection('pageFollows').where('pageId', '==', id).onSnapshot(snap => setFollows(snap.docs.map(d => d.data())), () => setFollows([]));
+        return unsub;
+    }, [id]);
+    useEffect(() => {
+        const unsub = db.collection('fanPages').doc(id).collection('views').onSnapshot(snap => setViewsCount(snap.size), () => { });
+        return unsub;
+    }, [id]);
+    if (page === undefined)
+        return React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026");
+    if (page === null || page.ownerId !== me.id)
+        return React.createElement("p", { className: "text-sm text-slate-400" }, "You don't manage this Page.");
+    const totals = posts.reduce((acc, p) => ({ likes: acc.likes + (p.likesCount || 0), comments: acc.comments + (p.commentsCount || 0), shares: acc.shares + (p.sharesCount || 0) }), { likes: 0, comments: 0, shares: 0 });
+    // Last-14-days follower growth, bucketed client-side from pageFollows timestamps.
+    const days = Array.from({ length: 14 }, (_, i) => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - (13 - i)); return d; });
+    const dayCounts = days.map(d => {
+        const next = new Date(d);
+        next.setDate(next.getDate() + 1);
+        return follows.filter(f => { var _a; const t = (_a = f.createdAt) === null || _a === void 0 ? void 0 : _a.toMillis; return t && f.createdAt.toMillis() >= d.getTime() && f.createdAt.toMillis() < next.getTime(); }).length;
+    });
+    const maxDay = Math.max(1, ...dayCounts);
+    const cards = [
+        ['Followers', follows.length, 'fa-users'], ['Page views', viewsCount, 'fa-eye'],
+        ['Posts', posts.length, 'fa-note-sticky'], ['Total likes', totals.likes, 'fa-heart'],
+        ['Total comments', totals.comments, 'fa-comment'], ['Total shares', totals.shares, 'fa-share'],
+    ];
+    return (React.createElement("div", null,
+        React.createElement("button", { onClick: () => go({ name: 'page', id }), className: "text-sm text-slate-400 mb-3" }, React.createElement("i", { className: "fa-solid fa-arrow-left mr-1.5" }), "Back to Page"),
+        React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, page.displayName, " \u00B7 Insights"),
+        React.createElement("p", { className: "text-sm text-slate-400 mb-5" }, "Analytics for your Page, live from Firestore."),
+        React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-3 mb-6" }, cards.map(([label, val, icon]) => (React.createElement("div", { key: label, className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-4" },
+            React.createElement("i", { className: "fa-solid " + icon + " text-brand-500 mb-2" }),
+            React.createElement("p", { className: "text-2xl font-display font-bold" }, val),
+            React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, label))))),
+        React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-4" },
+            React.createElement("p", { className: "text-sm font-semibold mb-3" }, "New followers \u2014 last 14 days"),
+            React.createElement("div", { className: "flex items-end gap-1.5 h-24" }, dayCounts.map((c, i) => (React.createElement("div", { key: i, className: "flex-1 flex flex-col items-center justify-end h-full", title: days[i].toLocaleDateString() + ': ' + c },
+                React.createElement("div", { className: "w-full bg-brand-500 rounded-t", style: { height: Math.max(2, (c / maxDay) * 100) + '%' } }))))))));
+}
 /* ============================== ADMIN ============================== */
 function SuperAdminApp({ theme, setTheme }) {
     const { profile, firebaseUser } = useAuth();
@@ -2830,6 +3205,7 @@ function SuperAdminApp({ theme, setTheme }) {
         { key: 'dashboard', label: 'Dashboard', icon: 'fa-gauge-high' },
         { key: 'users', label: 'Users', icon: 'fa-users' },
         { key: 'posts', label: 'Posts', icon: 'fa-note-sticky' },
+        { key: 'pages', label: 'Pages', icon: 'fa-flag' },
         { key: 'marketplace', label: 'Marketplace', icon: 'fa-store' },
         { key: 'reports', label: 'Reports', icon: 'fa-flag' },
         { key: 'announcements', label: 'Announcements', icon: 'fa-bullhorn' },
@@ -2875,6 +3251,7 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
     const [search, setSearch] = useState('');
     const [mtab, setMtab] = useState('pending');
     const [listings, setListings] = useState([]);
+    const [fanPages, setFanPages] = useState([]);
     const [listingReports, setListingReports] = useState([]);
     const [sellerReports, setSellerReports] = useState([]);
     const [genericReports, setGenericReports] = useState([]);
@@ -2884,13 +3261,14 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
     useEffect(() => {
         if (tab !== 'dashboard') return;
         (async () => {
-            const [usersSnap, postsSnap, listingsSnap, chatsSnap, notifSnap, reportsA, reportsB, reportsC] = await Promise.all([
+            const [usersSnap, postsSnap, listingsSnap, chatsSnap, notifSnap, reportsA, reportsB, reportsC, pagesSnap] = await Promise.all([
                 db.collection('users').get(), db.collection('posts').get(), db.collection('listings').get(),
                 db.collection('chatMembers').get().catch(() => ({ size: 0 })),
                 db.collection('announcements').get().catch(() => ({ size: 0 })),
                 db.collection('listingReports').where('status', '==', 'open').get().catch(() => ({ size: 0 })),
                 db.collection('sellerReports').where('status', '==', 'open').get().catch(() => ({ size: 0 })),
                 db.collection('reports').where('status', '==', 'open').get().catch(() => ({ size: 0 })),
+                db.collection('fanPages').get().catch(() => ({ size: 0 })),
             ]);
             let comments = 0, likes = 0, shares = 0, newToday = 0;
             const dayAgo = Date.now() - 86400000;
@@ -2899,7 +3277,7 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
             setStats({
                 users: usersSnap.size, newToday, posts: postsSnap.size, comments, likes, shares,
                 marketplace: listingsSnap.size, messages: chatsSnap.size, announcements: notifSnap.size,
-                reports: (reportsA.size || 0) + (reportsB.size || 0) + (reportsC.size || 0),
+                reports: (reportsA.size || 0) + (reportsB.size || 0) + (reportsC.size || 0), pages: pagesSnap.size,
             });
         })();
     }, [tab]);
@@ -2911,6 +3289,11 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
     useEffect(() => {
         if (tab !== 'posts') return;
         const unsub = db.collection('posts').orderBy('createdAt', 'desc').limit(200).onSnapshot(snap => setPosts(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))));
+        return unsub;
+    }, [tab]);
+    useEffect(() => {
+        if (tab !== 'pages') return;
+        const unsub = db.collection('fanPages').limit(300).onSnapshot(snap => setFanPages(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setFanPages([]));
         return unsub;
     }, [tab]);
     useEffect(() => {
@@ -2946,7 +3329,7 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
         const cards = stats ? {
             'Total users': stats.users, 'New registrations (24h)': stats.newToday, 'Total posts': stats.posts,
             'Total comments': stats.comments, 'Total likes': stats.likes, 'Total shares': stats.shares,
-            'Marketplace listings': stats.marketplace, 'Chat threads': stats.messages,
+            'Marketplace listings': stats.marketplace, 'Chat threads': stats.messages, 'Total Pages': stats.pages,
             'Open reports': stats.reports, 'Announcements sent': stats.announcements,
         } : null;
         return React.createElement("div", null,
@@ -2970,6 +3353,16 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
             React.createElement("h2", { className: "font-display text-lg font-bold mb-3" }, "Posts"),
             posts.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No posts yet."),
             React.createElement("div", { className: "space-y-2" }, posts.map(p => React.createElement(AdminPostRow, { key: p.id, post: p, adminUid: adminUid, adminEmail: adminEmail }))));
+    }
+    if (tab === 'pages') {
+        const filteredPages = fanPages.filter(p => { var _a, _b; return !search || ((_a = p.displayName) === null || _a === void 0 ? void 0 : _a.toLowerCase().includes(search.toLowerCase())) || ((_b = p.username) === null || _b === void 0 ? void 0 : _b.toLowerCase().includes(search.toLowerCase())); });
+        return React.createElement("div", null,
+            React.createElement("div", { className: "flex items-center justify-between mb-3 gap-3" },
+                React.createElement("h2", { className: "font-display text-lg font-bold" }, "Pages"),
+                React.createElement("button", { onClick: () => exportToCsv('pages.csv', fanPages.map(p => ({ id: p.id, name: p.displayName || '', username: p.username || '', category: p.category || '', ownerId: p.ownerId, verified: !!p.verified, suspended: !!p.suspended }))), className: "text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-100 dark:bg-ink-700" }, React.createElement("i", { className: "fa-solid fa-file-arrow-down mr-1.5" }), "Export CSV")),
+            React.createElement("input", { value: search, onChange: e => setSearch(e.target.value), placeholder: "Search by Page name or username\u2026", className: "w-full mb-3 px-4 py-2 rounded-xl border border-slate-200 dark:border-ink-700 bg-white dark:bg-ink-800 text-sm" }),
+            filteredPages.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No Pages found."),
+            React.createElement("div", { className: "space-y-2" }, filteredPages.map(p => React.createElement(AdminPageRow, { key: p.id, page: p, adminUid: adminUid, adminEmail: adminEmail }))));
     }
     if (tab === 'marketplace') {
         return React.createElement("div", null,
@@ -3162,6 +3555,39 @@ function AdminUserRow({ u, adminUid, adminEmail, onToggleSuspend }) {
                 !u.banned ? React.createElement("button", { disabled: busy, onClick: () => confirm('Ban this user? They will be signed out and blocked from the platform.') && run(() => adminBanUser(u), 'ban_user'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-500 text-white" }, "Ban") :
                     React.createElement("button", { disabled: busy, onClick: () => run(() => adminUnbanUser(u), 'unban_user'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-500 text-white" }, "Unban"),
                 React.createElement("button", { disabled: busy, onClick: () => confirm('Permanently delete this user\'s account document? This cannot be undone.') && run(() => adminDeleteUserPermanently(u), 'delete_user'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Delete Permanently"))));
+}
+/* ============================== SUPER ADMIN: PAGE ROW ============================== */
+function AdminPageRow({ page, adminUid, adminEmail }) {
+    const toast = useToast();
+    const [busy, setBusy] = useState(false);
+    const [open, setOpen] = useState(false);
+    const run = async (fn, action) => {
+        setBusy(true);
+        try {
+            await fn();
+            logAdminAction(adminUid, adminEmail, action, 'page', page.id, page.displayName);
+            toast('Done', 'success');
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
+        React.createElement("div", { className: "flex items-center justify-between" },
+            React.createElement("div", { className: "flex items-center gap-3 cursor-pointer min-w-0", onClick: () => setOpen(v => !v) },
+                React.createElement(Avatar, { user: page, size: 9 }),
+                React.createElement("div", { className: "min-w-0" },
+                    React.createElement("p", { className: "text-sm font-semibold truncate" },
+                        page.displayName, " ",
+                        page.verified && React.createElement("i", { className: "fa-solid fa-badge-check text-brand-500 text-xs" }),
+                        page.suspended && React.createElement("span", { className: "text-amber-500 text-xs ml-1" }, "(suspended)")),
+                    React.createElement("p", { className: "text-xs text-slate-400 truncate" }, "@", page.username, " \u00B7 ", page.category, " \u00B7 owner: ", React.createElement(AdminUserLabel, { uid: page.ownerId })))),
+            React.createElement("button", { onClick: () => setOpen(v => !v), className: "text-slate-300 shrink-0" }, React.createElement("i", { className: "fa-solid " + (open ? 'fa-chevron-up' : 'fa-chevron-down') }))),
+        open && React.createElement("div", { className: "mt-3 pt-3 border-t border-slate-100 dark:border-ink-700" },
+            page.bio && React.createElement("p", { className: "text-xs text-slate-400 mb-3" }, page.bio),
+            React.createElement("div", { className: "flex flex-wrap gap-1.5" },
+                React.createElement("button", { disabled: busy, onClick: () => run(() => adminVerifyPage(page), 'toggle_verify_page'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-900/20" }, page.verified ? 'Unverify' : 'Verify'),
+                React.createElement("button", { disabled: busy, onClick: () => run(() => adminSuspendPage(page), 'toggle_suspend_page'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg " + (page.suspended ? "bg-emerald-500 text-white" : "bg-amber-500 text-white") }, page.suspended ? 'Reactivate' : 'Suspend'),
+                React.createElement("button", { disabled: busy, onClick: () => confirm('Permanently delete this Page? This cannot be undone.') && run(() => deleteFanPagePermanently(page), 'delete_page'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Delete Permanently"))));
 }
 /* ============================== SUPER ADMIN: POST ROW ============================== */
 function AdminPostRow({ post, adminUid, adminEmail }) {
