@@ -1766,6 +1766,25 @@ function CreatePostScreen({ go, route }) {
     const [audience, setAudience] = useState('public');
     const [showAudiencePicker, setShowAudiencePicker] = useState(false);
     const fileRef = useRef();
+    const textareaRef = useRef();
+    // Wraps the selected text (or inserts a placeholder at the cursor) in *asterisks*, which
+    // formatRichText() renders as bold wherever the post is shown. This is the same syntax users
+    // can just type themselves — the button is only a convenience for adding it without typing
+    // the asterisks by hand.
+    const insertBold = () => {
+        const ta = textareaRef.current;
+        if (!ta) return;
+        const start = ta.selectionStart, end = ta.selectionEnd;
+        const before = text.slice(0, start), selected = text.slice(start, end), after = text.slice(end);
+        if (selected) {
+            setText(before + '*' + selected + '*' + after);
+            requestAnimationFrame(() => { ta.focus(); ta.selectionStart = start + 1; ta.selectionEnd = start + 1 + selected.length; });
+        }
+        else {
+            setText(before + '*bold text*' + after);
+            requestAnimationFrame(() => { ta.focus(); ta.selectionStart = start + 1; ta.selectionEnd = start + 10; });
+        }
+    };
     useEffect(() => {
         if (route === null || route === void 0 ? void 0 : route.openPhotoPicker) {
             setTimeout(() => { var _a; return (_a = fileRef.current) === null || _a === void 0 ? void 0 : _a.click(); }, 150);
@@ -1871,7 +1890,12 @@ function CreatePostScreen({ go, route }) {
                             a.label)))))))),
             showIdentityPicker && React.createElement(PostingAsPicker, { value: postingAs, myPages: myPages || [], profile: profile, onChange: (v) => { setPostingAs(v); setShowIdentityPicker(false); }, onClose: () => setShowIdentityPicker(false) }),
             bgStyle ? (React.createElement("div", { className: "-mx-4 mb-3" },
-                React.createElement("textarea", { autoFocus: true, value: text, onChange: e => setText(e.target.value), placeholder: "Share a highlight from your day\u2026", className: `w-full resize-none text-white text-2xl font-bold text-center placeholder-white/80 focus:outline-none min-h-[320px] px-8 py-10 ${bgStyleClass(bgStyle)}`, rows: 6 }))) : (React.createElement("textarea", { autoFocus: true, value: text, onChange: e => setText(e.target.value), placeholder: "Share a highlight from your day\u2026", className: "w-full resize-none bg-transparent text-2xl text-slate-500 dark:text-slate-400 focus:outline-none min-h-[160px] " + (bold ? 'font-bold text-slate-900 dark:text-slate-100' : ''), rows: 6 })),
+                React.createElement("textarea", { autoFocus: true, value: text, onChange: e => setText(e.target.value), placeholder: "Share a highlight from your day\u2026", className: `w-full resize-none text-white text-2xl font-bold text-center placeholder-white/80 focus:outline-none min-h-[320px] px-8 py-10 ${bgStyleClass(bgStyle)}`, rows: 6 }))) : (React.createElement("div", { className: "mb-1" },
+                React.createElement("textarea", { ref: textareaRef, autoFocus: true, value: text, onChange: e => setText(e.target.value), placeholder: "Share a highlight from your day\u2026", className: "w-full resize-none bg-transparent text-2xl text-slate-500 dark:text-slate-400 focus:outline-none min-h-[160px] " + (bold ? 'font-bold text-slate-900 dark:text-slate-100' : ''), rows: 6 }),
+                React.createElement("div", { className: "flex items-center justify-between" },
+                    React.createElement("button", { type: "button", onClick: insertBold, title: "Bold selected text", className: "flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 dark:bg-ink-700 text-slate-600 dark:text-slate-300" },
+                        React.createElement("span", { className: "font-bold" }, "B"), "Bold"),
+                    React.createElement("p", { className: "text-[11px] text-slate-400" }, "Tip: wrap words in ", React.createElement("b", null, "*asterisks*"), " to bold them")))),
             previews.length > 0 && (React.createElement("div", { className: "grid grid-cols-3 gap-2 mb-3" }, previews.map((p, i) => (React.createElement("div", { key: i, className: "relative rounded-lg overflow-hidden aspect-square group" },
                 React.createElement("img", { src: p, className: "w-full h-full object-cover" }),
                 React.createElement("button", { onClick: () => removeFile(i), className: "absolute top-1 right-1 bg-black/60 text-white rounded-full w-6 h-6 text-xs" }, "\u2715")))))),
@@ -2034,6 +2058,21 @@ function PostCard({ post, go }) {
     const [menuOpen, setMenuOpen] = useState(false);
     const [editing, setEditing] = useState(false);
     const [editText, setEditText] = useState(post.text);
+    const editTextareaRef = useRef();
+    const insertEditBold = () => {
+        const ta = editTextareaRef.current;
+        if (!ta) return;
+        const start = ta.selectionStart, end = ta.selectionEnd;
+        const before = editText.slice(0, start), selected = editText.slice(start, end), after = editText.slice(end);
+        if (selected) {
+            setEditText(before + '*' + selected + '*' + after);
+            requestAnimationFrame(() => { ta.focus(); ta.selectionStart = start + 1; ta.selectionEnd = start + 1 + selected.length; });
+        }
+        else {
+            setEditText(before + '*bold text*' + after);
+            requestAnimationFrame(() => { ta.focus(); ta.selectionStart = start + 1; ta.selectionEnd = start + 10; });
+        }
+    };
     const [sharesCount, setSharesCount] = useState(post.sharesCount || 0);
     const [shareSheetOpen, setShareSheetOpen] = useState(false);
     useEffect(() => {
@@ -2145,10 +2184,13 @@ function PostCard({ post, go }) {
                     post.authorId === profile.id && React.createElement("button", { onClick: deletePost, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Delete"),
                     React.createElement("button", { onClick: () => { toggleBookmark(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, bookmarked ? 'Remove from saved' : 'Save post'))))),
         editing ? (React.createElement("div", { className: "px-3 sm:px-4 mb-2" },
-            React.createElement("textarea", { value: editText, onChange: e => setEditText(e.target.value), className: "w-full bg-transparent border border-slate-200 dark:border-ink-600 rounded-lg p-2 text-sm", rows: 3 }),
-            React.createElement("div", { className: "flex gap-2 mt-1" },
-                React.createElement("button", { onClick: saveEdit, className: "text-xs font-semibold text-brand-600" }, "Save"),
-                React.createElement("button", { onClick: () => setEditing(false), className: "text-xs font-semibold text-slate-400" }, "Cancel")))) : (post.text && (post.bgStyle && !((_a = post.images) === null || _a === void 0 ? void 0 : _a.length) ? (
+            React.createElement("textarea", { ref: editTextareaRef, value: editText, onChange: e => setEditText(e.target.value), className: "w-full bg-transparent border border-slate-200 dark:border-ink-600 rounded-lg p-2 text-sm", rows: 3 }),
+            React.createElement("div", { className: "flex items-center justify-between mt-1" },
+                React.createElement("div", { className: "flex gap-2" },
+                    React.createElement("button", { onClick: saveEdit, className: "text-xs font-semibold text-brand-600" }, "Save"),
+                    React.createElement("button", { onClick: () => setEditing(false), className: "text-xs font-semibold text-slate-400" }, "Cancel")),
+                React.createElement("button", { type: "button", onClick: insertEditBold, title: "Bold selected text", className: "flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-ink-700 text-slate-600 dark:text-slate-300" },
+                    React.createElement("span", { className: "font-bold" }, "B"), "Bold")))) : (post.text && (post.bgStyle && !((_a = post.images) === null || _a === void 0 ? void 0 : _a.length) ? (
         // Facebook-style colour-background text post: full-bleed, edge-to-edge with no left/right
         // gap (this is a direct sibling of the padded content, not nested inside the px-3/px-4
         // wrapper, which is what previously left visible white space on both sides).
