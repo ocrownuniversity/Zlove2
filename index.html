@@ -173,6 +173,11 @@ function timeAgo(ts) {
         return days + 'd';
     return date.toLocaleDateString();
 }
+function millisOf(ts) {
+    // Safe Firestore Timestamp -> epoch-ms helper. Returns 0 for missing/pending
+    // (not-yet-server-confirmed) timestamps, matching the pattern used elsewhere in this file.
+    return (ts && ts.toMillis) ? ts.toMillis() : 0;
+}
 function initials(name) {
     if (!name)
         return '?';
@@ -3101,24 +3106,134 @@ function CommentThread({ comment, allComments, depth, go, postComment }) {
                     React.createElement("button", { onClick: () => setShowReplies(false), className: "text-[11px] font-semibold text-slate-400 hover:underline ml-1" }, "Hide replies"))))));
 }
 /* ============================== HOME FEED ============================== */
+/* ============================== REELS: TIMELINE CARD ============================== */
+// Renders a single reel inline in the main Home timeline, styled to match PostCard so a reel
+// feels like "just another post" instead of a separate feature. Reuses the exact same live
+// like/comment/share data and actions as the full-screen Reels player (useReelLiveDoc,
+// toggleLikeReel, ReelCommentsSheet, ReelShareSheet), so engaging with a reel here and in the
+// Reels tab always stays in sync — there's no separate/duplicated engagement state.
+function TimelineReelCard({ reel, go }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const videoRef = useRef();
+    const viewedRef = useRef(false);
+    const [author, setAuthor] = useState(null);
+    const [playing, setPlaying] = useState(false);
+    const [muted, setMuted] = useState(true);
+    const [commentsOpen, setCommentsOpen] = useState(false);
+    const [shareOpen, setShareOpen] = useState(false);
+    const liked = useReelLiveDoc(['reels', reel.id, 'likes', profile.id]);
+    const isOwner = reel.authorId === profile.id;
+    useEffect(() => {
+        const coll = reel.authorType === 'page' ? 'fanPages' : 'users';
+        const id = reel.authorType === 'page' ? reel.pageId : reel.authorId;
+        if (!id) return;
+        const unsub = db.collection(coll).doc(id).onSnapshot(s => setAuthor(s.exists ? Object.assign({ id: s.id }, s.data()) : null));
+        return unsub;
+    }, [reel.authorId, reel.pageId, reel.authorType]);
+    useEffect(() => () => { const v = videoRef.current; if (v) v.pause(); }, []);
+    const togglePlay = () => {
+        const v = videoRef.current;
+        if (!v) return;
+        if (v.paused) {
+            v.play().catch(() => { });
+            setPlaying(true);
+            if (!viewedRef.current) { viewedRef.current = true; recordReelView(reel.id, profile.id).catch(() => { }); }
+        } else {
+            v.pause();
+            setPlaying(false);
+        }
+    };
+    const toggleMute = (e) => { e.stopPropagation(); setMuted(m => !m); };
+    const doLike = () => toggleLikeReel(reel.id, profile.id, reel.authorId).catch(() => toast('Could not update like', 'error'));
+    const captionParts = (reel.caption || '').split(/(\s+)/);
+    if (!author)
+        return React.createElement(PostSkeleton, null);
+    const engagementRow = (reel.likesCount > 0 || reel.commentsCount > 0 || reel.sharesCount > 0) && (React.createElement("div", { className: "flex items-center justify-between pb-2 text-[13px] text-slate-500 dark:text-slate-400" },
+        reel.likesCount > 0 ? (React.createElement("span", { className: "flex items-center gap-1" }, React.createElement("i", { className: "fa-solid fa-heart text-pink-500" }), formatCount(reel.likesCount))) : React.createElement("span", null),
+        (reel.commentsCount > 0 || reel.sharesCount > 0) && (React.createElement("div", { className: "flex items-center gap-3" },
+            reel.commentsCount > 0 && React.createElement("button", { onClick: () => setCommentsOpen(true), className: "hover:underline" }, formatCompactCount(reel.commentsCount) + (reel.commentsCount === 1 ? ' comment' : ' comments')),
+            reel.sharesCount > 0 && React.createElement("button", { onClick: () => setShareOpen(true), className: "hover:underline" }, formatCompactCount(reel.sharesCount) + (reel.sharesCount === 1 ? ' share' : ' shares'))))));
+    const actionBar = (React.createElement("div", { className: "grid grid-cols-3 border-t border-slate-100 dark:border-ink-700 -mx-1" },
+        React.createElement("button", { onClick: doLike, className: "flex items-center justify-center gap-2 py-2 mt-1 mx-1 rounded-lg text-[15px] font-semibold hover:bg-slate-50 dark:hover:bg-ink-700 transition " + (liked ? "text-pink-500" : "text-slate-500 dark:text-slate-400") },
+            React.createElement("i", { className: (liked ? "fa-solid" : "fa-regular") + " fa-heart text-lg" }), "Like"),
+        React.createElement("button", { onClick: () => setCommentsOpen(true), className: "flex items-center justify-center gap-2 py-2 mt-1 mx-1 rounded-lg text-[15px] font-semibold text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-ink-700 transition" },
+            React.createElement("i", { className: "fa-regular fa-comment text-lg" }), "Comment"),
+        React.createElement("button", { onClick: () => setShareOpen(true), className: "flex items-center justify-center gap-2 py-2 mt-1 mx-1 rounded-lg text-[15px] font-semibold text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-ink-700 transition" },
+            React.createElement("i", { className: "fa-solid fa-share text-lg" }), "Share")));
+    return (React.createElement("div", { id: 'reel-' + reel.id, className: "bg-white dark:bg-ink-800 -mx-2 sm:mx-0 rounded-none sm:rounded-2xl border-y sm:border border-slate-100 dark:border-ink-700 mb-2 fade-in overflow-hidden" },
+        React.createElement("div", { className: "flex items-start justify-between gap-2 px-3 sm:px-4 pt-3 mb-2" },
+            React.createElement("div", { className: "flex items-center gap-3 cursor-pointer min-w-0 flex-1", onClick: () => go(reel.authorType === 'page' ? { name: 'page', id: reel.pageId } : { name: 'profile', uid: reel.authorId }) },
+                React.createElement(Avatar, { user: author, size: 13 }),
+                React.createElement("div", { className: "min-w-0" },
+                    React.createElement("p", { className: "font-bold text-base flex items-center gap-1.5" }, author.displayName,
+                        React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-brand-600 bg-brand-50 dark:bg-brand-900/30 dark:text-brand-400 px-1.5 py-0.5 rounded flex items-center gap-1" }, React.createElement("i", { className: "fa-solid fa-clapperboard" }), "Reel")),
+                    React.createElement("p", { className: "text-sm text-slate-400" }, "@", author.username, " \u00B7 ", timeAgo(reel.createdAt)))),
+            React.createElement("button", { onClick: () => go({ name: 'reels', reelId: reel.id }), title: "Open in Reels", className: "text-slate-400 px-2 shrink-0" },
+                React.createElement("i", { className: "fa-solid fa-expand text-base" }))),
+        reel.caption && React.createElement("div", { className: "px-3 sm:px-4" },
+            React.createElement("p", { className: "text-base whitespace-pre-wrap mb-2 leading-relaxed" }, captionParts.map((part, i) => part.startsWith('#') ? React.createElement("span", { key: i, className: "text-brand-600 dark:text-brand-400 font-medium" }, part) : part))),
+        React.createElement("div", { className: "relative bg-black w-full flex items-center justify-center overflow-hidden mb-2", style: { maxHeight: '520px', aspectRatio: (reel.width && reel.height) ? (reel.width + ' / ' + reel.height) : '9 / 16' } },
+            React.createElement("video", { ref: videoRef, src: reel.videoURL, poster: reel.thumbURL || undefined, loop: true, muted: muted, playsInline: true, onClick: togglePlay, className: "w-full h-full object-contain cursor-pointer" }),
+            !playing && React.createElement("button", { onClick: togglePlay, className: "absolute inset-0 flex items-center justify-center" },
+                React.createElement("span", { className: "w-14 h-14 rounded-full bg-black/50 text-white flex items-center justify-center text-xl" }, React.createElement("i", { className: "fa-solid fa-play ml-0.5" }))),
+            playing && React.createElement("button", { onClick: toggleMute, className: "absolute top-2.5 right-2.5 w-9 h-9 rounded-full bg-black/40 text-white flex items-center justify-center" },
+                React.createElement("i", { className: "fa-solid " + (muted ? "fa-volume-xmark" : "fa-volume-high") + " text-sm" }))),
+        React.createElement("div", { className: "px-3 sm:px-4" },
+            engagementRow, actionBar,
+            shareOpen && React.createElement(ReelShareSheet, { reel: reel, onClose: () => setShareOpen(false) }),
+            commentsOpen && React.createElement(ReelCommentsSheet, { reel: reel, meId: profile.id, isOwnerOrMod: isOwner, onClose: () => setCommentsOpen(false) }),
+            React.createElement("div", { className: "pb-3" }))));
+}
 function HomeFeed({ go }) {
+    const { profile } = useAuth();
     const [posts, setPosts] = useState(null);
+    const [reels, setReels] = useState(null);
     const [refreshing, setRefreshing] = useState(false);
     useEffect(() => {
         const unsub = db.collection('posts').orderBy('createdAt', 'desc').limit(30)
             .onSnapshot(snap => setPosts(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))
-                .filter(p => !p.hiddenByAdmin)
-                .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0))));
+                .filter(p => !p.hiddenByAdmin)));
         return unsub;
     }, []);
+    useEffect(() => {
+        // Deliberately NOT chaining .where('privacy','==','public') onto .orderBy('createdAt') —
+        // see the matching note in ReelsStrip below for why (avoids needing a composite index).
+        const unsub = db.collection('reels').orderBy('createdAt', 'desc').limit(30)
+            .onSnapshot(snap => setReels(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))
+                .filter(r => !r.hiddenByAdmin && (r.privacy === 'public' || r.authorId === profile.id))), () => setReels([]));
+        return unsub;
+    }, [profile.id]);
+    // Merge posts and reels into a single chronological timeline, exactly like Instagram/
+    // Facebook do, instead of keeping reels siloed to the strip above. Admin-pinned posts
+    // still float to the top; reels don't currently support a home-feed "pin" (their `pinned`
+    // flag means "pinned to profile", a different feature) so they're excluded from that check.
+    const items = useMemo(() => {
+        if (posts === null && reels === null)
+            return null;
+        const merged = [
+            ...(posts || []).map(p => ({ kind: 'post', data: p })),
+            ...(reels || []).map(r => ({ kind: 'reel', data: r })),
+        ];
+        merged.sort((a, b) => {
+            const pinA = a.kind === 'post' && a.data.pinned ? 1 : 0;
+            const pinB = b.kind === 'post' && b.data.pinned ? 1 : 0;
+            if (pinA !== pinB)
+                return pinB - pinA;
+            return millisOf(b.data.createdAt) - millisOf(a.data.createdAt);
+        });
+        return merged;
+    }, [posts, reels]);
     return (React.createElement("div", null,
         React.createElement(PostTriggerBar, { go: go }),
         React.createElement(ReelsStrip, { go: go }),
-        posts === null && React.createElement(React.Fragment, null, [1, 2, 3].map(i => React.createElement(PostSkeleton, { key: i }))),
-        (posts === null || posts === void 0 ? void 0 : posts.length) === 0 && (React.createElement("div", { className: "text-center py-16 text-slate-400" },
+        items === null && React.createElement(React.Fragment, null, [1, 2, 3].map(i => React.createElement(PostSkeleton, { key: i }))),
+        items !== null && items.length === 0 && (React.createElement("div", { className: "text-center py-16 text-slate-400" },
             React.createElement("i", { className: "fa-regular fa-face-smile text-4xl mb-3" }),
-            React.createElement("p", null, "No posts yet. Be the first to share something."))), posts === null || posts === void 0 ? void 0 :
-        posts.map(p => React.createElement(PostCard, { key: p.id, post: p, go: go }))));
+            React.createElement("p", null, "No posts yet. Be the first to share something."))),
+        items !== null && items.map(it => it.kind === 'post'
+            ? React.createElement(PostCard, { key: 'p-' + it.data.id, post: it.data, go: go })
+            : React.createElement(TimelineReelCard, { key: 'r-' + it.data.id, reel: it.data, go: go }))));
 }
 /* ============================== SEARCH / PEOPLE DIRECTORY ============================== */
 function SearchScreen({ go, route }) {
