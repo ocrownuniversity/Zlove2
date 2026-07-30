@@ -1061,6 +1061,136 @@ function exportToCsv(filename, rows) {
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
 }
+/* ============================== REELS: DATA LAYER ============================== */
+// Reels are stored in a top-level `reels` collection. Each doc:
+//   authorId, authorType ('user'|'page'), pageId (if authorType==='page'),
+//   videoURL, thumbnailURL, caption, hashtags[], likesCount, commentsCount,
+//   sharesCount, savesCount, viewsCount, createdAt
+// Subcollections: reels/{id}/likes/{uid}, reels/{id}/saves/{uid}, reels/{id}/comments (flat, parentId like posts).
+function extractHashtags(text) {
+    const matches = (text || '').match(/#[a-zA-Z0-9_]+/g) || [];
+    return [...new Set(matches.map(h => h.slice(1).toLowerCase()))];
+}
+// Grabs the first frame of a video file as a JPEG blob, used as an auto-thumbnail
+// when the person doesn't pick one of their own.
+function captureVideoThumbnail(file) {
+    return new Promise((resolve, reject) => {
+        const video = document.createElement('video');
+        video.preload = 'metadata';
+        video.muted = true;
+        video.playsInline = true;
+        video.src = URL.createObjectURL(file);
+        video.onloadeddata = () => {
+            video.currentTime = Math.min(0.3, (video.duration || 1) / 4);
+        };
+        video.onseeked = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth || 720;
+            canvas.height = video.videoHeight || 1280;
+            canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+            canvas.toBlob(blob => { URL.revokeObjectURL(video.src); resolve(blob); }, 'image/jpeg', 0.82);
+        };
+        video.onerror = () => { URL.revokeObjectURL(video.src); reject(new Error('Could not read that video file')); };
+    });
+}
+async function uploadReelVideo(uid, reelId, file) {
+    const ext = (file.name.split('.').pop() || 'mp4').toLowerCase();
+    const ref = storage.ref(`reels/${uid}/${reelId}/video.${ext}`);
+    await ref.put(file, { contentType: file.type || 'video/mp4' });
+    return ref.getDownloadURL();
+}
+async function uploadReelThumb(uid, reelId, blob) {
+    const ref = storage.ref(`reels/${uid}/${reelId}/thumb.jpg`);
+    await ref.put(blob, { contentType: 'image/jpeg' });
+    return ref.getDownloadURL();
+}
+async function createReel(authorId, authorType, pageId, videoFile, caption, thumbFile) {
+    if (!videoFile) throw new Error('Please choose a video to upload.');
+    if (videoFile.size > 100 * 1024 * 1024) throw new Error('Video exceeds 100MB.');
+    const reelRef = db.collection('reels').doc();
+    const thumbBlob = thumbFile ? await compressImage(thumbFile, 720) : await captureVideoThumbnail(videoFile).catch(() => null);
+    const [videoURL, thumbnailURL] = await Promise.all([
+        uploadReelVideo(authorId, reelRef.id, videoFile),
+        thumbBlob ? uploadReelThumb(authorId, reelRef.id, thumbBlob) : Promise.resolve(null)
+    ]);
+    await reelRef.set({
+        authorId, authorType: authorType || 'user', pageId: pageId || null,
+        videoURL, thumbnailURL, caption: (caption || '').trim(), hashtags: extractHashtags(caption),
+        likesCount: 0, commentsCount: 0, sharesCount: 0, savesCount: 0, viewsCount: 0,
+        createdAt: FieldValue.serverTimestamp()
+    });
+    return reelRef.id;
+}
+async function updateReel(reelId, caption) {
+    await db.collection('reels').doc(reelId).update({ caption: (caption || '').trim(), hashtags: extractHashtags(caption) });
+}
+async function deleteReel(reel) {
+    await db.collection('reels').doc(reel.id).delete();
+    const uid = reel.authorId;
+    storage.ref(`reels/${uid}/${reel.id}`).listAll()
+        .then(res => Promise.all(res.items.map(item => item.delete())))
+        .catch(() => { });
+}
+async function toggleReelLike(reelId, uid, liked) {
+    const likeRef = db.collection('reels').doc(reelId).collection('likes').doc(uid);
+    if (liked) await likeRef.delete();
+    else await likeRef.set({ uid, createdAt: FieldValue.serverTimestamp() });
+    db.collection('reels').doc(reelId).update({ likesCount: FieldValue.increment(liked ? -1 : 1) }).catch(() => { });
+}
+async function toggleReelSave(reelId, uid, saved) {
+    const saveRef = db.collection('reels').doc(reelId).collection('saves').doc(uid);
+    if (saved) await saveRef.delete();
+    else await saveRef.set({ uid, createdAt: FieldValue.serverTimestamp() });
+    db.collection('reels').doc(reelId).update({ savesCount: FieldValue.increment(saved ? -1 : 1) }).catch(() => { });
+}
+async function shareReel(reel) {
+    db.collection('reels').doc(reel.id).update({ sharesCount: FieldValue.increment(1) }).catch(() => { });
+    const url = location.origin + location.pathname + '#reel-' + reel.id;
+    if (navigator.share) {
+        try { await navigator.share({ title: 'Reel on Blueface', url }); return true; } catch (e) { return false; }
+    }
+    if (navigator.clipboard) { await navigator.clipboard.writeText(url); return true; }
+    return false;
+}
+const reelViewedThisSession = new Set();
+function recordReelView(reelId) {
+    if (reelViewedThisSession.has(reelId)) return;
+    reelViewedThisSession.add(reelId);
+    db.collection('reels').doc(reelId).update({ viewsCount: FieldValue.increment(1) }).catch(() => { });
+}
+async function uploadReelCommentImage(reelId, uid, file) {
+    const compressed = await compressImage(file, 1280, 0.82);
+    const ref = storage.ref(`reelComments/${reelId}/${uid}_${Date.now()}.jpg`);
+    await ref.put(compressed, { contentType: 'image/jpeg' });
+    return ref.getDownloadURL();
+}
+async function postReelComment(reelId, reel, profileId, { text, imageFile, parentId, replyToUser }) {
+    let image = null;
+    if (imageFile) image = await uploadReelCommentImage(reelId, profileId, imageFile);
+    await db.collection('reels').doc(reelId).collection('comments').add({
+        authorId: profileId, text: (text || '').trim(), image,
+        parentId: parentId || null, replyToDisplayName: (parentId && replyToUser) ? replyToUser.displayName : null,
+        createdAt: FieldValue.serverTimestamp()
+    });
+    db.collection('reels').doc(reelId).update({ commentsCount: FieldValue.increment(1) }).catch(() => { });
+    const notifyUid = parentId && replyToUser ? replyToUser.id : reel.authorId;
+    if (notifyUid && notifyUid !== profileId) {
+        db.collection('notifications').doc(notifyUid).collection('items').add({
+            type: parentId ? 'reel_reply' : 'reel_comment', fromUserId: profileId, reelId, read: false, createdAt: FieldValue.serverTimestamp()
+        });
+    }
+}
+async function toggleFollowUser(meId, uid, following) {
+    const relId = meId + '_' + uid;
+    if (following) {
+        await db.collection('follows').doc(relId).delete();
+    } else {
+        await db.collection('follows').doc(relId).set({ followerId: meId, followingId: uid, createdAt: FieldValue.serverTimestamp() });
+        db.collection('notifications').doc(uid).collection('items').add({ type: 'follow', fromUserId: meId, read: false, createdAt: FieldValue.serverTimestamp() });
+    }
+    db.collection('users').doc(uid).update({ followersCount: FieldValue.increment(following ? -1 : 1) }).catch(() => { });
+    db.collection('users').doc(meId).update({ followingCount: FieldValue.increment(following ? -1 : 1) }).catch(() => { });
+}
 /* ============================== CONTEXTS ============================== */
 const AuthContext = createContext(null);
 const ThemeContext = createContext(null);
@@ -1670,6 +1800,7 @@ function MainApp({ route, setRoute }) {
     const nav = [
         { name: 'home', icon: 'fa-house', label: 'Home' },
         { name: 'search', icon: 'fa-user-group', label: 'People', badge: incomingRequestsCount },
+        { name: 'reels', icon: 'fa-clapperboard', label: 'Reels' },
         { name: 'marketplace', icon: 'fa-store', label: 'Marketplace' },
         { name: 'myPages', icon: 'fa-flag', label: 'Pages' },
         { name: 'messages', icon: 'fa-comment-dots', label: 'Messages', badge: unreadMessages },
@@ -1734,6 +1865,8 @@ function MainApp({ route, setRoute }) {
                 route.name === 'home' && React.createElement(HomeFeed, { go: go }),
                 route.name === 'createPost' && React.createElement(CreatePostScreen, { go: go, route: route }),
                 route.name === 'search' && React.createElement(SearchScreen, { go: go, route: route }),
+                route.name === 'reels' && React.createElement(ReelsScreen, { go: go, route: route }),
+                route.name === 'reelUpload' && React.createElement(ReelUploadScreen, { go: go, route: route }),
                 route.name === 'marketplace' && React.createElement(MarketplaceScreen, { go: go }),
                 route.name === 'listing' && React.createElement(ListingDetailScreen, { id: route.id, go: go }),
                 route.name === 'listingForm' && React.createElement(ListingFormScreen, { id: route.id, go: go }),
@@ -2613,6 +2746,375 @@ function CommentThread({ comment, allComments, depth, go, postComment }) {
                     children.map(c => React.createElement(CommentThread, { key: c.id, comment: c, allComments: allComments, depth: depth + 1, go: go, postComment: postComment })),
                     React.createElement("button", { onClick: () => setShowReplies(false), className: "text-[11px] font-semibold text-slate-400 hover:underline ml-1" }, "Hide replies"))))));
 }
+/* ============================== REELS: UI ============================== */
+function ReelFollowButton({ authorId }) {
+    const { profile: me } = useAuth();
+    const [following, setFollowing] = useState(false);
+    const [busy, setBusy] = useState(false);
+    useEffect(() => {
+        if (!authorId || authorId === me.id) return;
+        const unsub = db.collection('follows').doc(me.id + '_' + authorId).onSnapshot(s => setFollowing(s.exists));
+        return unsub;
+    }, [authorId, me.id]);
+    if (!authorId || authorId === me.id) return null;
+    return React.createElement("button", { disabled: busy, onClick: async (e) => { e.stopPropagation(); setBusy(true); try { await toggleFollowUser(me.id, authorId, following); } finally { setBusy(false); } }, className: "text-[11px] font-bold px-2.5 py-1 rounded-full border " + (following ? "border-white/40 text-white/80" : "bg-white text-black border-white") }, following ? 'Following' : 'Follow');
+}
+function ReelCommentComposer({ avatarUser, placeholder, onSubmit, onCancel, autoFocus }) {
+    const toast = useToast();
+    const fileRef = useRef();
+    const [text, setText] = useState('');
+    const [imageFile, setImageFile] = useState(null);
+    const [imagePreview, setImagePreview] = useState(null);
+    const [sending, setSending] = useState(false);
+    const onPickImage = (e) => {
+        const file = e.target.files && e.target.files[0];
+        e.target.value = '';
+        if (!file) return;
+        if (!file.type.startsWith('image/')) { toast('Please choose an image file', 'error'); return; }
+        if (file.size > 15 * 1024 * 1024) { toast('Image exceeds 15MB', 'error'); return; }
+        setImageFile(file);
+        setImagePreview(URL.createObjectURL(file));
+    };
+    const removeImage = () => { setImageFile(null); setImagePreview(null); };
+    const canSend = !sending && (text.trim() || imageFile);
+    const doSubmit = async () => {
+        if (!canSend) return;
+        setSending(true);
+        try {
+            await onSubmit({ text: text.trim(), imageFile });
+            setText(''); removeImage();
+        } catch (e) { toast(e.message || 'Could not post comment', 'error'); }
+        finally { setSending(false); }
+    };
+    return (React.createElement("div", { className: "flex items-start gap-2" },
+        React.createElement(Avatar, { user: avatarUser, size: 7 }),
+        React.createElement("div", { className: "flex-1 min-w-0" },
+            imagePreview && (React.createElement("div", { className: "relative inline-block mb-1.5" },
+                React.createElement("img", { src: imagePreview, className: "h-20 rounded-lg object-cover" }),
+                React.createElement("button", { onClick: removeImage, className: "absolute -top-1.5 -right-1.5 bg-black/70 text-white rounded-full w-5 h-5 text-[10px] flex items-center justify-center" }, "\u2715"))),
+            React.createElement("div", { className: "flex items-center gap-2" },
+                React.createElement("input", { value: text, onChange: e => setText(e.target.value), onKeyDown: e => e.key === 'Enter' && doSubmit(), placeholder: placeholder || "Add a comment\u2026", autoFocus: autoFocus, className: "flex-1 min-w-0 bg-slate-50 dark:bg-ink-700 rounded-full px-4 py-1.5 text-sm" }),
+                React.createElement("input", { ref: fileRef, type: "file", accept: "image/*", hidden: true, onChange: onPickImage }),
+                React.createElement("button", { onClick: () => { var _a; return (_a = fileRef.current) === null || _a === void 0 ? void 0 : _a.click(); }, className: "text-slate-500 shrink-0" }, React.createElement("i", { className: "fa-regular fa-image" })),
+                React.createElement("button", { onClick: doSubmit, disabled: !canSend, className: "text-brand-600 text-sm font-semibold shrink-0 disabled:opacity-40" }, sending ? '…' : 'Send'),
+                onCancel && React.createElement("button", { onClick: onCancel, className: "text-slate-400 text-xs font-semibold shrink-0" }, "Cancel")))));
+}
+function ReelCommentThread({ comment, allComments, depth, go, postComment }) {
+    const { profile } = useAuth();
+    const [author, setAuthor] = useState(null);
+    const [replying, setReplying] = useState(false);
+    const [showReplies, setShowReplies] = useState(false);
+    useEffect(() => {
+        const unsub = db.collection('users').doc(comment.authorId).onSnapshot(s => setAuthor(s.exists ? s.data() : null));
+        return unsub;
+    }, [comment.authorId]);
+    const children = allComments.filter(c => c.parentId === comment.id);
+    const indent = Math.min(depth, 3) * 24;
+    if (!author) return null;
+    return (React.createElement("div", { style: { marginLeft: indent } },
+        React.createElement("div", { className: "flex items-start gap-2" },
+            React.createElement(Avatar, { user: author, size: 7, onClick: () => go({ name: 'profile', uid: comment.authorId }) }),
+            React.createElement("div", { className: "flex-1 min-w-0" },
+                React.createElement("div", { className: "bg-slate-50 dark:bg-ink-700 rounded-2xl px-3 py-2 inline-block max-w-full" },
+                    React.createElement("p", { className: "text-xs font-semibold" },
+                        React.createElement("span", { className: "cursor-pointer", onClick: () => go({ name: 'profile', uid: comment.authorId }) }, author.displayName),
+                        " ", React.createElement("span", { className: "text-slate-400 font-normal ml-1" }, timeAgo(comment.createdAt))),
+                    comment.text && (React.createElement("p", { className: "text-sm" },
+                        comment.replyToDisplayName && React.createElement("span", { className: "text-brand-600 font-semibold mr-1" }, "@" + comment.replyToDisplayName),
+                        comment.text)),
+                    comment.image && React.createElement("img", { src: comment.image, onClick: () => openLightbox(comment.image), loading: "lazy", className: "mt-1.5 rounded-lg max-h-56 max-w-full object-cover cursor-zoom-in" })),
+                React.createElement("div", { className: "flex items-center gap-3 mt-1 pl-3 text-[11px] font-semibold text-slate-400" },
+                    React.createElement("button", { onClick: () => setReplying(r => !r), className: "hover:underline" }, "Reply")),
+                replying && React.createElement("div", { className: "mt-2" },
+                    React.createElement(ReelCommentComposer, { avatarUser: profile, autoFocus: true, placeholder: "Reply to " + author.displayName + "\u2026", onCancel: () => setReplying(false), onSubmit: async (p) => {
+                            await postComment(Object.assign({}, p, { parentId: comment.id, replyToUser: author }));
+                            setReplying(false); setShowReplies(true);
+                        } })),
+                children.length > 0 && !showReplies && React.createElement("button", { onClick: () => setShowReplies(true), className: "flex items-center gap-1.5 mt-1.5 pl-3 text-[11px] font-semibold text-slate-400 hover:underline" },
+                    children.length + (children.length === 1 ? ' reply' : ' replies')),
+                children.length > 0 && showReplies && React.createElement("div", { className: "mt-2 space-y-2" },
+                    children.map(c => React.createElement(ReelCommentThread, { key: c.id, comment: c, allComments: allComments, depth: depth + 1, go: go, postComment: postComment })),
+                    React.createElement("button", { onClick: () => setShowReplies(false), className: "text-[11px] font-semibold text-slate-400 hover:underline ml-1" }, "Hide replies"))))));
+}
+function ReelCommentsSheet({ reel, go, onClose }) {
+    const { profile } = useAuth();
+    const [comments, setComments] = useState([]);
+    useEffect(() => {
+        const unsub = db.collection('reels').doc(reel.id).collection('comments').orderBy('createdAt', 'asc').limit(500)
+            .onSnapshot(snap => setComments(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))));
+        return unsub;
+    }, [reel.id]);
+    const postComment = (p) => postReelComment(reel.id, reel, profile.id, p);
+    const topLevel = comments.filter(c => !c.parentId);
+    return (React.createElement("div", { className: "fixed inset-0 z-50 bg-black/50 flex items-end justify-center", onClick: onClose },
+        React.createElement("div", { onClick: e => e.stopPropagation(), className: "bg-white dark:bg-ink-800 rounded-t-2xl w-full max-w-lg h-[75vh] flex flex-col" },
+            React.createElement("div", { className: "flex items-center justify-between p-3 border-b border-slate-100 dark:border-ink-700 shrink-0" },
+                React.createElement("p", { className: "font-semibold text-sm" }, comments.length, " comments"),
+                React.createElement("button", { onClick: onClose, className: "text-slate-400 w-8 h-8 flex items-center justify-center" }, React.createElement("i", { className: "fa-solid fa-xmark" }))),
+            React.createElement("div", { className: "flex-1 overflow-y-auto p-3 space-y-3" },
+                topLevel.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-10" }, "No comments yet. Be the first!"),
+                topLevel.map(c => React.createElement(ReelCommentThread, { key: c.id, comment: c, allComments: comments, depth: 0, go: go, postComment: postComment }))),
+            React.createElement("div", { className: "p-3 border-t border-slate-100 dark:border-ink-700 shrink-0" },
+                React.createElement(ReelCommentComposer, { avatarUser: profile, onSubmit: (p) => postComment(Object.assign({}, p, { parentId: null })) })))));
+}
+function ReelMenuSheet({ reel, isOwner, go, onClose }) {
+    return (React.createElement("div", { className: "fixed inset-0 z-50 bg-black/50 flex items-end justify-center", onClick: onClose },
+        React.createElement("div", { onClick: e => e.stopPropagation(), className: "bg-white dark:bg-ink-800 rounded-t-2xl w-full max-w-lg p-2" },
+            isOwner ? (React.createElement(React.Fragment, null,
+                React.createElement("button", { onClick: () => { onClose(); go({ name: 'reelUpload', id: reel.id }); }, className: "w-full text-left px-4 py-3 text-sm font-semibold hover:bg-slate-50 dark:hover:bg-ink-700 rounded-xl" }, React.createElement("i", { className: "fa-solid fa-pen mr-2.5" }), "Edit caption"),
+                React.createElement("button", { onClick: async () => { if (confirm('Delete this reel permanently?')) { await deleteReel(reel); onClose(); } }, className: "w-full text-left px-4 py-3 text-sm font-semibold text-red-500 hover:bg-slate-50 dark:hover:bg-ink-700 rounded-xl" }, React.createElement("i", { className: "fa-solid fa-trash mr-2.5" }), "Delete reel"))) :
+                React.createElement("button", { onClick: onClose, className: "w-full text-left px-4 py-3 text-sm font-semibold text-red-500 hover:bg-slate-50 dark:hover:bg-ink-700 rounded-xl" }, React.createElement("i", { className: "fa-solid fa-flag mr-2.5" }), "Report reel"),
+            React.createElement("button", { onClick: onClose, className: "w-full text-center px-4 py-3 text-sm font-semibold text-slate-400" }, "Cancel"))));
+}
+function ReelPlayer({ reel, active, go, onCommentsOpen }) {
+    const { profile: me } = useAuth();
+    const videoRef = useRef();
+    const [author, setAuthor] = useState(null);
+    const [liked, setLiked] = useState(false);
+    const [saved, setSaved] = useState(false);
+    const [muted, setMuted] = useState(true);
+    const [menuOpen, setMenuOpen] = useState(false);
+    const isPage = reel.authorType === 'page';
+    useEffect(() => {
+        const coll = isPage ? 'fanPages' : 'users';
+        const id = isPage ? reel.pageId : reel.authorId;
+        if (!id) { setAuthor(null); return; }
+        const unsub = db.collection(coll).doc(id).onSnapshot(s => setAuthor(s.exists ? Object.assign({ id: s.id }, s.data()) : null));
+        return unsub;
+    }, [reel.authorId, reel.pageId, isPage]);
+    useEffect(() => {
+        const unsub = db.collection('reels').doc(reel.id).collection('likes').doc(me.id).onSnapshot(s => setLiked(s.exists));
+        return unsub;
+    }, [reel.id, me.id]);
+    useEffect(() => {
+        const unsub = db.collection('reels').doc(reel.id).collection('saves').doc(me.id).onSnapshot(s => setSaved(s.exists));
+        return unsub;
+    }, [reel.id, me.id]);
+    useEffect(() => {
+        const v = videoRef.current;
+        if (!v) return;
+        if (active) {
+            v.play().catch(() => { });
+            recordReelView(reel.id);
+        } else {
+            v.pause();
+        }
+    }, [active, reel.id]);
+    const isOwner = (isPage ? author && author.ownerId === me.id : reel.authorId === me.id);
+    const authorName = author ? (author.displayName || ('@' + author.username)) : '\u2026';
+    return (React.createElement("div", { className: "relative h-full w-full bg-black flex items-center justify-center" },
+        React.createElement("video", { ref: videoRef, src: reel.videoURL, poster: reel.thumbnailURL || undefined, className: "h-full w-full object-contain", loop: true, muted: muted, playsInline: true, onClick: () => setMuted(m => !m) }),
+        React.createElement("div", { className: "absolute top-0 inset-x-0 h-24 bg-gradient-to-b from-black/60 to-transparent pointer-events-none" }),
+        React.createElement("div", { className: "absolute bottom-0 inset-x-0 h-56 bg-gradient-to-t from-black/70 to-transparent pointer-events-none" }),
+        React.createElement("button", { onClick: () => setMuted(m => !m), className: "absolute top-3 right-3 w-9 h-9 rounded-full bg-black/40 text-white flex items-center justify-center" },
+            React.createElement("i", { className: "fa-solid " + (muted ? "fa-volume-xmark" : "fa-volume-high") })),
+        React.createElement("div", { className: "absolute left-3 right-16 bottom-4 text-white" },
+            React.createElement("div", { className: "flex items-center gap-2 mb-2" },
+                React.createElement(Avatar, { user: author, size: 9, onClick: () => go(isPage ? { name: 'page', id: reel.pageId } : { name: 'profile', uid: reel.authorId }) }),
+                React.createElement("span", { className: "font-semibold text-sm cursor-pointer", onClick: () => go(isPage ? { name: 'page', id: reel.pageId } : { name: 'profile', uid: reel.authorId }) }, authorName),
+                author && author.verified && React.createElement("i", { className: "fa-solid fa-badge-check text-brand-400 text-xs" }),
+                !isOwner && !isPage && React.createElement(ReelFollowButton, { authorId: reel.authorId }),
+                !isOwner && isPage && React.createElement(PageFollowButton, { page: author, size: "sm", className: "text-[11px] font-bold px-2.5 py-1 rounded-full bg-white text-black" })),
+            reel.caption && React.createElement("p", { className: "text-sm mb-1 leading-snug" }, reel.caption),
+            reel.hashtags && reel.hashtags.length > 0 && React.createElement("p", { className: "text-xs text-brand-300 mb-1" }, reel.hashtags.map(h => React.createElement("span", { key: h, className: "mr-2 cursor-pointer", onClick: () => go({ name: 'reels', hashtag: h }) }, "#" + h))),
+            React.createElement("p", { className: "text-[11px] text-white/70" }, React.createElement("i", { className: "fa-solid fa-eye mr-1" }), formatCompactCount(reel.viewsCount), " views")),
+        React.createElement("div", { className: "absolute right-2.5 bottom-4 flex flex-col items-center gap-4 text-white" },
+            React.createElement("button", { onClick: () => toggleReelLike(reel.id, me.id, liked), className: "flex flex-col items-center gap-0.5" },
+                React.createElement("i", { className: (liked ? "fa-solid text-red-500" : "fa-regular") + " fa-heart text-2xl" }),
+                React.createElement("span", { className: "text-[11px] font-semibold" }, formatCompactCount(reel.likesCount))),
+            React.createElement("button", { onClick: onCommentsOpen, className: "flex flex-col items-center gap-0.5" },
+                React.createElement("i", { className: "fa-regular fa-comment-dots text-2xl" }),
+                React.createElement("span", { className: "text-[11px] font-semibold" }, formatCompactCount(reel.commentsCount))),
+            React.createElement("button", { onClick: () => shareReel(reel), className: "flex flex-col items-center gap-0.5" },
+                React.createElement("i", { className: "fa-regular fa-share-from-square text-2xl" }),
+                React.createElement("span", { className: "text-[11px] font-semibold" }, formatCompactCount(reel.sharesCount))),
+            React.createElement("button", { onClick: () => toggleReelSave(reel.id, me.id, saved), className: "flex flex-col items-center gap-0.5" },
+                React.createElement("i", { className: (saved ? "fa-solid text-amber-400" : "fa-regular") + " fa-bookmark text-2xl" })),
+            React.createElement("button", { onClick: () => setMenuOpen(true), className: "flex flex-col items-center gap-0.5" },
+                React.createElement("i", { className: "fa-solid fa-ellipsis-vertical text-xl" }))),
+        menuOpen && React.createElement(ReelMenuSheet, { reel: reel, isOwner: isOwner, go: go, onClose: () => setMenuOpen(false) })));
+}
+function ReelsScreen({ go, route }) {
+    const toast = useToast();
+    const [reels, setReels] = useState(null);
+    const [lastDoc, setLastDoc] = useState(null);
+    const [hasMore, setHasMore] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [activeId, setActiveId] = useState(null);
+    const [commentsFor, setCommentsFor] = useState(null);
+    const cardRefs = useRef({});
+    const isFiltered = !!(route.filterUid || route.filterPageId || route.hashtag);
+    const loadInitial = useCallback(async () => {
+        try {
+            let list = [];
+            if (isFiltered) {
+                let q = db.collection('reels');
+                if (route.filterUid) q = q.where('authorId', '==', route.filterUid);
+                if (route.filterPageId) q = q.where('pageId', '==', route.filterPageId);
+                if (route.hashtag) q = q.where('hashtags', 'array-contains', route.hashtag);
+                const snap = await q.limit(100).get();
+                list = snap.docs.map(d => (Object.assign({ id: d.id }, d.data())));
+                list.sort((a, b) => { var _a, _b; return (((_a = b.createdAt) === null || _a === void 0 ? void 0 : _a.toMillis) ? b.createdAt.toMillis() : 0) - (((_b = a.createdAt) === null || _b === void 0 ? void 0 : _b.toMillis) ? a.createdAt.toMillis() : 0); });
+                setHasMore(false);
+            } else {
+                const snap = await db.collection('reels').orderBy('createdAt', 'desc').limit(6).get();
+                list = snap.docs.map(d => (Object.assign({ id: d.id }, d.data())));
+                setLastDoc(snap.docs.length ? snap.docs[snap.docs.length - 1] : null);
+                setHasMore(snap.docs.length === 6);
+            }
+            setReels(list);
+            if (list.length) setActiveId(route.startId && list.some(r => r.id === route.startId) ? route.startId : list[0].id);
+        } catch (e) { toast(e.message, 'error'); setReels([]); }
+    }, [route.filterUid, route.filterPageId, route.hashtag, route.startId]);
+    useEffect(() => { setReels(null); loadInitial(); }, [loadInitial]);
+    const loadMore = async () => {
+        if (isFiltered || !hasMore || loadingMore || !lastDoc) return;
+        setLoadingMore(true);
+        try {
+            const snap = await db.collection('reels').orderBy('createdAt', 'desc').startAfter(lastDoc).limit(6).get();
+            const more = snap.docs.map(d => (Object.assign({ id: d.id }, d.data())));
+            setReels(prev => [...(prev || []), ...more]);
+            setLastDoc(snap.docs.length ? snap.docs[snap.docs.length - 1] : null);
+            setHasMore(snap.docs.length === 6);
+        } catch (e) { /* silent */ }
+        finally { setLoadingMore(false); }
+    };
+    useEffect(() => {
+        if (!reels || reels.length === 0) return;
+        const observer = new IntersectionObserver((entries) => {
+            let best = null;
+            entries.forEach(entry => {
+                if (entry.isIntersecting && (!best || entry.intersectionRatio > best.intersectionRatio)) best = entry;
+            });
+            if (best) {
+                const id = best.target.dataset.reelId;
+                setActiveId(id);
+                const idx = reels.findIndex(r => r.id === id);
+                if (idx >= reels.length - 2) loadMore();
+            }
+        }, { threshold: [0, 0.5, 0.75, 0.9] });
+        Object.values(cardRefs.current).forEach(el => el && observer.observe(el));
+        return () => observer.disconnect();
+    }, [reels]);
+    return (React.createElement("div", { className: "fixed inset-0 z-40 bg-black" },
+        React.createElement("button", { onClick: () => go(route.filterUid ? { name: 'profile', uid: route.filterUid } : route.filterPageId ? { name: 'page', id: route.filterPageId } : { name: 'home' }), className: "absolute top-3 left-3 z-10 w-9 h-9 rounded-full bg-black/40 text-white flex items-center justify-center" },
+            React.createElement("i", { className: "fa-solid fa-arrow-left" })),
+        React.createElement("p", { className: "absolute top-3 left-1/2 -translate-x-1/2 z-10 text-white font-display font-bold" }, route.hashtag ? '#' + route.hashtag : 'Reels'),
+        React.createElement("button", { onClick: () => go({ name: 'reelUpload' }), className: "absolute top-3 right-3 z-10 w-9 h-9 rounded-full bg-black/40 text-white flex items-center justify-center" },
+            React.createElement("i", { className: "fa-solid fa-plus" })),
+        reels === null && React.createElement("div", { className: "h-full w-full flex items-center justify-center text-white/70 text-sm" }, "Loading reels\u2026"),
+        reels !== null && reels.length === 0 && React.createElement("div", { className: "h-full w-full flex flex-col items-center justify-center text-white/70 text-sm gap-3" },
+            React.createElement("i", { className: "fa-solid fa-clapperboard text-4xl" }),
+            React.createElement("p", null, "No reels yet."),
+            React.createElement("button", { onClick: () => go({ name: 'reelUpload' }), className: "bg-brand-600 text-white text-sm font-semibold px-4 py-2 rounded-full" }, "Upload the first one")),
+        reels !== null && reels.length > 0 && React.createElement("div", { className: "h-full w-full overflow-y-auto snap-y snap-mandatory", style: { scrollSnapType: 'y mandatory' } },
+            reels.map(r => React.createElement("div", { key: r.id, ref: el => cardRefs.current[r.id] = el, "data-reel-id": r.id, className: "h-full w-full snap-start", style: { scrollSnapAlign: 'start' } },
+                React.createElement(ReelPlayer, { reel: r, active: activeId === r.id, go: go, onCommentsOpen: () => setCommentsFor(r) })))),
+        commentsFor && React.createElement(ReelCommentsSheet, { reel: commentsFor, go: go, onClose: () => setCommentsFor(null) })));
+}
+function ReelUploadScreen({ go, route }) {
+    const { profile: me } = useAuth();
+    const toast = useToast();
+    const editing = !!route.id;
+    const [loadingExisting, setLoadingExisting] = useState(editing);
+    const [existingReel, setExistingReel] = useState(null);
+    const [myPages, setMyPages] = useState([]);
+    const [postAs, setPostAs] = useState('me');
+    const [videoFile, setVideoFile] = useState(null);
+    const [videoPreview, setVideoPreview] = useState(null);
+    const [thumbFile, setThumbFile] = useState(null);
+    const [caption, setCaption] = useState('');
+    const [busy, setBusy] = useState(false);
+    useEffect(() => {
+        const unsub = db.collection('fanPages').where('ownerId', '==', me.id).onSnapshot(snap => setMyPages(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setMyPages([]));
+        return unsub;
+    }, [me.id]);
+    useEffect(() => { if (route.pageId) setPostAs(route.pageId); }, [route.pageId]);
+    useEffect(() => {
+        if (!editing) return;
+        db.collection('reels').doc(route.id).get().then(s => {
+            if (!s.exists) { toast('Reel not found', 'error'); go({ name: 'reels' }); return; }
+            const data = Object.assign({ id: s.id }, s.data());
+            if (data.authorId !== me.id) { toast('You can only edit your own reels', 'error'); go({ name: 'reels' }); return; }
+            setExistingReel(data);
+            setCaption(data.caption || '');
+        }).finally(() => setLoadingExisting(false));
+    }, [editing, route.id, me.id]);
+    const onPickVideo = (e) => {
+        const file = e.target.files && e.target.files[0];
+        e.target.value = '';
+        if (!file) return;
+        if (!file.type.startsWith('video/')) { toast('Please choose a video file', 'error'); return; }
+        if (file.size > 100 * 1024 * 1024) { toast('Video exceeds 100MB', 'error'); return; }
+        setVideoFile(file);
+        setVideoPreview(URL.createObjectURL(file));
+    };
+    const onPickThumb = (e) => {
+        const file = e.target.files && e.target.files[0];
+        e.target.value = '';
+        if (file) setThumbFile(file);
+    };
+    const submit = async () => {
+        setBusy(true);
+        try {
+            if (editing) {
+                await updateReel(route.id, caption);
+                toast('Reel updated', 'success');
+                go({ name: 'reels', filterUid: me.id });
+            } else {
+                const pageObj = postAs !== 'me' ? myPages.find(p => p.id === postAs) : null;
+                const reelId = await createReel(me.id, pageObj ? 'page' : 'user', pageObj ? pageObj.id : null, videoFile, caption, thumbFile);
+                toast('Reel uploaded!', 'success');
+                go({ name: 'reels', filterUid: pageObj ? null : me.id, filterPageId: pageObj ? pageObj.id : null, startId: reelId });
+            }
+        } catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    if (loadingExisting) return React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "Loading\u2026");
+    const canSubmit = !busy && (editing ? caption.trim() : videoFile);
+    return (React.createElement("div", { className: "max-w-md mx-auto" },
+        React.createElement("div", { className: "flex items-center gap-3 mb-4" },
+            React.createElement("button", { onClick: () => go(editing ? { name: 'reels', filterUid: me.id } : { name: 'reels' }) }, React.createElement("i", { className: "fa-solid fa-arrow-left" })),
+            React.createElement("h2", { className: "font-display text-lg font-bold" }, editing ? 'Edit reel' : 'Upload a reel')),
+        !editing && (React.createElement(React.Fragment, null,
+            React.createElement("label", { className: "block text-xs font-semibold text-slate-500 mb-1" }, "Video"),
+            videoPreview ? (React.createElement("div", { className: "relative w-full max-w-[220px] mx-auto aspect-[9/16] bg-black rounded-xl overflow-hidden mb-3" },
+                React.createElement("video", { src: videoPreview, className: "w-full h-full object-contain", controls: true }))) :
+                React.createElement("label", { className: "flex flex-col items-center justify-center gap-2 border-2 border-dashed border-slate-300 dark:border-ink-600 rounded-xl py-10 mb-3 cursor-pointer text-slate-400" },
+                    React.createElement("i", { className: "fa-solid fa-clapperboard text-3xl" }),
+                    React.createElement("span", { className: "text-sm font-semibold" }, "Tap to choose a video"),
+                    React.createElement("input", { type: "file", accept: "video/*", hidden: true, onChange: onPickVideo })),
+            videoPreview && React.createElement("button", { onClick: () => { setVideoFile(null); setVideoPreview(null); }, className: "text-xs text-red-500 font-semibold mb-3 block mx-auto" }, "Remove video"),
+            React.createElement("label", { className: "block text-xs font-semibold text-slate-500 mb-1" }, "Custom thumbnail (optional)"),
+            React.createElement("input", { type: "file", accept: "image/*", onChange: onPickThumb, className: "text-xs mb-3 block" }),
+            myPages.length > 0 && (React.createElement("div", { className: "mb-3" },
+                React.createElement("label", { className: "block text-xs font-semibold text-slate-500 mb-1" }, "Post as"),
+                React.createElement("select", { value: postAs, onChange: e => setPostAs(e.target.value), className: "w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" },
+                    React.createElement("option", { value: "me" }, me.displayName, " (you)"),
+                    myPages.map(p => React.createElement("option", { key: p.id, value: p.id }, p.displayName, " (Page)"))))))),
+        React.createElement("label", { className: "block text-xs font-semibold text-slate-500 mb-1" }, "Caption"),
+        React.createElement("textarea", { value: caption, onChange: e => setCaption(e.target.value), rows: 3, placeholder: "Write a caption\u2026 use #hashtags", className: "w-full bg-slate-50 dark:bg-ink-700 rounded-xl p-3 text-sm resize-none mb-1" }),
+        extractHashtags(caption).length > 0 && React.createElement("p", { className: "text-xs text-brand-500 mb-3" }, extractHashtags(caption).map(h => '#' + h).join('  ')),
+        React.createElement("button", { onClick: submit, disabled: !canSubmit, className: "w-full py-3 rounded-xl bg-brand-600 hover:bg-brand-700 disabled:opacity-40 text-white text-sm font-semibold mt-2" }, busy ? (editing ? 'Saving\u2026' : 'Uploading\u2026') : (editing ? 'Save changes' : 'Post reel'))));
+}
+function ReelsGridTab({ filterUid, filterPageId, go }) {
+    const [reels, setReels] = useState(null);
+    useEffect(() => {
+        let q = db.collection('reels');
+        q = filterPageId ? q.where('pageId', '==', filterPageId) : q.where('authorId', '==', filterUid);
+        const unsub = q.limit(60).onSnapshot(snap => {
+            const list = snap.docs.map(d => (Object.assign({ id: d.id }, d.data())));
+            list.sort((a, b) => { var _a, _b; return (((_a = b.createdAt) === null || _a === void 0 ? void 0 : _a.toMillis) ? b.createdAt.toMillis() : 0) - (((_b = a.createdAt) === null || _b === void 0 ? void 0 : _b.toMillis) ? a.createdAt.toMillis() : 0); });
+            setReels(list);
+        }, () => setReels([]));
+        return unsub;
+    }, [filterUid, filterPageId]);
+    if (reels === null) return React.createElement("div", { className: "grid grid-cols-3 gap-1.5" }, [1, 2, 3, 4, 5, 6].map(i => React.createElement("div", { key: i, className: "aspect-[9/16] rounded-lg bg-slate-100 dark:bg-ink-800 animate-pulse" })));
+    if (reels.length === 0) return React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "No reels yet.");
+    return React.createElement("div", { className: "grid grid-cols-3 gap-1.5" }, reels.map((r, i) => React.createElement("div", { key: r.id, onClick: () => go(filterPageId ? { name: 'reels', filterPageId, startId: r.id } : { name: 'reels', filterUid, startId: r.id }), className: "relative aspect-[9/16] rounded-lg overflow-hidden bg-slate-900 cursor-pointer" },
+        r.thumbnailURL ? React.createElement("img", { src: r.thumbnailURL, className: "w-full h-full object-cover" }) : React.createElement("div", { className: "w-full h-full flex items-center justify-center text-slate-500" }, React.createElement("i", { className: "fa-solid fa-clapperboard" })),
+        React.createElement("span", { className: "absolute bottom-1 left-1.5 text-white text-[10px] font-semibold" }, React.createElement("i", { className: "fa-solid fa-play mr-1" }), formatCompactCount(r.viewsCount)))));
+}
 /* ============================== HOME FEED ============================== */
 function StoriesRow({ go }) {
     const { profile } = useAuth();
@@ -3053,7 +3555,8 @@ function ProfileScreen({ uid, go }) {
                     React.createElement("div", { className: "grid grid-cols-3 gap-2" }, friendUsers.map(fu => (React.createElement("div", { key: fu.id, onClick: () => go({ name: 'profile', uid: fu.id }), className: "cursor-pointer text-center" },
                         React.createElement(Avatar, { user: fu, size: 14 }),
                         React.createElement("p", { className: "text-xs mt-1 truncate" }, fu.displayName || fu.username))))))),
-            React.createElement("div", { className: "flex border-t border-slate-100 dark:border-ink-700" }, [['posts', 'Posts'], ['photos', 'Photos'], ['listings', 'Listings' + (sellerListings.length ? ' (' + sellerListings.length + ')' : '')]].map(([k, l]) => (React.createElement("button", { key: k, onClick: () => setTab(k), className: "flex-1 py-3 text-sm font-semibold border-b-2 " + (tab === k ? "border-brand-600 text-brand-600" : "border-transparent text-slate-400") }, l))))),
+            React.createElement("div", { className: "flex border-t border-slate-100 dark:border-ink-700" }, [['posts', 'Posts'], ['reels', 'Reels'], ['photos', 'Photos'], ['listings', 'Listings' + (sellerListings.length ? ' (' + sellerListings.length + ')' : '')]].map(([k, l]) => (React.createElement("button", { key: k, onClick: () => setTab(k), className: "flex-1 py-3 text-sm font-semibold border-b-2 " + (tab === k ? "border-brand-600 text-brand-600" : "border-transparent text-slate-400") }, l))))),
+        tab === 'reels' ? React.createElement(ReelsGridTab, { filterUid: uid, go: go }) :
         tab === 'listings' ? (sellerListings.length === 0 ? React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "No active listings.") : React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-3" }, sellerListings.map(l => React.createElement(ProductCard, { key: l.id, listing: l, go: go })))) :
         shownPosts.length === 0 ? (React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, tab === 'photos' ? 'No photos yet.' : 'No posts yet.')) : shownPosts.map(p => React.createElement(PostCard, { key: p.id, post: p, go: go })),
         editing && React.createElement(EditProfileModal, { user: user, onClose: () => setEditing(false) })));
@@ -3391,6 +3894,7 @@ function PageProfileScreen({ id, go }) {
     // PageFollowButton in the timeline, so this screen and every post header are always in sync.
     const followersCount = useFollowersCount(id);
     const [menuOpen, setMenuOpen] = useState(false);
+    const [tab, setTab] = useState('posts');
     const avatarInputRef = useRef();
     const coverInputRef = useRef();
     useEffect(() => {
@@ -3444,6 +3948,7 @@ function PageProfileScreen({ id, go }) {
                 React.createElement("div", { className: "flex flex-wrap items-center gap-2" },
                     isOwner ? (React.createElement(React.Fragment, null,
                         React.createElement("button", { onClick: () => go({ name: 'createPost', pageId: id }), className: "flex-1 min-w-[140px] bg-brand-600 hover:bg-brand-700 text-white rounded-xl py-2.5 text-sm font-semibold" }, React.createElement("i", { className: "fa-solid fa-plus mr-2 text-xs" }), "Create post"),
+                        React.createElement("button", { onClick: () => go({ name: 'reelUpload', pageId: id }), className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center shrink-0", title: "Upload Reel" }, React.createElement("i", { className: "fa-solid fa-clapperboard" })),
                         React.createElement("button", { onClick: () => go({ name: 'pageForm', id }), className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center shrink-0", title: "Edit Page" }, React.createElement("i", { className: "fa-solid fa-pen" })),
                         React.createElement("button", { onClick: () => go({ name: 'pageAnalytics', id }), className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center shrink-0", title: "Insights" }, React.createElement("i", { className: "fa-solid fa-chart-line" })),
                         React.createElement("div", { className: "relative shrink-0" },
@@ -3453,10 +3958,12 @@ function PageProfileScreen({ id, go }) {
                         React.createElement(PageFollowButton, { page: page, className: "flex-1 min-w-[140px] rounded-xl py-2.5 text-sm" }),
                         React.createElement("button", { onClick: () => go({ name: 'chat', chatId: chatIdFor(me.id, page.ownerId), otherUid: page.ownerId }), className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center shrink-0" }, React.createElement("i", { className: "fa-solid fa-message" }))))))),
         React.createElement(PageAbout, { page: page }),
-        posts.length === 0 && (React.createElement("div", { className: "text-center py-16 text-slate-400" },
-            React.createElement("i", { className: "fa-regular fa-note-sticky text-4xl mb-3" }),
-            React.createElement("p", null, "This Page hasn't posted anything yet."))),
-        posts.map(p => React.createElement(PostCard, { key: p.id, post: p, go: go }))));
+        React.createElement("div", { className: "flex border-t border-b border-slate-100 dark:border-ink-700 mb-4" }, [['posts', 'Posts'], ['reels', 'Reels']].map(([k, l]) => (React.createElement("button", { key: k, onClick: () => setTab(k), className: "flex-1 py-3 text-sm font-semibold border-b-2 " + (tab === k ? "border-brand-600 text-brand-600" : "border-transparent text-slate-400") }, l)))),
+        tab === 'reels' ? React.createElement(ReelsGridTab, { filterPageId: id, go: go }) : (React.createElement(React.Fragment, null,
+            posts.length === 0 && (React.createElement("div", { className: "text-center py-16 text-slate-400" },
+                React.createElement("i", { className: "fa-regular fa-note-sticky text-4xl mb-3" }),
+                React.createElement("p", null, "This Page hasn't posted anything yet."))),
+            posts.map(p => React.createElement(PostCard, { key: p.id, post: p, go: go }))))));
 }
 function PageAnalyticsScreen({ id, go }) {
     const { profile: me } = useAuth();
