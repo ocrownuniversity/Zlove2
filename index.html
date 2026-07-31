@@ -782,6 +782,23 @@ function useFriendships(uid) {
     return list;
 }
 function otherUidOfFriendship(f, uid) { return f.users[0] === uid ? f.users[1] : f.users[0]; }
+function useMutualFriendsCount(myFriendIds, otherId) {
+    const [count, setCount] = useState(0);
+    useEffect(() => {
+        if (!otherId) return;
+        const unsub = db.collection('friendships').where('users', 'array-contains', otherId)
+            .onSnapshot(snap => {
+                const theirFriendIds = new Set(snap.docs.map(d => d.data())
+                    .filter(f => f.status === 'accepted')
+                    .map(f => otherUidOfFriendship(f, otherId)));
+                let n = 0;
+                myFriendIds.forEach(id => { if (theirFriendIds.has(id)) n++; });
+                setCount(n);
+            }, () => setCount(0));
+        return unsub;
+    }, [otherId, myFriendIds]);
+    return count;
+}
 /* ============================== PAGES (Facebook-style business/fan Pages) ============================== */
 // Live list of every Page the signed-in user owns/manages, used by the composer's "Post as"
 // switcher, the nav "Pages" entry, and the "My Pages" screen. Derived live from fanPages so it
@@ -2684,14 +2701,22 @@ function MainApp({ route, setRoute }) {
             React.createElement("header", { className: "sticky top-0 z-30 bg-white dark:bg-ink-900 border-b border-slate-200 dark:border-ink-800 md:hidden" },
                 React.createElement("div", { className: "px-3 py-2 flex items-center justify-between" },
                     React.createElement("div", { className: "flex items-center gap-1.5 text-brand-600 dark:text-brand-400" },
-                        React.createElement("span", { className: "font-display font-extrabold text-3xl" }, "Blueface")),
+                        React.createElement("span", { className: "font-display font-extrabold text-3xl tracking-tight" }, "Blueface")),
                     React.createElement("div", { className: "flex items-center gap-2" },
-                        React.createElement("button", { onClick: () => go({ name: 'home' }), className: "w-10 h-10 rounded-full bg-slate-100 dark:bg-ink-800 flex items-center justify-center text-slate-700 dark:text-slate-200" },
-                            React.createElement("i", { className: "fa-solid fa-plus text-lg" })),
-                        React.createElement("button", { onClick: () => go({ name: 'search' }), className: "w-10 h-10 rounded-full bg-slate-100 dark:bg-ink-800 flex items-center justify-center text-slate-700 dark:text-slate-200" },
-                            React.createElement("i", { className: "fa-solid fa-magnifying-glass text-lg" })),
-                        React.createElement("button", { onClick: () => setSidebarOpen(v => !v), className: "w-10 h-10 rounded-full bg-slate-100 dark:bg-ink-800 flex items-center justify-center text-slate-700 dark:text-slate-200" },
-                            React.createElement("i", { className: "fa-solid fa-bars text-lg" })))),
+                        React.createElement("button", { onClick: () => go({ name: 'home' }), className: "w-9 h-9 rounded-full bg-slate-100 dark:bg-ink-800 flex items-center justify-center text-ink-900 dark:text-slate-200" },
+                            React.createElement("i", { className: "fa-solid fa-plus text-base" })),
+                        React.createElement("button", { onClick: () => go({ name: 'search' }), className: "w-9 h-9 rounded-full bg-slate-100 dark:bg-ink-800 flex items-center justify-center text-ink-900 dark:text-slate-200" },
+                            React.createElement("i", { className: "fa-solid fa-magnifying-glass text-base" })),
+                        React.createElement("button", { onClick: () => setSidebarOpen(v => !v), className: "w-9 h-9 rounded-full bg-slate-100 dark:bg-ink-800 flex items-center justify-center text-ink-900 dark:text-slate-200" },
+                            React.createElement("i", { className: "fa-solid fa-bars text-base" })))),
+                React.createElement("div", { className: "flex items-stretch justify-around border-t border-slate-200 dark:border-ink-800" },
+                    ['home', 'search', 'messages', 'reels', 'notifications', 'marketplace']
+                        .map(name => nav.find(n => n.name === name))
+                        .filter(Boolean)
+                        .map(n => React.createElement("button", { key: n.name, onClick: () => go(Object.assign({ name: n.name }, (n.params || {}))), className: "relative flex-1 flex items-center justify-center py-2.5" },
+                            React.createElement("i", { className: "fa-solid " + n.icon + " text-[24px] " + (route.name === n.name ? "text-brand-600" : "text-slate-500 dark:text-slate-400") }),
+                            !!n.badge && React.createElement("span", { className: "absolute top-1 right-1/4 min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center" }, n.badge > 9 ? '9+' : n.badge),
+                            route.name === n.name && React.createElement("span", { className: "absolute bottom-0 left-1/2 -translate-x-1/2 w-9 h-[3px] rounded-full bg-brand-600" })))),
                 sidebarOpen && React.createElement("div", { className: "px-4 pb-3 flex flex-col gap-1 border-t border-slate-100 dark:border-ink-800 pt-2" },
                     React.createElement("button", { onClick: () => go({ name: 'games' }), className: "flex items-center gap-3 px-2 py-2.5 rounded-lg text-base font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-ink-800" },
                         React.createElement("i", { className: "fa-solid fa-gamepad w-6 text-lg" }),
@@ -2710,15 +2735,7 @@ function MainApp({ route, setRoute }) {
                         theme === 'dark' ? 'Light mode' : 'Dark mode'),
                     React.createElement("button", { onClick: () => auth.signOut(), className: "flex items-center gap-3 px-2 py-2.5 rounded-lg text-base font-bold text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20" },
                         React.createElement("i", { className: "fa-solid fa-arrow-right-from-bracket w-6 text-lg" }),
-                        "Sign out")),
-                React.createElement("div", { className: "flex items-center justify-around border-t border-slate-100 dark:border-ink-800 px-1" },
-                    ['home', 'search', 'messages', 'reels', 'notifications', 'marketplace']
-                        .map(name => nav.find(n => n.name === name))
-                        .filter(Boolean)
-                        .map(n => React.createElement("button", { key: n.name, onClick: () => go(Object.assign({ name: n.name }, (n.params || {}))), className: "relative flex-1 flex items-center justify-center py-3" },
-                            React.createElement("i", { className: "fa-solid " + n.icon + " text-[26px] " + (route.name === n.name ? "text-brand-600" : "text-slate-400") }),
-                            !!n.badge && React.createElement("span", { className: "absolute top-1 right-1/4 min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center" }, n.badge > 9 ? '9+' : n.badge),
-                            route.name === n.name && React.createElement("span", { className: "absolute -bottom-0 left-1/2 -translate-x-1/2 w-6 h-[3px] rounded-full bg-brand-600" }))))),
+                        "Sign out"))),
             React.createElement("main", { className: route.name === 'chat' ? "flex-1 max-w-2xl w-full mx-auto md:px-6 md:py-4" : "flex-1 max-w-2xl w-full mx-auto px-2 md:px-6 py-2 pb-8" },
                 route.name === 'home' && React.createElement(HomeFeed, { go: go }),
                 route.name === 'reels' && React.createElement(ReelsFeedScreen, { go: go, route: route }),
@@ -4017,6 +4034,21 @@ function TimelineReelCard({ reel, go }) {
             React.createElement("div", { className: "pb-3" }))));
 }
 /* ============================== PEOPLE YOU MAY KNOW ============================== */
+function PeopleYouMayKnowCard({ u, go, meId, myFriendIds, onDismiss }) {
+    const mutualCount = useMutualFriendsCount(myFriendIds, u.id);
+    const photoSrc = u.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(u.displayName || u.username || '?')}`;
+    return React.createElement("div", { className: "relative rounded-lg overflow-hidden border border-slate-200 dark:border-ink-700 bg-white dark:bg-ink-800 fade-in" },
+        React.createElement("button", { onClick: () => onDismiss(u.id), title: "Remove", className: "absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-full bg-black/40 hover:bg-black/60 text-white flex items-center justify-center text-xs" },
+            React.createElement("i", { className: "fa-solid fa-xmark" })),
+        React.createElement("div", { className: "aspect-square cursor-pointer bg-slate-100 dark:bg-ink-700", onClick: () => go({ name: 'profile', uid: u.id }) },
+            React.createElement("img", { src: photoSrc, className: "w-full h-full object-cover" })),
+        React.createElement("div", { className: "p-2.5" },
+            React.createElement("p", { className: "font-semibold text-[15px] leading-tight truncate cursor-pointer", onClick: () => go({ name: 'profile', uid: u.id }) }, u.displayName || u.username),
+            React.createElement("p", { className: "text-[13px] text-slate-500 dark:text-slate-400 truncate mb-2.5" },
+                mutualCount > 0 ? (mutualCount + " mutual friend" + (mutualCount > 1 ? "s" : "")) : ("@" + u.username)),
+            React.createElement(FriendActionButton, { meId: meId, otherId: u.id }),
+            React.createElement("button", { onClick: () => onDismiss(u.id), className: "w-full mt-1.5 py-2 rounded-md bg-slate-100 dark:bg-ink-700 text-slate-800 dark:text-slate-200 text-[15px] font-semibold hover:bg-slate-200 dark:hover:bg-ink-600 transition" }, "Remove")));
+}
 function PeopleYouMayKnow({ go }) {
     const { profile } = useAuth();
     const [allUsers, setAllUsers] = useState(null);
@@ -4027,6 +4059,9 @@ function PeopleYouMayKnow({ go }) {
             .onSnapshot(snap => setAllUsers(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setAllUsers([]));
         return unsub;
     }, []);
+    const myFriendIds = useMemo(() => (friendships || [])
+        .filter(f => f.status === 'accepted')
+        .map(f => otherUidOfFriendship(f, profile.id)), [JSON.stringify(friendships), profile.id]);
     const connectedIds = new Set((friendships || [])
         .filter(f => f.status === 'accepted' || f.status === 'pending')
         .map(f => otherUidOfFriendship(f, profile.id)));
@@ -4038,31 +4073,20 @@ function PeopleYouMayKnow({ go }) {
         .slice(0, 6);
     if (allUsers !== null && suggestions.length === 0)
         return null;
-    const renderCard = (u, i) => {
-        if (allUsers === null) {
-            return React.createElement("div", { key: i, className: "rounded-xl overflow-hidden border border-slate-100 dark:border-ink-700" },
-                React.createElement("div", { className: "aspect-square skeleton" }),
-                React.createElement("div", { className: "p-2 space-y-2" },
-                    React.createElement("div", { className: "h-3 w-3/4 rounded skeleton" }),
-                    React.createElement("div", { className: "h-8 w-full rounded-lg skeleton" })));
-        }
-        const photoSrc = u.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(u.displayName || u.username || '?')}`;
-        const removeBtn = React.createElement("button", { onClick: () => setDismissed(d => [...d, u.id]), title: "Remove", className: "absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-full bg-black/40 hover:bg-black/60 text-white flex items-center justify-center text-xs" },
-            React.createElement("i", { className: "fa-solid fa-xmark" }));
-        const photo = React.createElement("div", { className: "aspect-square cursor-pointer bg-slate-100 dark:bg-ink-700", onClick: () => go({ name: 'profile', uid: u.id }) },
-            React.createElement("img", { src: photoSrc, className: "w-full h-full object-cover" }));
-        const info = React.createElement("div", { className: "p-2" },
-            React.createElement("p", { className: "font-semibold text-sm truncate cursor-pointer", onClick: () => go({ name: 'profile', uid: u.id }) }, u.displayName || u.username),
-            React.createElement("p", { className: "text-xs text-slate-400 truncate mb-2" }, "@", u.username),
-            React.createElement(FriendActionButton, { meId: profile.id, otherId: u.id }));
-        return React.createElement("div", { key: u.id, className: "relative rounded-xl overflow-hidden border border-slate-100 dark:border-ink-700 fade-in" }, removeBtn, photo, info);
-    };
+    const dismiss = (id) => setDismissed(d => [...d, id]);
     const header = React.createElement("div", { className: "flex items-center justify-between mb-3 px-1" },
-        React.createElement("h3", { className: "font-display font-bold text-lg" }, "People you may know"),
-        React.createElement("button", { onClick: () => go({ name: 'search', tab: 'suggested' }), className: "text-brand-600 dark:text-brand-400 text-sm font-semibold" }, "See all"));
-    const grid = React.createElement("div", { className: "grid grid-cols-2 gap-3" },
-        (allUsers === null ? [1, 2] : suggestions).map(renderCard));
-    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-3 mb-4" }, header, grid);
+        React.createElement("h3", { className: "font-display font-bold text-[19px]" }, "People you may know"));
+    const grid = React.createElement("div", { className: "grid grid-cols-2 gap-2.5" },
+        allUsers === null
+            ? [1, 2].map(i => React.createElement("div", { key: i, className: "rounded-lg overflow-hidden border border-slate-200 dark:border-ink-700" },
+                React.createElement("div", { className: "aspect-square skeleton" }),
+                React.createElement("div", { className: "p-2.5 space-y-2" },
+                    React.createElement("div", { className: "h-3 w-3/4 rounded skeleton" }),
+                    React.createElement("div", { className: "h-8 w-full rounded-md skeleton" }))))
+            : suggestions.map(u => React.createElement(PeopleYouMayKnowCard, { key: u.id, u: u, go: go, meId: profile.id, myFriendIds: myFriendIds, onDismiss: dismiss })));
+    const seeAll = suggestions.length > 0 && React.createElement("button", { onClick: () => go({ name: 'search', tab: 'suggested' }), className: "w-full text-center mt-3 py-2 text-brand-600 dark:text-brand-400 text-[15px] font-semibold hover:underline" },
+        "See all");
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-lg border border-slate-200 dark:border-ink-700 p-3 mb-2 -mx-2 sm:mx-0 sm:rounded-2xl" }, header, grid, seeAll);
 }
 function HomeFeed({ go }) {
     const { profile } = useAuth();
