@@ -1017,6 +1017,7 @@ async function followPage(pageId, uid, pageOwnerId) {
     if (pageOwnerId && pageOwnerId !== uid) {
         db.collection('notifications').doc(pageOwnerId).collection('items').add({ type: 'page_follow', fromUserId: uid, pageId, read: false, createdAt: FieldValue.serverTimestamp() }).catch(() => { });
     }
+    checkAndNotifyMilestones(pageId).catch(() => { });
 }
 async function unfollowPage(pageId, uid) {
     await db.collection('pageFollows').doc(uid + '_' + pageId).delete();
@@ -1024,7 +1025,46 @@ async function unfollowPage(pageId, uid) {
 // One view doc per unique viewer uid, mirroring recordListingView, so "Page views" in
 // analytics reflects unique visitors rather than every page load.
 async function recordPageView(pageId, uid) {
-    await db.collection('fanPages').doc(pageId).collection('views').doc(uid).set({ uid, createdAt: FieldValue.serverTimestamp() }, { merge: true });
+    const ref = db.collection('fanPages').doc(pageId).collection('views').doc(uid);
+    const existed = (await ref.get()).exists;
+    await ref.set({ uid, createdAt: FieldValue.serverTimestamp() }, { merge: true });
+    // Best-effort denormalized counter (same pattern as postsCount elsewhere in this file) so
+    // admin reports can rank "Most viewed pages" without an expensive per-page subcollection
+    // count query. Only increments on first-ever view from this uid, mirroring the unique-view
+    // semantics of the views subcollection itself.
+    if (!existed) db.collection('fanPages').doc(pageId).update({ viewsCount: FieldValue.increment(1) }).catch(() => { });
+}
+// Live site/monetization settings (settings/site doc). Admin-adjustable knobs: minimum
+// follower requirement, earnings rate, minimum withdrawal amount, and monetization/withdrawal
+// kill-switches. Sensible defaults are used until the doc loads or if a field was never set.
+const DEFAULT_SITE_SETTINGS = {
+    minFollowersRequired: 1000, earningsRatePer1000Views: 0, minWithdrawalAmount: 5000,
+    monetizationEnabled: true, withdrawalsEnabled: true,
+};
+function useSiteSettings() {
+    const [settings, setSettings] = useState(DEFAULT_SITE_SETTINGS);
+    useEffect(() => {
+        const unsub = db.collection('settings').doc('site').onSnapshot(s => {
+            setSettings(Object.assign({}, DEFAULT_SITE_SETTINGS, s.exists ? s.data() : {}));
+        }, () => setSettings(DEFAULT_SITE_SETTINGS));
+        return unsub;
+    }, []);
+    return settings;
+}
+// Live withdrawal request history for one Page (owner-facing).
+function usePageWithdrawals(pageId) {
+    const [items, setItems] = useState(null);
+    useEffect(() => {
+        if (!pageId) { setItems([]); return; }
+        const unsub = db.collection('withdrawalRequests').where('pageId', '==', pageId).limit(100)
+            .onSnapshot(snap => {
+                const list = snap.docs.map(d => (Object.assign({ id: d.id }, d.data())));
+                list.sort((a, b) => { var _a, _b; return (((_a = b.requestedAt) === null || _a === void 0 ? void 0 : _a.toMillis) ? b.requestedAt.toMillis() : 0) - (((_b = a.requestedAt) === null || _b === void 0 ? void 0 : _b.toMillis) ? a.requestedAt.toMillis() : 0); });
+                setItems(list);
+            }, () => setItems([]));
+        return unsub;
+    }, [pageId]);
+    return items;
 }
 /* ============================== REELS: DATA LAYER ==============================
  * Collections used (see Firestore/Storage security rules documented at the end of
@@ -1320,9 +1360,9 @@ const MONETIZATION_STATUS_LABELS = { none: 'Not Eligible', eligible: 'Eligible t
 // the owner's Monetization screen (to show/gate the Apply button) and mirrored into security
 // rules. Followers are read live (see useFollowersCount) rather than from a denormalized
 // counter, since this app deliberately avoids drift-prone follower counters elsewhere too.
-function computePageEligibility(kycStatus, followersCount) {
+function computePageEligibility(kycStatus, followersCount, followersRequired) {
     const kycApproved = kycStatus === 'verified';
-    const followersMet = (followersCount || 0) >= MONETIZATION_FOLLOWERS_REQUIRED;
+    const followersMet = (followersCount || 0) >= (followersRequired || MONETIZATION_FOLLOWERS_REQUIRED);
     return { eligible: kycApproved && followersMet, kycApproved, followersMet };
 }
 // Derives the single status shown to the Page owner: "none" (Not Eligible) until both KYC and
@@ -1359,15 +1399,48 @@ async function submitPageKyc(page, profileId, fields, files) {
     }, { merge: true });
     await db.collection('fanPages').doc(page.id).update({ kycStatus: 'pending' });
 }
+// Notifies a Page owner about something that happened to their Page rather than another user's
+// action, so it carries pageId (not fromUserId) — see SYSTEM_NOTIF_TYPES / NotifRow.
+function notifyPageOwner(ownerId, pageId, type, extra) {
+    if (!ownerId) return;
+    db.collection('notifications').doc(ownerId).collection('items').add(Object.assign({ type, pageId, read: false, createdAt: FieldValue.serverTimestamp() }, extra || {})).catch(() => { });
+}
+// Fires the "reached 1,000 followers" and "eligible for monetization" notifications exactly
+// once each, guarded by flags on the fanPages doc so they never repeat. Called after any event
+// that could change eligibility (a new follower, or a KYC approval).
+async function checkAndNotifyMilestones(pageId) {
+    const [pageSnap, followsSnap, settingsSnap] = await Promise.all([
+        db.collection('fanPages').doc(pageId).get(),
+        db.collection('pageFollows').where('pageId', '==', pageId).get(),
+        db.collection('settings').doc('site').get().catch(() => null),
+    ]);
+    if (!pageSnap.exists) return;
+    const page = pageSnap.data();
+    const followersCount = followsSnap.size;
+    const required = (settingsSnap && settingsSnap.exists && settingsSnap.data().minFollowersRequired) || MONETIZATION_FOLLOWERS_REQUIRED;
+    const updates = {};
+    if (followersCount >= required && !page.milestone1000Notified) {
+        notifyPageOwner(page.ownerId, pageId, 'followers_milestone', { count: followersCount });
+        updates.milestone1000Notified = true;
+    }
+    if (page.kycStatus === 'verified' && followersCount >= required && !page.eligibilityNotified) {
+        notifyPageOwner(page.ownerId, pageId, 'monetization_eligible', {});
+        updates.eligibilityNotified = true;
+    }
+    if (Object.keys(updates).length) db.collection('fanPages').doc(pageId).update(updates).catch(() => { });
+}
 async function adminApproveKyc(k, adminUid) {
     await db.collection('pageKyc').doc(k.pageId).update({ status: 'verified', reviewedAt: FieldValue.serverTimestamp(), reviewedBy: adminUid, rejectionReason: FieldValue.delete() });
     await db.collection('fanPages').doc(k.pageId).update({ kycStatus: 'verified' });
+    notifyPageOwner(k.ownerId, k.pageId, 'kyc_approved', {});
+    checkAndNotifyMilestones(k.pageId);
 }
 async function adminRejectKyc(k, adminUid, reason) {
     await db.collection('pageKyc').doc(k.pageId).update({ status: 'rejected', reviewedAt: FieldValue.serverTimestamp(), reviewedBy: adminUid, rejectionReason: reason || '' });
     // Rejecting KYC also cascades to shut off any active/pending monetization, since verified
     // KYC is a hard requirement for monetization to stay enabled.
     await db.collection('fanPages').doc(k.pageId).update({ kycStatus: 'rejected', monetizationEnabled: false, monetizationStatus: 'none' });
+    notifyPageOwner(k.ownerId, k.pageId, 'kyc_rejected', { reason: reason || '' });
 }
 // Owner applies for monetization once both requirements (verified KYC + follower threshold)
 // are met. Creates/overwrites the single pageMonetizationApplications/{pageId} doc, same
@@ -1384,18 +1457,84 @@ async function applyForMonetization(page, profileId, followersCount) {
 async function adminApproveMonetization(a, adminUid) {
     await db.collection('pageMonetizationApplications').doc(a.pageId).update({ status: 'approved', reviewedAt: FieldValue.serverTimestamp(), reviewedBy: adminUid, rejectionReason: FieldValue.delete() });
     await db.collection('fanPages').doc(a.pageId).update({ monetizationStatus: 'approved', monetizationEnabled: true });
+    notifyPageOwner(a.ownerId, a.pageId, 'monetization_approved', {});
 }
 async function adminRejectMonetization(a, adminUid, reason) {
     await db.collection('pageMonetizationApplications').doc(a.pageId).update({ status: 'rejected', reviewedAt: FieldValue.serverTimestamp(), reviewedBy: adminUid, rejectionReason: reason || '' });
     await db.collection('fanPages').doc(a.pageId).update({ monetizationStatus: 'rejected', monetizationEnabled: false });
+    notifyPageOwner(a.ownerId, a.pageId, 'monetization_rejected', { reason: reason || '' });
 }
 async function adminSuspendMonetization(a, adminUid, reason) {
     await db.collection('pageMonetizationApplications').doc(a.pageId).update({ status: 'suspended', reviewedAt: FieldValue.serverTimestamp(), reviewedBy: adminUid, rejectionReason: reason || '' });
     await db.collection('fanPages').doc(a.pageId).update({ monetizationStatus: 'suspended', monetizationEnabled: false });
+    notifyPageOwner(a.ownerId, a.pageId, 'monetization_suspended', { reason: reason || '' });
 }
 async function adminRestoreMonetization(a, adminUid) {
     await db.collection('pageMonetizationApplications').doc(a.pageId).update({ status: 'approved', reviewedAt: FieldValue.serverTimestamp(), reviewedBy: adminUid, rejectionReason: FieldValue.delete() });
     await db.collection('fanPages').doc(a.pageId).update({ monetizationStatus: 'approved', monetizationEnabled: true });
+    notifyPageOwner(a.ownerId, a.pageId, 'monetization_approved', {});
+}
+/* ============================== PAGE MONETIZATION: EARNINGS ==============================
+ *  - fanPages/{pageId}   gains: earningsBalance (available to withdraw), lifetimeEarnings,
+ *                          lifetimeWithdrawn (all numbers, kobo/naira units up to the caller)
+ *  - pageEarningsLog/{autoId}   one doc per manual earnings adjustment, for a paper trail.
+ */
+// Admin manually credits or debits a monetized Page's balance (e.g. ad-revenue share for the
+// period). Positive amount = credit, negative = debit/correction. Logged for auditability and
+// notifies the owner either way.
+async function adminAdjustEarnings(page, adminUid, amount, note) {
+    const amt = Number(amount) || 0;
+    if (!amt) throw new Error('Enter a non-zero amount.');
+    await db.collection('fanPages').doc(page.id).update({
+        earningsBalance: FieldValue.increment(amt),
+        lifetimeEarnings: FieldValue.increment(amt > 0 ? amt : 0),
+    });
+    await db.collection('pageEarningsLog').add({
+        pageId: page.id, ownerId: page.ownerId, amount: amt, note: (note || '').trim(),
+        adminUid, createdAt: FieldValue.serverTimestamp(),
+    });
+    notifyPageOwner(page.ownerId, page.id, 'earnings_updated', { amount: amt });
+}
+/* ============================== PAGE MONETIZATION: WITHDRAWALS ==============================
+ *  - withdrawalRequests/{autoId}   pageId, ownerId, amount, bank details, status
+ *      ('pending'|'approved'|'rejected'|'paid'), requestedAt/reviewedAt/paidAt, reasons.
+ * The requested amount is deducted from earningsBalance immediately on submission (an escrow
+ * hold) so a Page can never request more than its available balance twice over. Rejecting a
+ * request refunds the hold back to the balance.
+ */
+async function requestWithdrawal(page, kyc, amount, settings) {
+    const amt = Number(amount) || 0;
+    if (page.kycStatus !== 'verified') throw new Error('KYC must be verified before you can withdraw.');
+    if (!page.monetizationEnabled || page.monetizationStatus !== 'approved') throw new Error('Monetization must be approved before you can withdraw.');
+    if (!settings.withdrawalsEnabled) throw new Error('Withdrawals are temporarily disabled by the platform.');
+    const balance = page.earningsBalance || 0;
+    const minAmt = settings.minWithdrawalAmount || 0;
+    if (amt < minAmt) throw new Error(`Minimum withdrawal amount is ${minAmt.toLocaleString()}.`);
+    if (amt > balance) throw new Error('Amount exceeds your available balance.');
+    const ref = db.collection('withdrawalRequests').doc();
+    await ref.set({
+        pageId: page.id, ownerId: page.ownerId, pageDisplayName: page.displayName, pageUsername: page.username || '',
+        amount: amt, balanceBefore: balance, status: 'pending',
+        bankAccountName: (kyc && kyc.bankAccountName) || '', bankAccountNumber: (kyc && kyc.bankAccountNumber) || '', bankName: (kyc && kyc.bankName) || '',
+        requestedAt: FieldValue.serverTimestamp(), reviewedAt: null, reviewedBy: null, rejectionReason: null, paidAt: null, paidBy: null,
+    });
+    await db.collection('fanPages').doc(page.id).update({ earningsBalance: FieldValue.increment(-amt) });
+    return ref.id;
+}
+async function adminApproveWithdrawal(w, adminUid) {
+    await db.collection('withdrawalRequests').doc(w.id).update({ status: 'approved', reviewedAt: FieldValue.serverTimestamp(), reviewedBy: adminUid });
+    notifyPageOwner(w.ownerId, w.pageId, 'withdrawal_approved', { withdrawalId: w.id, amount: w.amount });
+}
+async function adminRejectWithdrawal(w, adminUid, reason) {
+    await db.collection('withdrawalRequests').doc(w.id).update({ status: 'rejected', reviewedAt: FieldValue.serverTimestamp(), reviewedBy: adminUid, rejectionReason: reason || '' });
+    // Refund the escrowed amount back to the Page's available balance.
+    await db.collection('fanPages').doc(w.pageId).update({ earningsBalance: FieldValue.increment(w.amount) });
+    notifyPageOwner(w.ownerId, w.pageId, 'withdrawal_rejected', { withdrawalId: w.id, amount: w.amount, reason: reason || '' });
+}
+async function adminMarkWithdrawalPaid(w, adminUid) {
+    await db.collection('withdrawalRequests').doc(w.id).update({ status: 'paid', paidAt: FieldValue.serverTimestamp(), paidBy: adminUid });
+    await db.collection('fanPages').doc(w.pageId).update({ lifetimeWithdrawn: FieldValue.increment(w.amount) });
+    notifyPageOwner(w.ownerId, w.pageId, 'withdrawal_paid', { withdrawalId: w.id, amount: w.amount });
 }
 async function requestListingPromotion(listingId) {
     await db.collection('listings').doc(listingId).update({ promotionStatus: 'pending' });
@@ -2608,6 +2747,7 @@ function MainApp({ route, setRoute }) {
                 route.name === 'page' && React.createElement(PageProfileScreen, { id: route.id, go: go }),
                 route.name === 'pageAnalytics' && React.createElement(PageAnalyticsScreen, { id: route.id, go: go }),
                 route.name === 'monetization' && React.createElement(MonetizationScreen, { id: route.id, go: go }),
+                route.name === 'withdrawals' && React.createElement(WithdrawalsScreen, { id: route.id, go: go }),
                 route.name === 'kycForm' && React.createElement(KycFormScreen, { id: route.id, go: go }),
                 route.name !== 'chat' && React.createElement(Footer, { compact: true })))));
 }
@@ -4083,8 +4223,18 @@ function SearchScreen({ go, route }) {
                 React.createElement("div", { className: "space-y-2" }, friendUsers.map(u => React.createElement(PersonRow, { key: u.id, u: u })))))))));
 }
 /* ============================== NOTIFICATIONS ============================== */
-const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', reply: 'replied to your comment', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group' };
-const SYSTEM_NOTIF_TYPES = ['listing_approved', 'listing_removed', 'ad_approved', 'ad_declined', 'group_request_approved', 'group_request_rejected'];
+const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', reply: 'replied to your comment', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group',
+    kyc_approved: 'Your Page KYC verification was approved', kyc_rejected: 'Your Page KYC verification was rejected',
+    followers_milestone: 'Your Page reached 1,000 followers', monetization_eligible: 'Your Page is now eligible for monetization',
+    monetization_approved: 'Your Page monetization application was approved', monetization_rejected: 'Your Page monetization application was rejected',
+    monetization_suspended: 'Monetization on your Page was suspended', earnings_updated: 'Your Page earnings were updated',
+    withdrawal_approved: 'Your withdrawal request was approved', withdrawal_rejected: 'Your withdrawal request was rejected',
+    withdrawal_paid: 'Your withdrawal payment was completed' };
+const SYSTEM_NOTIF_TYPES = ['listing_approved', 'listing_removed', 'ad_approved', 'ad_declined', 'group_request_approved', 'group_request_rejected',
+    'kyc_approved', 'kyc_rejected', 'followers_milestone', 'monetization_eligible', 'monetization_approved', 'monetization_rejected', 'monetization_suspended',
+    'earnings_updated', 'withdrawal_approved', 'withdrawal_rejected', 'withdrawal_paid'];
+const MONETIZATION_NOTIF_TYPES = ['kyc_approved', 'kyc_rejected', 'followers_milestone', 'monetization_eligible', 'monetization_approved', 'monetization_rejected', 'monetization_suspended', 'earnings_updated'];
+const WITHDRAWAL_NOTIF_TYPES = ['withdrawal_approved', 'withdrawal_rejected', 'withdrawal_paid'];
 function NotificationsScreen({ go }) {
     const { profile } = useAuth();
     const [items, setItems] = useState(null);
@@ -4124,14 +4274,19 @@ function NotifRow({ n, go }) {
             return go({ name: 'listing', id: n.listingId });
         if (n.groupId)
             return go({ name: 'group', id: n.groupId });
+        if (WITHDRAWAL_NOTIF_TYPES.includes(n.type) && n.pageId)
+            return go({ name: 'withdrawals', id: n.pageId });
+        if (MONETIZATION_NOTIF_TYPES.includes(n.type) && n.pageId)
+            return go({ name: 'monetization', id: n.pageId });
         go({ name: 'profile', uid: n.fromUserId });
     };
     return (React.createElement("div", { onClick: openNotif, className: "flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700 cursor-pointer" },
-        isSystem ? React.createElement("div", { className: "w-9 h-9 rounded-full bg-brand-50 dark:bg-brand-900/30 flex items-center justify-center text-brand-600 dark:text-brand-400 shrink-0" }, React.createElement("i", { className: "fa-solid " + (n.groupId ? 'fa-people-group' : 'fa-store') })) : React.createElement(Avatar, { user: from, size: 9 }),
+        isSystem ? React.createElement("div", { className: "w-9 h-9 rounded-full bg-brand-50 dark:bg-brand-900/30 flex items-center justify-center text-brand-600 dark:text-brand-400 shrink-0" }, React.createElement("i", { className: "fa-solid " + (n.groupId ? 'fa-people-group' : (MONETIZATION_NOTIF_TYPES.includes(n.type) || WITHDRAWAL_NOTIF_TYPES.includes(n.type)) ? 'fa-sack-dollar' : 'fa-store') })) : React.createElement(Avatar, { user: from, size: 9 }),
         React.createElement("p", { className: "text-sm" },
             !isSystem && React.createElement("span", { className: "font-semibold" }, from.displayName),
             !isSystem && " ",
             NOTIF_TEXT[n.type] || 'interacted with you',
+            (n.type === 'earnings_updated' || WITHDRAWAL_NOTIF_TYPES.includes(n.type)) && typeof n.amount === 'number' ? (' (' + Math.abs(n.amount).toLocaleString() + ')') : '',
             " ",
             React.createElement("span", { className: "text-slate-400" },
                 "\u00B7 ",
@@ -4991,6 +5146,7 @@ function MonetizationScreen({ id, go }) {
     const kyc = usePageKyc(id);
     const app = usePageMonetizationApp(id);
     const followersCount = useFollowersCount(id);
+    const settings = useSiteSettings();
     const [busy, setBusy] = useState(false);
     useEffect(() => {
         const unsub = db.collection('fanPages').doc(id).onSnapshot(s => setPage(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setPage(null));
@@ -5001,9 +5157,10 @@ function MonetizationScreen({ id, go }) {
     if (page === null || page.ownerId !== profile.id)
         return React.createElement("p", { className: "text-sm text-slate-400" }, "You don't manage this Page.");
     const kycStatus = page.kycStatus || 'none';
-    const { eligible, kycApproved, followersMet } = computePageEligibility(kycStatus, followersCount);
-    const followersNeeded = Math.max(0, MONETIZATION_FOLLOWERS_REQUIRED - followersCount);
-    const progressPct = Math.min(100, Math.round((followersCount / MONETIZATION_FOLLOWERS_REQUIRED) * 100));
+    const followersRequired = settings.minFollowersRequired || MONETIZATION_FOLLOWERS_REQUIRED;
+    const { eligible, kycApproved, followersMet } = computePageEligibility(kycStatus, followersCount, followersRequired);
+    const followersNeeded = Math.max(0, followersRequired - followersCount);
+    const progressPct = Math.min(100, Math.round((followersCount / followersRequired) * 100));
     const KYC_BADGE_CLS = {
         none: 'bg-slate-100 dark:bg-ink-700 text-slate-500',
         pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
@@ -5052,17 +5209,23 @@ function MonetizationScreen({ id, go }) {
             StatRow('Monetization status', React.createElement("span", { className: "px-2 py-0.5 rounded-full text-xs font-semibold " + monetizationBadgeCls }, monetizationLabel)),
             StatRow('Current followers', followersCount.toLocaleString()),
             StatRow('Followers needed', followersMet ? '0 \u2014 requirement met' : followersNeeded.toLocaleString())),
+        displayStatus === 'approved' && React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-4 mb-4" },
+            React.createElement("h3", { className: "font-display text-base font-bold mb-3" }, "Earnings"),
+            StatRow('Available balance', (page.earningsBalance || 0).toLocaleString()),
+            StatRow('Total earned', (page.lifetimeEarnings || 0).toLocaleString()),
+            StatRow('Total withdrawn', (page.lifetimeWithdrawn || 0).toLocaleString()),
+            React.createElement("button", { onClick: () => go({ name: 'withdrawals', id }), className: "w-full mt-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl py-2.5 text-sm font-semibold" }, React.createElement("i", { className: "fa-solid fa-money-bill-transfer mr-2" }), "Withdraw funds")),
         React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-4 mb-4" },
             React.createElement("div", { className: "flex items-center justify-between mb-2" },
                 React.createElement("h3", { className: "font-display text-base font-bold" }, "Eligibility progress"),
                 React.createElement("span", { className: "text-xs font-semibold text-slate-400" }, progressPct, "%")),
-            React.createElement(ProgressBar, { value: followersCount, max: MONETIZATION_FOLLOWERS_REQUIRED, colorClass: followersMet ? 'bg-emerald-500' : 'bg-brand-600' }),
-            React.createElement("p", { className: "text-xs text-slate-400 mt-2" }, followersCount.toLocaleString(), " / ", MONETIZATION_FOLLOWERS_REQUIRED.toLocaleString(), " followers"),
+            React.createElement(ProgressBar, { value: followersCount, max: followersRequired, colorClass: followersMet ? 'bg-emerald-500' : 'bg-brand-600' }),
+            React.createElement("p", { className: "text-xs text-slate-400 mt-2" }, followersCount.toLocaleString(), " / ", followersRequired.toLocaleString(), " followers"),
             React.createElement("div", { className: "mt-3 space-y-1.5" },
                 React.createElement("p", { className: "text-xs flex items-center gap-1.5 " + (kycApproved ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400") },
                     React.createElement("i", { className: "fa-solid " + (kycApproved ? 'fa-circle-check' : 'fa-circle') + " text-[10px]" }), "KYC verified"),
                 React.createElement("p", { className: "text-xs flex items-center gap-1.5 " + (followersMet ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400") },
-                    React.createElement("i", { className: "fa-solid " + (followersMet ? 'fa-circle-check' : 'fa-circle') + " text-[10px]" }), "At least ", MONETIZATION_FOLLOWERS_REQUIRED.toLocaleString(), " followers"))),
+                    React.createElement("i", { className: "fa-solid " + (followersMet ? 'fa-circle-check' : 'fa-circle') + " text-[10px]" }), "At least ", followersRequired.toLocaleString(), " followers"))),
         React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-4" },
             kycStatus === 'none' && React.createElement(React.Fragment, null,
                 React.createElement("p", { className: "text-sm mb-3" }, "Start identity verification (KYC) to become eligible for monetization. This includes your full name, date of birth, government ID, a selfie, phone number, address, and bank details."),
@@ -5071,8 +5234,9 @@ function MonetizationScreen({ id, go }) {
             kycStatus === 'rejected' && React.createElement(React.Fragment, null,
                 React.createElement("p", { className: "text-sm text-red-500 mb-3" }, "Your verification was rejected", kyc && kyc.rejectionReason ? (': ' + kyc.rejectionReason) : '.'),
                 React.createElement("button", { onClick: () => go({ name: 'kycForm', id }), className: "w-full bg-brand-600 hover:bg-brand-700 text-white rounded-xl py-2.5 text-sm font-semibold" }, "Resubmit KYC Verification")),
-            kycStatus === 'verified' && !eligible && React.createElement("p", { className: "text-sm text-slate-500 dark:text-slate-400" }, React.createElement("i", { className: "fa-solid fa-hourglass-half mr-1.5" }), "KYC verified! Keep growing \u2014 you'll unlock monetization once this Page reaches ", MONETIZATION_FOLLOWERS_REQUIRED.toLocaleString(), " followers."),
-            kycStatus === 'verified' && eligible && displayStatus === 'eligible' && React.createElement(React.Fragment, null,
+            kycStatus === 'verified' && !eligible && React.createElement("p", { className: "text-sm text-slate-500 dark:text-slate-400" }, React.createElement("i", { className: "fa-solid fa-hourglass-half mr-1.5" }), "KYC verified! Keep growing \u2014 you'll unlock monetization once this Page reaches ", followersRequired.toLocaleString(), " followers."),
+            !settings.monetizationEnabled && React.createElement("p", { className: "text-sm text-red-500" }, React.createElement("i", { className: "fa-solid fa-circle-exclamation mr-1.5" }), "Monetization is temporarily disabled platform-wide."),
+            settings.monetizationEnabled && kycStatus === 'verified' && eligible && displayStatus === 'eligible' && React.createElement(React.Fragment, null,
                 React.createElement("p", { className: "text-sm mb-3" }, "This Page is eligible to apply! Submit your monetization application for admin review."),
                 React.createElement("button", { disabled: busy, onClick: apply, className: "w-full rounded-xl py-2.5 text-sm font-semibold text-white bg-emerald-500 hover:bg-emerald-600" }, busy ? 'Submitting…' : 'Apply for Monetization')),
             displayStatus === 'pending' && React.createElement("p", { className: "text-sm text-slate-500 dark:text-slate-400" }, React.createElement("i", { className: "fa-solid fa-clock mr-1.5" }), "Your monetization application is under review by our team."),
@@ -5081,6 +5245,68 @@ function MonetizationScreen({ id, go }) {
                 React.createElement("p", { className: "text-sm text-red-500 mb-3" }, "Your monetization application was rejected", app && app.rejectionReason ? (': ' + app.rejectionReason) : '.'),
                 eligible && React.createElement("button", { disabled: busy, onClick: apply, className: "w-full rounded-xl py-2.5 text-sm font-semibold text-white bg-brand-600 hover:bg-brand-700" }, busy ? 'Submitting…' : 'Re-apply for Monetization')),
             displayStatus === 'suspended' && React.createElement("p", { className: "text-sm text-red-500" }, React.createElement("i", { className: "fa-solid fa-circle-exclamation mr-1.5" }), "Monetization on this Page has been suspended by an administrator", app && app.rejectionReason ? (': ' + app.rejectionReason) : '.'))));
+}
+/* ============================== PAGE MONETIZATION: WITHDRAWALS SCREEN (OWNER) ============================== */
+const WITHDRAWAL_STATUS_LABELS = { pending: 'Pending Review', approved: 'Approved \u2014 Awaiting Payment', rejected: 'Rejected', paid: 'Paid' };
+const WITHDRAWAL_BADGE_CLS = {
+    pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+    approved: 'bg-brand-100 text-brand-700 dark:bg-brand-900/30 dark:text-brand-400',
+    rejected: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400',
+    paid: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+};
+function WithdrawalsScreen({ id, go }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const [page, setPage] = useState(undefined);
+    const kyc = usePageKyc(id);
+    const settings = useSiteSettings();
+    const history = usePageWithdrawals(id);
+    const [amount, setAmount] = useState('');
+    const [busy, setBusy] = useState(false);
+    useEffect(() => {
+        const unsub = db.collection('fanPages').doc(id).onSnapshot(s => setPage(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setPage(null));
+        return unsub;
+    }, [id]);
+    if (page === undefined || kyc === undefined || history === null)
+        return React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026");
+    if (page === null || page.ownerId !== profile.id)
+        return React.createElement("p", { className: "text-sm text-slate-400" }, "You don't manage this Page.");
+    const balance = page.earningsBalance || 0;
+    const eligible = page.kycStatus === 'verified' && page.monetizationEnabled && page.monetizationStatus === 'approved' && settings.withdrawalsEnabled && balance >= (settings.minWithdrawalAmount || 0);
+    const submit = async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        try {
+            await requestWithdrawal(page, kyc, amount, settings);
+            toast('Withdrawal request submitted', 'success');
+            setAmount('');
+        }
+        catch (e2) { toast(e2.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    return (React.createElement("div", { className: "max-w-lg mx-auto px-1 sm:px-0" },
+        React.createElement("button", { onClick: () => go({ name: 'monetization', id }), className: "text-sm text-slate-400 mb-3" }, React.createElement("i", { className: "fa-solid fa-arrow-left mr-1.5" }), "Back to Monetization"),
+        React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, "Withdrawals"),
+        React.createElement("p", { className: "text-sm text-slate-400 mb-5" }, page.displayName, " \u00B7 request a payout and track your withdrawal history."),
+        React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-4 mb-4" },
+            React.createElement("p", { className: "text-xs text-slate-400" }, "Available balance"),
+            React.createElement("p", { className: "font-display text-3xl font-extrabold mb-3" }, balance.toLocaleString()),
+            !settings.withdrawalsEnabled && React.createElement("p", { className: "text-xs text-red-500 mb-2" }, React.createElement("i", { className: "fa-solid fa-circle-exclamation mr-1.5" }), "Withdrawals are temporarily disabled by the platform."),
+            page.kycStatus !== 'verified' && React.createElement("p", { className: "text-xs text-red-500 mb-2" }, "KYC must be verified before you can withdraw."),
+            (page.monetizationStatus !== 'approved' || !page.monetizationEnabled) && React.createElement("p", { className: "text-xs text-red-500 mb-2" }, "Monetization must be approved before you can withdraw."),
+            React.createElement("p", { className: "text-xs text-slate-400" }, "Minimum withdrawal: ", (settings.minWithdrawalAmount || 0).toLocaleString()),
+            eligible ? React.createElement("form", { onSubmit: submit, className: "mt-3 flex gap-2" },
+                React.createElement("input", { type: "number", min: settings.minWithdrawalAmount || 0, max: balance, step: "1", value: amount, onChange: e => setAmount(e.target.value), required: true, placeholder: "Amount", className: "flex-1 px-3 py-2.5 rounded-xl border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+                React.createElement("button", { disabled: busy, type: "submit", className: "px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-sm font-semibold" }, busy ? 'Submitting…' : 'Request')) :
+                React.createElement("p", { className: "text-xs text-slate-400 mt-3" }, "You'll be able to request a withdrawal once the requirements above are met and your balance reaches the minimum.")),
+        React.createElement("h3", { className: "font-display text-base font-bold mb-2" }, "History"),
+        history.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No withdrawal requests yet."),
+        React.createElement("div", { className: "space-y-2" }, history.map(w => React.createElement("div", { key: w.id, className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
+            React.createElement("div", { className: "flex items-center justify-between" },
+                React.createElement("p", { className: "text-sm font-semibold" }, w.amount.toLocaleString()),
+                React.createElement("span", { className: "px-2 py-0.5 rounded-full text-[10px] font-semibold " + (WITHDRAWAL_BADGE_CLS[w.status] || '') }, WITHDRAWAL_STATUS_LABELS[w.status] || w.status)),
+            React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, timeAgo(w.requestedAt)),
+            w.status === 'rejected' && w.rejectionReason && React.createElement("p", { className: "text-xs text-red-500 mt-1" }, "Reason: ", w.rejectionReason))))));
 }
 /* ============================== ADMIN ============================== */
 function SuperAdminApp({ theme, setTheme }) {
@@ -5140,9 +5366,13 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
     const [fanPages, setFanPages] = useState([]);
     const [kycApps, setKycApps] = useState([]);
     const [kycFilter, setKycFilter] = useState('pending');
-    const [monetizationSubtab, setMonetizationSubtab] = useState('kyc');
+    const [monetizationSubtab, setMonetizationSubtab] = useState('overview');
     const [monetizationApps, setMonetizationApps] = useState([]);
     const [monetizationFilter, setMonetizationFilter] = useState('pending');
+    const [monetizedPages, setMonetizedPages] = useState([]);
+    const [withdrawalRequests, setWithdrawalRequests] = useState([]);
+    const [withdrawalFilter, setWithdrawalFilter] = useState('pending');
+    const [monetizationSettingsForm, setMonetizationSettingsForm] = useState(null);
     const [listingReports, setListingReports] = useState([]);
     const [sellerReports, setSellerReports] = useState([]);
     const [genericReports, setGenericReports] = useState([]);
@@ -5152,7 +5382,7 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
     useEffect(() => {
         if (tab !== 'dashboard') return;
         (async () => {
-            const [usersSnap, postsSnap, listingsSnap, chatsSnap, notifSnap, reportsA, reportsB, reportsC, pagesSnap, kycPendingSnap] = await Promise.all([
+            const [usersSnap, postsSnap, listingsSnap, chatsSnap, notifSnap, reportsA, reportsB, reportsC, pagesSnap, kycPendingSnap, monetizedSnap, pendingWithdrawalsSnap, paidWithdrawalsSnap] = await Promise.all([
                 db.collection('users').get(), db.collection('posts').get(), db.collection('listings').get(),
                 db.collection('chatMembers').get().catch(() => ({ size: 0 })),
                 db.collection('announcements').get().catch(() => ({ size: 0 })),
@@ -5161,16 +5391,21 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
                 db.collection('reports').where('status', '==', 'open').get().catch(() => ({ size: 0 })),
                 db.collection('fanPages').get().catch(() => ({ size: 0 })),
                 db.collection('pageKyc').where('status', '==', 'pending').get().catch(() => ({ size: 0 })),
+                db.collection('fanPages').where('monetizationStatus', 'in', ['approved', 'suspended']).get().catch(() => ({ size: 0 })),
+                db.collection('withdrawalRequests').where('status', '==', 'pending').get().catch(() => ({ size: 0, docs: [] })),
+                db.collection('withdrawalRequests').where('status', '==', 'paid').get().catch(() => ({ size: 0, docs: [] })),
             ]);
             let comments = 0, likes = 0, shares = 0, newToday = 0;
             const dayAgo = Date.now() - 86400000;
             postsSnap.docs.forEach(d => { const p = d.data(); comments += p.commentsCount || 0; likes += p.likesCount || 0; shares += p.sharesCount || 0; });
             usersSnap.docs.forEach(d => { var _a; const u = d.data(); if (((_a = u.createdAt) === null || _a === void 0 ? void 0 : _a.toMillis) && u.createdAt.toMillis() > dayAgo) newToday++; });
+            const totalPayouts = (paidWithdrawalsSnap.docs || []).reduce((sum, d) => sum + (d.data().amount || 0), 0);
             setStats({
                 users: usersSnap.size, newToday, posts: postsSnap.size, comments, likes, shares,
                 marketplace: listingsSnap.size, messages: chatsSnap.size, announcements: notifSnap.size,
                 reports: (reportsA.size || 0) + (reportsB.size || 0) + (reportsC.size || 0), pages: pagesSnap.size,
-                pendingKyc: kycPendingSnap.size,
+                pendingKyc: kycPendingSnap.size, monetizedPages: monetizedSnap.size,
+                pendingWithdrawals: pendingWithdrawalsSnap.size, totalPayouts,
             });
         })();
     }, [tab]);
@@ -5198,6 +5433,25 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
         if (tab !== 'monetization') return;
         const unsub = db.collection('pageMonetizationApplications').limit(300).onSnapshot(snap => setMonetizationApps(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setMonetizationApps([]));
         return unsub;
+    }, [tab]);
+    useEffect(() => {
+        if (tab !== 'monetization') return;
+        const unsub = db.collection('fanPages').where('monetizationStatus', 'in', ['approved', 'suspended']).limit(300)
+            .onSnapshot(snap => setMonetizedPages(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setMonetizedPages([]));
+        return unsub;
+    }, [tab]);
+    useEffect(() => {
+        if (tab !== 'monetization') return;
+        const unsub = db.collection('withdrawalRequests').limit(300).onSnapshot(snap => {
+            const list = snap.docs.map(d => (Object.assign({ id: d.id }, d.data())));
+            list.sort((a, b) => { var _a, _b; return (((_a = b.requestedAt) === null || _a === void 0 ? void 0 : _a.toMillis) ? b.requestedAt.toMillis() : 0) - (((_b = a.requestedAt) === null || _b === void 0 ? void 0 : _b.toMillis) ? a.requestedAt.toMillis() : 0); });
+            setWithdrawalRequests(list);
+        }, () => setWithdrawalRequests([]));
+        return unsub;
+    }, [tab]);
+    useEffect(() => {
+        if (tab !== 'monetization') return;
+        db.collection('settings').doc('site').get().then(s => setMonetizationSettingsForm(Object.assign({}, DEFAULT_SITE_SETTINGS, s.exists ? s.data() : {}))).catch(() => setMonetizationSettingsForm(DEFAULT_SITE_SETTINGS));
     }, [tab]);
     useEffect(() => {
         if (tab !== 'marketplace') return;
@@ -5234,6 +5488,7 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
             'Total comments': stats.comments, 'Total likes': stats.likes, 'Total shares': stats.shares,
             'Marketplace listings': stats.marketplace, 'Chat threads': stats.messages, 'Total Pages': stats.pages,
             'Open reports': stats.reports, 'Announcements sent': stats.announcements, 'Pending KYC applications': stats.pendingKyc,
+            'Monetized Pages': stats.monetizedPages, 'Pending withdrawals': stats.pendingWithdrawals, 'Total payouts': (stats.totalPayouts || 0).toLocaleString(),
         } : null;
         return React.createElement("div", null,
             React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, "Super Admin Dashboard"),
@@ -5273,11 +5528,50 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
     if (tab === 'monetization') {
         const filteredKyc = kycApps.filter(k => kycFilter === 'all' || k.status === kycFilter);
         const filteredApps = monetizationApps.filter(a => monetizationFilter === 'all' || a.status === monetizationFilter);
+        const filteredWithdrawals = withdrawalRequests.filter(w => withdrawalFilter === 'all' || w.status === withdrawalFilter);
+        const totalPayoutsAll = withdrawalRequests.filter(w => w.status === 'paid').reduce((s, w) => s + (w.amount || 0), 0);
+        const pendingWithdrawalsCount = withdrawalRequests.filter(w => w.status === 'pending').length;
+        const topEarning = monetizedPages.slice().sort((a, b) => (b.lifetimeEarnings || 0) - (a.lifetimeEarnings || 0)).slice(0, 5);
+        const mostViewed = monetizedPages.slice().sort((a, b) => (b.viewsCount || 0) - (a.viewsCount || 0)).slice(0, 5);
+        const mostActive = monetizedPages.slice().sort((a, b) => (b.postsCount || 0) - (a.postsCount || 0)).slice(0, 5);
         const SubtabBtn = (key, label) => React.createElement("button", { key: key, onClick: () => setMonetizationSubtab(key), className: "px-3 py-1.5 rounded-full text-xs font-semibold " + (monetizationSubtab === key ? "bg-brand-600 text-white" : "bg-white dark:bg-ink-800 border border-slate-200 dark:border-ink-700") }, label);
         return React.createElement("div", null,
             React.createElement("h2", { className: "font-display text-lg font-bold mb-1" }, "Page Monetization"),
-            React.createElement("p", { className: "text-xs text-slate-400 mb-3" }, "A Page becomes eligible to apply once its KYC is verified and it reaches ", MONETIZATION_FOLLOWERS_REQUIRED.toLocaleString(), " followers. Applications are then reviewed separately below."),
-            React.createElement("div", { className: "flex gap-2 mb-4" }, SubtabBtn('kyc', 'KYC Submissions'), SubtabBtn('applications', 'Monetization Applications')),
+            React.createElement("p", { className: "text-xs text-slate-400 mb-3" }, "A Page becomes eligible to apply once its KYC is verified and it reaches ", (monetizationSettingsForm ? monetizationSettingsForm.minFollowersRequired : MONETIZATION_FOLLOWERS_REQUIRED).toLocaleString(), " followers. Applications, payouts, and monetization settings are managed below."),
+            React.createElement("div", { className: "flex gap-2 mb-4 overflow-x-auto", style: { scrollbarWidth: 'none' } }, SubtabBtn('overview', 'Overview'), SubtabBtn('kyc', 'KYC Submissions'), SubtabBtn('applications', 'Applications'), SubtabBtn('pages', 'Monetized Pages'), SubtabBtn('withdrawals', 'Withdrawals'), SubtabBtn('settings', 'Settings')),
+            monetizationSubtab === 'overview' && React.createElement("div", null,
+                React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-3 mb-5" }, Object.entries({
+                    'Total monetized Pages': monetizedPages.length, 'Total payouts': totalPayoutsAll.toLocaleString(), 'Pending withdrawals': pendingWithdrawalsCount,
+                }).map(([label, val]) => (React.createElement("div", { key: label, className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-4" },
+                    React.createElement("p", { className: "text-2xl font-display font-bold" }, val),
+                    React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, label))))),
+                React.createElement("div", { className: "grid md:grid-cols-3 gap-4" },
+                    React.createElement("div", null,
+                        React.createElement("h4", { className: "font-display text-sm font-bold mb-2" }, "Top earning Pages"),
+                        topEarning.length === 0 && React.createElement("p", { className: "text-xs text-slate-400" }, "No data yet."),
+                        React.createElement("div", { className: "space-y-1.5" }, topEarning.map(p => React.createElement("div", { key: p.id, className: "flex items-center justify-between bg-white dark:bg-ink-800 rounded-lg px-3 py-2 border border-slate-100 dark:border-ink-700 text-xs" }, React.createElement("span", { className: "truncate" }, p.displayName), React.createElement("span", { className: "font-semibold shrink-0 ml-2" }, (p.lifetimeEarnings || 0).toLocaleString()))))),
+                    React.createElement("div", null,
+                        React.createElement("h4", { className: "font-display text-sm font-bold mb-2" }, "Most viewed Pages"),
+                        mostViewed.length === 0 && React.createElement("p", { className: "text-xs text-slate-400" }, "No data yet."),
+                        React.createElement("div", { className: "space-y-1.5" }, mostViewed.map(p => React.createElement("div", { key: p.id, className: "flex items-center justify-between bg-white dark:bg-ink-800 rounded-lg px-3 py-2 border border-slate-100 dark:border-ink-700 text-xs" }, React.createElement("span", { className: "truncate" }, p.displayName), React.createElement("span", { className: "font-semibold shrink-0 ml-2" }, (p.viewsCount || 0).toLocaleString()))))),
+                    React.createElement("div", null,
+                        React.createElement("h4", { className: "font-display text-sm font-bold mb-2" }, "Most active Pages"),
+                        mostActive.length === 0 && React.createElement("p", { className: "text-xs text-slate-400" }, "No data yet."),
+                        React.createElement("div", { className: "space-y-1.5" }, mostActive.map(p => React.createElement("div", { key: p.id, className: "flex items-center justify-between bg-white dark:bg-ink-800 rounded-lg px-3 py-2 border border-slate-100 dark:border-ink-700 text-xs" }, React.createElement("span", { className: "truncate" }, p.displayName), React.createElement("span", { className: "font-semibold shrink-0 ml-2" }, (p.postsCount || 0).toLocaleString()))))))),
+            monetizationSubtab === 'pages' && React.createElement(React.Fragment, null,
+                React.createElement("div", { className: "flex items-center justify-between mb-3 gap-3" },
+                    React.createElement("h3", { className: "font-display text-base font-bold" }, "Monetized Pages"),
+                    React.createElement("button", { onClick: () => exportToCsv('monetized-pages.csv', monetizedPages.map(p => ({ id: p.id, page: p.displayName || '', ownerId: p.ownerId, status: p.monetizationStatus, balance: p.earningsBalance || 0, lifetimeEarnings: p.lifetimeEarnings || 0, lifetimeWithdrawn: p.lifetimeWithdrawn || 0, views: p.viewsCount || 0, posts: p.postsCount || 0 }))), className: "text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-100 dark:bg-ink-700" }, React.createElement("i", { className: "fa-solid fa-file-arrow-down mr-1.5" }), "Export CSV")),
+                monetizedPages.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No monetized Pages yet."),
+                React.createElement("div", { className: "space-y-2" }, monetizedPages.map(p => React.createElement(AdminMonetizedPageRow, { key: p.id, page: p, adminUid: adminUid, adminEmail: adminEmail })))),
+            monetizationSubtab === 'withdrawals' && React.createElement(React.Fragment, null,
+                React.createElement("div", { className: "flex items-center justify-between mb-3 gap-3" },
+                    React.createElement("h3", { className: "font-display text-base font-bold" }, "Withdrawal Requests"),
+                    React.createElement("button", { onClick: () => exportToCsv('withdrawal-requests.csv', withdrawalRequests.map(w => ({ id: w.id, page: w.pageDisplayName || '', ownerId: w.ownerId, amount: w.amount, status: w.status, bank: w.bankName || '', account: w.bankAccountNumber || '' }))), className: "text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-100 dark:bg-ink-700" }, React.createElement("i", { className: "fa-solid fa-file-arrow-down mr-1.5" }), "Export CSV")),
+                React.createElement("div", { className: "flex gap-2 mb-3 overflow-x-auto", style: { scrollbarWidth: 'none' } }, [['pending', 'Pending'], ['approved', 'Approved'], ['rejected', 'Rejected'], ['paid', 'Paid'], ['all', 'All']].map(([k, l]) => (React.createElement("button", { key: k, onClick: () => setWithdrawalFilter(k), className: "shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold " + (withdrawalFilter === k ? "bg-brand-600 text-white" : "bg-white dark:bg-ink-800 border border-slate-200 dark:border-ink-700") }, l)))),
+                filteredWithdrawals.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No ", withdrawalFilter === 'all' ? '' : (WITHDRAWAL_STATUS_LABELS[withdrawalFilter] || withdrawalFilter), " withdrawal requests."),
+                React.createElement("div", { className: "space-y-2" }, filteredWithdrawals.map(w => React.createElement(AdminWithdrawalRow, { key: w.id, w: w, adminUid: adminUid, adminEmail: adminEmail })))),
+            monetizationSubtab === 'settings' && React.createElement(AdminMonetizationSettingsForm, { form: monetizationSettingsForm, adminUid: adminUid, adminEmail: adminEmail }),
             monetizationSubtab === 'kyc' && React.createElement(React.Fragment, null,
                 React.createElement("div", { className: "flex items-center justify-between mb-3 gap-3" },
                     React.createElement("h3", { className: "font-display text-base font-bold" }, "KYC Review"),
@@ -5611,6 +5905,123 @@ function AdminMonetizationAppRow({ a, adminUid, adminEmail }) {
                 a.status === 'pending' && React.createElement("button", { disabled: busy, onClick: () => run(() => adminRejectMonetization(a, adminUid, reason.trim()), 'reject_monetization', 'Monetization rejected'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Reject"),
                 a.status === 'approved' && React.createElement("button", { disabled: busy, onClick: () => run(() => adminSuspendMonetization(a, adminUid, reason.trim()), 'suspend_monetization', 'Monetization suspended'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Suspend"),
                 a.status === 'suspended' && React.createElement("button", { disabled: busy, onClick: () => run(() => adminRestoreMonetization(a, adminUid), 'restore_monetization', 'Monetization restored'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-500 text-white" }, "Restore"))));
+}
+/* ============================== SUPER ADMIN: MONETIZED PAGE ROW (earnings, suspend/restore) ============================== */
+function AdminMonetizedPageRow({ page, adminUid, adminEmail }) {
+    const toast = useToast();
+    const [busy, setBusy] = useState(false);
+    const [open, setOpen] = useState(false);
+    const [amount, setAmount] = useState('');
+    const [note, setNote] = useState('');
+    const STATUS_BADGE = {
+        approved: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+        suspended: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400',
+    };
+    const run = async (fn, action, successMsg) => {
+        setBusy(true);
+        try {
+            await fn();
+            logAdminAction(adminUid, adminEmail, action, 'page', page.id, page.displayName);
+            toast(successMsg, 'success');
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    const adjust = async () => {
+        const amt = Number(amount);
+        if (!amt) { toast('Enter a non-zero amount', 'error'); return; }
+        await run(() => adminAdjustEarnings(page, adminUid, amt, note.trim()), 'adjust_page_earnings', 'Earnings updated');
+        setAmount(''); setNote('');
+    };
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
+        React.createElement("div", { className: "flex items-center justify-between" },
+            React.createElement("div", { className: "min-w-0 cursor-pointer", onClick: () => setOpen(v => !v) },
+                React.createElement("p", { className: "text-sm font-semibold truncate" }, page.displayName || page.id, " ",
+                    React.createElement("span", { className: "px-2 py-0.5 rounded-full text-[10px] font-semibold ml-1 " + (STATUS_BADGE[page.monetizationStatus] || '') }, MONETIZATION_STATUS_LABELS[page.monetizationStatus] || page.monetizationStatus)),
+                React.createElement("p", { className: "text-xs text-slate-400 truncate" }, "Balance: ", (page.earningsBalance || 0).toLocaleString(), " \u00B7 lifetime: ", (page.lifetimeEarnings || 0).toLocaleString(), " \u00B7 owner: ", React.createElement(AdminUserLabel, { uid: page.ownerId }))),
+            React.createElement("button", { onClick: () => setOpen(v => !v), className: "text-slate-300 shrink-0" }, React.createElement("i", { className: "fa-solid " + (open ? 'fa-chevron-up' : 'fa-chevron-down') }))),
+        open && React.createElement("div", { className: "mt-3 pt-3 border-t border-slate-100 dark:border-ink-700 space-y-2 text-xs text-slate-500 dark:text-slate-400" },
+            React.createElement("p", null, React.createElement("b", { className: "text-slate-700 dark:text-slate-200" }, "Total withdrawn: "), (page.lifetimeWithdrawn || 0).toLocaleString()),
+            React.createElement("p", { className: "font-semibold text-slate-700 dark:text-slate-200" }, "Manually adjust earnings"),
+            React.createElement("div", { className: "flex gap-2" },
+                React.createElement("input", { type: "number", value: amount, onChange: e => setAmount(e.target.value), placeholder: "Amount (+/-)", className: "flex-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-xs" }),
+                React.createElement("button", { disabled: busy, onClick: adjust, className: "text-[11px] font-semibold px-3 py-2 rounded-lg bg-brand-600 text-white shrink-0" }, "Apply")),
+            React.createElement("input", { value: note, onChange: e => setNote(e.target.value), placeholder: "Note (optional)", className: "w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-xs" }),
+            React.createElement("div", { className: "flex flex-wrap gap-1.5 pt-1" },
+                page.monetizationStatus === 'approved' && React.createElement("button", { disabled: busy, onClick: () => run(() => adminSuspendMonetization({ pageId: page.id, ownerId: page.ownerId }, adminUid, 'Suspended from Monetized Pages panel'), 'suspend_monetization', 'Monetization suspended'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Suspend"),
+                page.monetizationStatus === 'suspended' && React.createElement("button", { disabled: busy, onClick: () => run(() => adminRestoreMonetization({ pageId: page.id, ownerId: page.ownerId }, adminUid), 'restore_monetization', 'Monetization restored'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-500 text-white" }, "Restore"))));
+}
+/* ============================== SUPER ADMIN: WITHDRAWAL REQUEST ROW ============================== */
+function AdminWithdrawalRow({ w, adminUid, adminEmail }) {
+    const toast = useToast();
+    const [busy, setBusy] = useState(false);
+    const [open, setOpen] = useState(false);
+    const [reason, setReason] = useState('');
+    const run = async (fn, action, successMsg) => {
+        setBusy(true);
+        try {
+            await fn();
+            logAdminAction(adminUid, adminEmail, action, 'withdrawal', w.id, w.pageDisplayName);
+            toast(successMsg, 'success');
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
+        React.createElement("div", { className: "flex items-center justify-between" },
+            React.createElement("div", { className: "min-w-0 cursor-pointer", onClick: () => setOpen(v => !v) },
+                React.createElement("p", { className: "text-sm font-semibold truncate" }, w.pageDisplayName || w.pageId, " \u00B7 ", w.amount.toLocaleString(), " ",
+                    React.createElement("span", { className: "px-2 py-0.5 rounded-full text-[10px] font-semibold ml-1 " + (WITHDRAWAL_BADGE_CLS[w.status] || '') }, WITHDRAWAL_STATUS_LABELS[w.status] || w.status)),
+                React.createElement("p", { className: "text-xs text-slate-400 truncate" }, "owner: ", React.createElement(AdminUserLabel, { uid: w.ownerId }), " \u00B7 requested ", timeAgo(w.requestedAt))),
+            React.createElement("button", { onClick: () => setOpen(v => !v), className: "text-slate-300 shrink-0" }, React.createElement("i", { className: "fa-solid " + (open ? 'fa-chevron-up' : 'fa-chevron-down') }))),
+        open && React.createElement("div", { className: "mt-3 pt-3 border-t border-slate-100 dark:border-ink-700 space-y-2 text-xs text-slate-500 dark:text-slate-400" },
+            React.createElement("p", null, React.createElement("b", { className: "text-slate-700 dark:text-slate-200" }, "Bank: "), w.bankAccountName, " \u00B7 ", w.bankAccountNumber, " \u00B7 ", w.bankName),
+            w.status === 'rejected' && w.rejectionReason && React.createElement("p", { className: "text-red-500" }, React.createElement("b", null, "Rejection reason: "), w.rejectionReason),
+            w.status === 'pending' && React.createElement("input", { value: reason, onChange: e => setReason(e.target.value), placeholder: "Rejection reason (optional, shown to the owner)", className: "w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-xs" }),
+            React.createElement("div", { className: "flex flex-wrap gap-1.5 pt-1" },
+                w.status === 'pending' && React.createElement("button", { disabled: busy, onClick: () => run(() => adminApproveWithdrawal(w, adminUid), 'approve_withdrawal', 'Withdrawal approved'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-500 text-white" }, "Approve"),
+                w.status === 'pending' && React.createElement("button", { disabled: busy, onClick: () => run(() => adminRejectWithdrawal(w, adminUid, reason.trim()), 'reject_withdrawal', 'Withdrawal rejected'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Reject"),
+                w.status === 'approved' && React.createElement("button", { disabled: busy, onClick: () => run(() => adminMarkWithdrawalPaid(w, adminUid), 'mark_withdrawal_paid', 'Marked as paid'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-brand-600 text-white" }, "Mark as Paid"))));
+}
+/* ============================== SUPER ADMIN: MONETIZATION SETTINGS ============================== */
+function AdminMonetizationSettingsForm({ form, adminUid, adminEmail }) {
+    const [local, setLocal] = useState(form || DEFAULT_SITE_SETTINGS);
+    const [busy, setBusy] = useState(false);
+    const toast = useToast();
+    useEffect(() => { setLocal(form || DEFAULT_SITE_SETTINGS); }, [form]);
+    const setNum = (k) => (e) => setLocal(l => (Object.assign({}, l, { [k]: Number(e.target.value) || 0 })));
+    const setBool = (k) => (e) => setLocal(l => (Object.assign({}, l, { [k]: e.target.checked })));
+    const save = async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        try {
+            await saveSiteSettings(local);
+            logAdminAction(adminUid, adminEmail, 'update_monetization_settings', 'settings', 'site', null);
+            toast('Monetization settings saved', 'success');
+        }
+        catch (e2) { toast(e2.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    if (!form) return React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026");
+    return React.createElement("div", null,
+        React.createElement("h3", { className: "font-display text-base font-bold mb-1" }, "Monetization Settings"),
+        React.createElement("p", { className: "text-xs text-slate-400 mb-4" }, "Stored in Firestore at settings/site. Controls apply platform-wide, immediately."),
+        React.createElement("form", { onSubmit: save, className: "bg-white dark:bg-ink-800 rounded-xl p-4 border border-slate-100 dark:border-ink-700 max-w-lg space-y-3" },
+            React.createElement("div", null,
+                React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Minimum follower requirement"),
+                React.createElement("input", { type: "number", value: local.minFollowersRequired, onChange: setNum('minFollowersRequired'), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-700 bg-transparent text-sm" })),
+            React.createElement("div", null,
+                React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Earnings rate (per 1,000 Page views)"),
+                React.createElement("input", { type: "number", value: local.earningsRatePer1000Views, onChange: setNum('earningsRatePer1000Views'), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-700 bg-transparent text-sm" }),
+                React.createElement("p", { className: "text-[11px] text-slate-400 mt-1" }, "Reference figure for manual earnings adjustments \u2014 apply credits per Page from the Monetized Pages tab.")),
+            React.createElement("div", null,
+                React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Minimum withdrawal amount"),
+                React.createElement("input", { type: "number", value: local.minWithdrawalAmount, onChange: setNum('minWithdrawalAmount'), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-700 bg-transparent text-sm" })),
+            React.createElement("label", { className: "flex items-center gap-2 text-sm" },
+                React.createElement("input", { type: "checkbox", checked: !!local.monetizationEnabled, onChange: setBool('monetizationEnabled') }), "Monetization enabled platform-wide"),
+            React.createElement("label", { className: "flex items-center gap-2 text-sm" },
+                React.createElement("input", { type: "checkbox", checked: !!local.withdrawalsEnabled, onChange: setBool('withdrawalsEnabled') }), "Withdrawals enabled platform-wide"),
+            React.createElement("button", { disabled: busy, type: "submit", className: "px-4 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 disabled:opacity-40 text-white text-sm font-semibold" }, busy ? 'Saving…' : 'Save Settings')));
 }
 /* ============================== SUPER ADMIN: POST ROW ============================== */
 function AdminPostRow({ post, adminUid, adminEmail }) {
@@ -8391,6 +8802,39 @@ Review / Approved / Rejected / Suspended) once KYC has been verified.
         firestore.get(/databases/(default)/documents/fanPages/$(pageId)).data.ownerId == request.auth.uid &&
         request.resource.contentType.matches('image/.*') && request.resource.size < 10 * 1024 * 1024;
     }
+
+--- Withdrawals, earnings log & monetization settings (add alongside the rules above) ---
+
+    match /withdrawalRequests/{id} {
+      // Owner may read/create their own Page's requests; only admins can read across all Pages
+      // (needed for the admin Withdrawals panel) or transition status (approve/reject/mark paid).
+      allow read: if isAdmin() || (signedIn() && resource.data.ownerId == request.auth.uid);
+      allow create: if signedIn() && ownsPage(request.resource.data.pageId) &&
+        request.resource.data.ownerId == request.auth.uid && request.resource.data.status == 'pending';
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /pageEarningsLog/{id} {
+      // Audit trail of manual earnings adjustments — admin-only read/write, owner cannot see or
+      // forge entries (their live balance is exposed via fanPages.earningsBalance instead).
+      allow read, write: if isAdmin();
+    }
+
+    match /settings/site {
+      // Public read (site branding + monetization toggles need to be visible to all signed-in
+      // users so the client can gate Apply/Withdraw buttons); only admins can write.
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+Caution: the existing fanPages `allow update` rule above only blocks an owner from touching
+kycStatus/monetizationEnabled themselves — it does not stop a malicious client from writing
+earningsBalance directly. For production, tighten it to also require
+`request.resource.data.earningsBalance == resource.data.earningsBalance` for non-admin updates
+(all legitimate balance changes already go through adminAdjustEarnings/requestWithdrawal, i.e.
+admin-authenticated writes or Cloud Functions, never a raw owner update), or move balance
+mutations into a Cloud Function entirely.
 
 Note: enforcing the "1,000 followers" half of eligibility purely in security rules would need
 a denormalized follower counter (this app intentionally reads follower counts live from the
