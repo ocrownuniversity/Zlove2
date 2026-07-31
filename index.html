@@ -651,6 +651,17 @@ function useUnreadMessages(uid) {
     }, [uid]);
     return count;
 }
+function useUnreadNotifications(uid) {
+    const [count, setCount] = useState(0);
+    useEffect(() => {
+        if (!uid)
+            return;
+        const unsub = db.collection('notifications').doc(uid).collection('items').where('read', '==', false)
+            .onSnapshot(snap => setCount(snap.size), () => setCount(0));
+        return unsub;
+    }, [uid]);
+    return count;
+}
 async function ensureChat(meId, otherId) {
     const id = chatIdFor(meId, otherId);
     const chatRef = db.collection('chats').doc(id);
@@ -2423,6 +2434,7 @@ function MainApp({ route, setRoute }) {
     const { theme, setTheme } = useContext(ThemeContext);
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const unreadMessages = useUnreadMessages(profile.id);
+    const unreadNotifications = useUnreadNotifications(profile.id);
     const friendships = useFriendships(profile.id);
     const incomingRequestsCount = (friendships || []).filter(f => f.status === 'pending' && f.requestedBy !== profile.id).length;
     useEffect(() => {
@@ -2446,7 +2458,7 @@ function MainApp({ route, setRoute }) {
         { name: 'myPages', icon: 'fa-flag', label: 'Pages' },
         { name: 'groups', icon: 'fa-people-group', label: 'Groups' },
         { name: 'messages', icon: 'fa-comment-dots', label: 'Messages', badge: unreadMessages },
-        { name: 'notifications', icon: 'fa-bell', label: 'Notifications' },
+        { name: 'notifications', icon: 'fa-bell', label: 'Notifications', badge: unreadNotifications },
         { name: 'bookmarks', icon: 'fa-bookmark', label: 'Saved' },
         { name: 'profile', icon: 'fa-user', label: 'Profile', params: { uid: profile.id } },
     ];
@@ -2501,14 +2513,13 @@ function MainApp({ route, setRoute }) {
                         React.createElement("i", { className: "fa-solid fa-arrow-right-from-bracket w-6 text-lg" }),
                         "Sign out")),
                 React.createElement("div", { className: "flex items-center justify-around border-t border-slate-100 dark:border-ink-800 px-1" },
-                    nav.filter(n => n.name !== 'admin' && n.name !== 'bookmarks' && n.name !== 'myPages' && n.name !== 'groups' && n.name !== 'games').map(n => React.createElement("button", { key: n.name, onClick: () => go(Object.assign({ name: n.name }, (n.params || {}))), className: "relative flex-1 flex items-center justify-center py-3" },
-                        n.name === 'profile' ?
-                            React.createElement("div", { className: "relative" },
-                                React.createElement(Avatar, { user: profile, size: 7 }),
-                                route.name === 'profile' && React.createElement("span", { className: "absolute -bottom-2 left-1/2 -translate-x-1/2 w-6 h-[3px] rounded-full bg-brand-600" })) :
+                    ['home', 'search', 'messages', 'reels', 'notifications', 'marketplace']
+                        .map(name => nav.find(n => n.name === name))
+                        .filter(Boolean)
+                        .map(n => React.createElement("button", { key: n.name, onClick: () => go(Object.assign({ name: n.name }, (n.params || {}))), className: "relative flex-1 flex items-center justify-center py-3" },
                             React.createElement("i", { className: "fa-solid " + n.icon + " text-[26px] " + (route.name === n.name ? "text-brand-600" : "text-slate-400") }),
-                        !!n.badge && React.createElement("span", { className: "absolute top-1 right-1/4 min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center" }, n.badge > 9 ? '9+' : n.badge),
-                        route.name === n.name && n.name !== 'profile' && React.createElement("span", { className: "absolute -bottom-0 left-1/2 -translate-x-1/2 w-6 h-[3px] rounded-full bg-brand-600" }))))),
+                            !!n.badge && React.createElement("span", { className: "absolute top-1 right-1/4 min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center" }, n.badge > 9 ? '9+' : n.badge),
+                            route.name === n.name && React.createElement("span", { className: "absolute -bottom-0 left-1/2 -translate-x-1/2 w-6 h-[3px] rounded-full bg-brand-600" }))))),
             React.createElement("main", { className: route.name === 'chat' ? "flex-1 max-w-2xl w-full mx-auto md:px-6 md:py-4" : "flex-1 max-w-2xl w-full mx-auto px-2 md:px-6 py-2 pb-8" },
                 route.name === 'home' && React.createElement(HomeFeed, { go: go }),
                 route.name === 'reels' && React.createElement(ReelsFeedScreen, { go: go, route: route }),
