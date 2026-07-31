@@ -3239,6 +3239,23 @@ function TimelineReelCard({ reel, go }) {
         return unsub;
     }, [reel.authorId, reel.pageId, reel.authorType]);
     useEffect(() => () => { const v = videoRef.current; if (v) v.pause(); }, []);
+    // The unmount cleanup above only covers leaving Home entirely. Reels embedded in the feed
+    // don't unmount just from scrolling past them (the whole timeline stays mounted), so without
+    // this a reel you tapped to play/unmute keeps playing — audio and all — long after you've
+    // scrolled down to other posts. Stop it as soon as it's mostly scrolled out of view.
+    useEffect(() => {
+        const v = videoRef.current;
+        if (!v) return;
+        const observer = new IntersectionObserver((entries) => {
+            const entry = entries[0];
+            if (entry && entry.intersectionRatio < 0.5 && !v.paused) {
+                v.pause();
+                setPlaying(false);
+            }
+        }, { threshold: 0.5 });
+        observer.observe(v);
+        return () => observer.disconnect();
+    }, []);
     const togglePlay = () => {
         const v = videoRef.current;
         if (!v) return;
