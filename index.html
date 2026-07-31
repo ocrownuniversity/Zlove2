@@ -3767,7 +3767,9 @@ function SharedPostPreview({ postId, go }) {
             React.createElement(Avatar, { user: author, size: 7 }),
             React.createElement("div", null,
                 React.createElement("p", { className: "font-semibold text-xs" }, author ? author.displayName : '…'),
-                React.createElement("p", { className: "text-[11px] text-slate-400" }, timeAgo(orig.createdAt)))),
+                React.createElement("p", { className: "text-[11px] text-slate-400" }, timeAgo(orig.createdAt)),
+                orig.groupId && React.createElement("button", { onClick: (e) => { e.stopPropagation(); go({ name: 'group', id: orig.groupId }); }, className: "text-[11px] font-semibold text-brand-600 dark:text-brand-400 hover:underline flex items-center gap-1 mt-0.5" },
+                    React.createElement("i", { className: "fa-solid fa-people-group text-[9px]" }), "Posted in " + (orig.groupName || 'a group')))),
         orig.text && React.createElement(ExpandableText, { text: orig.text, limit: 160, className: "text-sm whitespace-pre-wrap" }),
         (orig.images || []).length > 0 && React.createElement("div", { className: "bg-slate-100 dark:bg-ink-900 rounded-lg mt-2 overflow-hidden" }, React.createElement("img", { src: orig.images[0], loading: "lazy", onClick: (e) => { e.stopPropagation(); openLightbox(orig.images, 0); }, className: "w-full max-h-64 object-contain mx-auto cursor-zoom-in" })));
 }
