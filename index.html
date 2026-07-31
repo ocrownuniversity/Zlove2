@@ -5707,6 +5707,11 @@ function ReelCommentsSheet({ reel, meId, isOwnerOrMod, onClose }) {
                     React.createElement("button", { onClick: send, disabled: busy || (!text.trim() && !imageFile), className: "w-9 h-9 rounded-full bg-brand-600 text-white flex items-center justify-center shrink-0 disabled:opacity-40" }, React.createElement("i", { className: "fa-solid fa-paper-plane text-xs" })))))));
 }
 /* ============================== REELS: SINGLE CARD ============================== */
+// Module-level (not per-component) so it's shared across every ReelCard instance.
+// Whichever <video> is set active always force-pauses whatever was playing before it,
+// regardless of any stale/late "active" prop transitions elsewhere — this is what
+// stops a previous reel's audio from bleeding into the next one.
+let __zloveActiveReelVideo = null;
 function ReelCard({ reel, active, go, meId, muted, onToggleMute, onOpenComments, onOpenReport }) {
     const toast = useToast();
     const videoRef = useRef();
@@ -5729,12 +5734,28 @@ function ReelCard({ reel, active, go, meId, muted, onToggleMute, onOpenComments,
         const v = videoRef.current;
         if (!v) return;
         if (active) {
+            // Force-stop whatever reel was previously playing (anywhere in the feed) before
+            // starting this one, so leaving a reel always guarantees its audio actually stops —
+            // even if that other card's own "active" prop hasn't flipped to false yet.
+            if (__zloveActiveReelVideo && __zloveActiveReelVideo !== v) {
+                try { __zloveActiveReelVideo.pause(); __zloveActiveReelVideo.currentTime = 0; } catch (e) { }
+            }
+            __zloveActiveReelVideo = v;
             v.play().catch(() => { });
             if (!viewedRef.current) { viewedRef.current = true; recordReelView(reel.id, meId).catch(() => { }); }
         } else {
             v.pause();
             try { v.currentTime = 0; } catch (e) { }
+            if (__zloveActiveReelVideo === v) __zloveActiveReelVideo = null;
         }
+        // Belt-and-suspenders: if this exact card unmounts (feed closed, list virtualized,
+        // reel deleted, etc.) while it happens to be the one holding the registry, stop it.
+        return () => {
+            if (__zloveActiveReelVideo === v) {
+                try { v.pause(); } catch (e) { }
+                __zloveActiveReelVideo = null;
+            }
+        };
     }, [active]);
     const doFollow = async () => {
         try {
@@ -5818,14 +5839,41 @@ function ReelsFeedScreen({ go, route }) {
         db.collection('reels').doc(route.reelId).get().then(s => setPinnedReel(s.exists ? Object.assign({ id: s.id }, s.data()) : null)).catch(() => { });
     }, [route && route.reelId]);
     const visible = useMemo(() => (raw || []).filter(r => canViewReel(r, me.id, followingSet, friendSet)), [raw, followingSet, friendSet, me.id]);
-    let ordered = visible;
-    if (!scope) {
-        if (tabMode === 'following') ordered = visible.filter(r => followingSet.has(r.authorId)).sort((a, b) => { var _a, _b; return (((_a = b.createdAt) === null || _a === void 0 ? void 0 : _a.toMillis) || 0) - (((_b = a.createdAt) === null || _b === void 0 ? void 0 : _b.toMillis) || 0); });
-        else if (tabMode === 'trending') ordered = visible.slice().sort((a, b) => (b.viewsCount || 0) + (b.likesCount || 0) * 2 - ((a.viewsCount || 0) + (a.likesCount || 0) * 2));
-        else ordered = visible.slice().sort((a, b) => reelHotScore(b) - reelHotScore(a)); // For You: personalized-ish hot ranking
-    } else {
-        ordered = visible.slice().sort((a, b) => { var _a, _b; if (!!b.pinned !== !!a.pinned) return (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0); return (((_a = b.createdAt) === null || _a === void 0 ? void 0 : _a.toMillis) || 0) - (((_b = a.createdAt) === null || _b === void 0 ? void 0 : _b.toMillis) || 0); });
-    }
+    const sortVisible = useCallback((list) => {
+        let out = list;
+        if (!scope) {
+            if (tabMode === 'following') out = list.filter(r => followingSet.has(r.authorId)).sort((a, b) => { var _a, _b; return (((_a = b.createdAt) === null || _a === void 0 ? void 0 : _a.toMillis) || 0) - (((_b = a.createdAt) === null || _b === void 0 ? void 0 : _b.toMillis) || 0); });
+            else if (tabMode === 'trending') out = list.slice().sort((a, b) => (b.viewsCount || 0) + (b.likesCount || 0) * 2 - ((a.viewsCount || 0) + (a.likesCount || 0) * 2));
+            else out = list.slice().sort((a, b) => reelHotScore(b) - reelHotScore(a)); // For You: personalized-ish hot ranking
+        } else {
+            out = list.slice().sort((a, b) => { var _a, _b; if (!!b.pinned !== !!a.pinned) return (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0); return (((_a = b.createdAt) === null || _a === void 0 ? void 0 : _a.toMillis) || 0) - (((_b = a.createdAt) === null || _b === void 0 ? void 0 : _b.toMillis) || 0); });
+        }
+        return out.map(r => r.id);
+    }, [scope, tabMode, followingSet]);
+    // Live like/view counts update constantly via onSnapshot. Re-sorting on every one of those
+    // changes would silently reshuffle which reel sits at a given scroll position — and since
+    // "active" (below) is a plain scroll-position index, that mismatch is exactly what let a
+    // reel that had scrolled out of view keep "active" status and keep playing its audio.
+    // So: sort order is only (re)computed when the scope/tab changes or reels are added/removed;
+    // it is never recomputed just because a like/view count ticked.
+    const orderedIdsRef = useRef([]);
+    const sortKeyRef = useRef(null);
+    const byId = useMemo(() => { const m = new Map(); visible.forEach(r => m.set(r.id, r)); return m; }, [visible]);
+    const orderedIds = useMemo(() => {
+        const sortKey = scope + '|' + tabMode;
+        const currentIds = new Set(visible.map(r => r.id));
+        if (sortKeyRef.current !== sortKey) {
+            sortKeyRef.current = sortKey;
+            orderedIdsRef.current = sortVisible(visible);
+        } else {
+            const kept = orderedIdsRef.current.filter(id => currentIds.has(id));
+            const keptSet = new Set(kept);
+            const freshIds = sortVisible(visible.filter(r => !keptSet.has(r.id)));
+            orderedIdsRef.current = kept.concat(freshIds);
+        }
+        return orderedIdsRef.current;
+    }, [visible, scope, tabMode, sortVisible]);
+    let ordered = useMemo(() => orderedIds.map(id => byId.get(id)).filter(Boolean), [orderedIds, byId]);
     if (pinnedReel && canViewReel(pinnedReel, me.id, followingSet, friendSet) && !ordered.some(r => r.id === pinnedReel.id)) {
         ordered = [pinnedReel, ...ordered];
     }
