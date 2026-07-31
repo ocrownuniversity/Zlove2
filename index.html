@@ -29,9 +29,9 @@
           },
           colors: {
             brand: {
-              50: '#eef2f9', 100: '#d9e2f2', 200: '#b3c5e6', 300: '#84a2d1',
-              400: '#5580ba', 500: '#33619e', 600: '#1e3a66', 700: '#152c4d',
-              800: '#0f2038', 900: '#0a1729'
+              50: '#eaf3ff', 100: '#d3e4fe', 200: '#a8cafd', 300: '#7cb0fc',
+              400: '#4b93f8', 500: '#2f80f0', 600: '#1877f2', 700: '#145dbf',
+              800: '#0f4795', 900: '#0a306b'
             },
             ink: { 900: '#0a0e1a', 800: '#121729', 700: '#1b2138' }
           }
@@ -172,6 +172,28 @@ function timeAgo(ts) {
     if (days < 7)
         return days + 'd';
     return date.toLocaleDateString();
+}
+// Full calendar date (+ time) for a post, always shown alongside the relative "2h"/"3d" label
+// so it's clear exactly when something was posted, not just roughly how long ago.
+function formatPostDate(ts) {
+    if (!ts)
+        return '';
+    const date = ts.toDate ? ts.toDate() : new Date(ts);
+    const opts = { month: 'short', day: 'numeric' };
+    if (date.getFullYear() !== new Date().getFullYear())
+        opts.year = 'numeric';
+    return date.toLocaleDateString(undefined, opts) + ' \u00B7 ' + date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+// Who a post is visible to: reuses the audience picked at compose time (public/friends/only me)
+// for normal posts, or the group's own privacy for posts made inside a group (group posts are
+// gated by group membership rather than the audience field).
+function postAudienceMeta(post) {
+    if (post.groupId) {
+        const priv = post.groupPrivacy === 'private';
+        return { icon: priv ? 'fa-lock' : 'fa-earth-africa', label: priv ? 'Private group' : 'Public group' };
+    }
+    const opt = AUDIENCE_OPTIONS.find(a => a.id === (post.audience || 'public')) || { icon: 'fa-earth-africa', label: 'Public' };
+    return { icon: opt.icon, label: opt.label };
 }
 function millisOf(ts) {
     // Safe Firestore Timestamp -> epoch-ms helper. Returns 0 for missing/pending
@@ -2909,20 +2931,26 @@ function PostCard({ post, go, groupCtx }) {
     };
     if (!author)
         return React.createElement(PostSkeleton, null);
+    const audienceMeta = postAudienceMeta(post);
     return (React.createElement("div", { id: 'post-' + post.id, className: "bg-white dark:bg-ink-800 -mx-2 sm:mx-0 rounded-none sm:rounded-2xl border-y sm:border border-slate-100 dark:border-ink-700 mb-2 fade-in overflow-hidden" },
         React.createElement("div", { className: "flex items-start justify-between gap-2 px-3 sm:px-4 pt-3 mb-2" },
             React.createElement("div", { className: "flex items-center gap-3 cursor-pointer min-w-0 flex-1", onClick: () => go(post.pageId ? { name: 'page', id: post.pageId } : { name: 'profile', uid: post.authorId }) },
-                React.createElement(Avatar, { user: author, size: 13 }),
+                React.createElement(Avatar, { user: author, size: 16 }),
                 React.createElement("div", { className: "min-w-0" },
                     React.createElement("p", { className: "font-bold text-base flex items-center gap-1.5" }, author.displayName,
                         post.pageId && React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-brand-600 bg-brand-50 dark:bg-brand-900/30 dark:text-brand-400 px-1.5 py-0.5 rounded" }, "Page"),
                         post.groupAnnouncement && React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-amber-600 bg-amber-50 dark:bg-amber-900/30 dark:text-amber-400 px-1.5 py-0.5 rounded flex items-center gap-1" }, React.createElement("i", { className: "fa-solid fa-bullhorn" }), "Announcement")),
-                    React.createElement("p", { className: "text-sm text-slate-400" },
-                        "@",
-                        author.username,
-                        " \u00B7 ",
-                        timeAgo(post.createdAt),
-                        post.edited ? ' · edited' : ''),
+                    React.createElement("p", { className: "text-sm text-slate-400 flex items-center gap-1.5 flex-wrap" },
+                        "@", author.username,
+                        React.createElement("span", null, "\u00B7"),
+                        React.createElement("span", { title: formatPostDate(post.createdAt) }, timeAgo(post.createdAt)),
+                        React.createElement("span", null, "\u00B7"),
+                        React.createElement("span", null, formatPostDate(post.createdAt)),
+                        post.edited && React.createElement("span", null, "\u00B7 edited"),
+                        React.createElement("span", null, "\u00B7"),
+                        React.createElement("span", { className: "flex items-center gap-1", title: audienceMeta.label },
+                            React.createElement("i", { className: "fa-solid " + audienceMeta.icon + " text-xs" }),
+                            audienceMeta.label)),
                     post.groupId && !groupCtx && React.createElement("button", { onClick: (e) => { e.stopPropagation(); go({ name: 'group', id: post.groupId }); }, className: "text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline flex items-center gap-1 mt-0.5" }, React.createElement("i", { className: "fa-solid fa-people-group text-[10px]" }), "Posted in " + (post.groupName || 'a group')),
                     React.createElement(TaggedLine, { users: post.taggedUsers, go: go }),
                     React.createElement(PostMetaLine, { post: post }),
@@ -3629,9 +3657,9 @@ function ProfileScreen({ uid, go }) {
                     React.createElement("i", { className: "fa-solid " + (uploadingCover ? "fa-spinner fa-spin" : "fa-camera") + " text-sm" }))),
                 React.createElement("input", { ref: coverInputRef, type: "file", accept: "image/*", hidden: true, onChange: e => quickUpload(e.target.files[0], 'covers') })),
             React.createElement("div", { className: "px-5 pb-5" },
-                React.createElement("div", { className: "flex justify-between items-end -mt-12 mb-3" },
+                React.createElement("div", { className: "flex justify-between items-end -mt-16 mb-3" },
                     React.createElement("div", { className: "relative" },
-                        React.createElement("img", { src: user.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${user.displayName}`, onClick: () => openLightbox(user.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${user.displayName}`), className: "w-24 h-24 rounded-xl border-4 border-white dark:border-ink-800 object-cover bg-white dark:bg-ink-800 cursor-zoom-in" }),
+                        React.createElement("img", { src: user.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${user.displayName}`, onClick: () => openLightbox(user.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${user.displayName}`), className: "w-32 h-32 rounded-xl border-4 border-white dark:border-ink-800 object-cover bg-white dark:bg-ink-800 cursor-zoom-in" }),
                         isMe && (React.createElement("button", { onClick: () => avatarInputRef.current.click(), disabled: uploadingAvatar, className: "absolute bottom-0 right-0 bg-brand-600 hover:bg-brand-700 text-white rounded-full w-8 h-8 flex items-center justify-center border-2 border-white dark:border-ink-800" },
                             React.createElement("i", { className: "fa-solid " + (uploadingAvatar ? "fa-spinner fa-spin" : "fa-camera") + " text-xs" }))),
                         React.createElement("input", { ref: avatarInputRef, type: "file", accept: "image/*", hidden: true, onChange: e => quickUpload(e.target.files[0], 'avatars') }))),
@@ -4073,8 +4101,8 @@ function PageProfileScreen({ id, go }) {
                 isOwner && React.createElement("button", { onClick: () => coverInputRef.current.click(), className: "absolute bottom-3 right-3 bg-white dark:bg-ink-700 text-[#050505] dark:text-white w-10 h-10 rounded-full flex items-center justify-center shadow" }, React.createElement("i", { className: "fa-solid fa-camera" })),
                 React.createElement("input", { ref: coverInputRef, type: "file", accept: "image/*", hidden: true, onChange: e => quickUpload(e.target.files[0], 'covers') })),
             React.createElement("div", { className: "px-3 sm:px-4 pb-4" },
-                React.createElement("div", { className: "-mt-10 mb-2 relative inline-block" },
-                    React.createElement("div", { className: "rounded-xl ring-4 ring-white dark:ring-ink-800" }, React.createElement(Avatar, { user: page, size: 24, onClick: () => page.photoURL && openLightbox(page.photoURL) })),
+                React.createElement("div", { className: "-mt-16 mb-2 relative inline-block" },
+                    React.createElement("div", { className: "rounded-xl ring-4 ring-white dark:ring-ink-800" }, React.createElement(Avatar, { user: page, size: 32, onClick: () => page.photoURL && openLightbox(page.photoURL) })),
                     isOwner && React.createElement("button", { onClick: () => avatarInputRef.current.click(), className: "absolute bottom-0.5 right-0.5 bg-white dark:bg-ink-700 text-[#050505] dark:text-white w-8 h-8 rounded-full flex items-center justify-center shadow border border-slate-200 dark:border-ink-600 text-xs" }, React.createElement("i", { className: "fa-solid fa-camera" })),
                     React.createElement("input", { ref: avatarInputRef, type: "file", accept: "image/*", hidden: true, onChange: e => quickUpload(e.target.files[0], 'avatars') })),
                 React.createElement("p", { className: "font-display text-xl sm:text-2xl font-extrabold flex items-center gap-1.5 flex-wrap" }, page.displayName,
@@ -7058,8 +7086,8 @@ function GroupScreen({ id, go }) {
                 isCreator && React.createElement("button", { onClick: () => coverRef.current.click(), className: "absolute bottom-3 right-3 bg-black/50 text-white text-xs font-semibold px-2.5 sm:px-3 py-1.5 rounded-full" }, React.createElement("i", { className: "fa-solid fa-camera mr-1.5" }), React.createElement("span", { className: "hidden sm:inline" }, "Edit cover")),
                 React.createElement("input", { ref: coverRef, type: "file", accept: "image/*", hidden: true, onChange: e => quickUpload(e.target.files[0], 'covers') })),
             React.createElement("div", { className: "px-3 sm:px-4 pb-4" },
-                React.createElement("div", { className: "-mt-10 mb-2 relative inline-block" },
-                    React.createElement(Avatar, { user: group, size: 24, onClick: () => group.photoURL && openLightbox([group.photoURL], 0) }),
+                React.createElement("div", { className: "-mt-16 mb-2 relative inline-block" },
+                    React.createElement(Avatar, { user: group, size: 32, onClick: () => group.photoURL && openLightbox([group.photoURL], 0) }),
                     React.createElement("div", { className: "absolute inset-0 rounded-xl ring-4 ring-white dark:ring-ink-800 pointer-events-none" }),
                     isCreator && React.createElement("button", { onClick: () => avatarRef.current.click(), className: "absolute bottom-0 right-0 bg-brand-600 text-white w-7 h-7 rounded-full flex items-center justify-center text-xs" }, React.createElement("i", { className: "fa-solid fa-camera" })),
                     React.createElement("input", { ref: avatarRef, type: "file", accept: "image/*", hidden: true, onChange: e => quickUpload(e.target.files[0], 'avatars') })),
