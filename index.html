@@ -29,9 +29,9 @@
           },
           colors: {
             brand: {
-              50: '#ebf2ff', 100: '#d1e3ff', 200: '#a8c9ff', 300: '#70a7ff',
-              400: '#3381ff', 500: '#1f74ff', 600: '#0866ff', 700: '#0053d9',
-              800: '#0041ab', 900: '#00307d'
+              50: '#eaf3ff', 100: '#d3e4fe', 200: '#a8cafd', 300: '#7cb0fc',
+              400: '#4b93f8', 500: '#2f80f0', 600: '#1877f2', 700: '#145dbf',
+              800: '#0f4795', 900: '#0a306b'
             },
             ink: { 900: '#0a0e1a', 800: '#121729', 700: '#1b2138' }
           }
@@ -2719,14 +2719,10 @@ function FriendActionButton({ meId, otherId, compact }) {
 }
 /* ============================== POST TRIGGER BAR (Facebook-style "What's on your mind?") ============================== */
 function PostTriggerBar({ go }) {
-    const { profile } = useAuth();
     return (React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-3 mb-4 flex items-center gap-3" },
-        React.createElement(Avatar, { user: profile, size: 10 }),
         React.createElement("button", { onClick: () => go({ name: 'createPost' }), className: "flex-1 text-left bg-slate-100 dark:bg-ink-700 hover:bg-slate-200 dark:hover:bg-ink-600 transition rounded-full px-4 py-2.5 text-slate-500 dark:text-slate-400 text-sm" }, "What's on your mind?"),
         React.createElement("button", { onClick: () => go({ name: 'createPost', openPhotoPicker: true }), title: "Photo/Video", className: "shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-emerald-500 hover:bg-slate-100 dark:hover:bg-ink-700 transition" },
-            React.createElement("i", { className: "fa-solid fa-image text-lg" })),
-        React.createElement("button", { onClick: () => go({ name: 'groupForm' }), title: "Create Group", className: "shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-brand-600 hover:bg-slate-100 dark:hover:bg-ink-700 transition" },
-            React.createElement("i", { className: "fa-solid fa-people-group text-lg" }))));
+            React.createElement("i", { className: "fa-solid fa-image text-lg" }))));
 }
 /* ============================== CREATE POST (full page, Facebook-style) ============================== */
 const AUDIENCE_OPTIONS = [
@@ -3807,6 +3803,54 @@ function TimelineReelCard({ reel, go }) {
             commentsOpen && React.createElement(ReelCommentsSheet, { reel: reel, meId: profile.id, isOwnerOrMod: isOwner, onClose: () => setCommentsOpen(false) }),
             React.createElement("div", { className: "pb-3" }))));
 }
+/* ============================== PEOPLE YOU MAY KNOW ============================== */
+function PeopleYouMayKnow({ go }) {
+    const { profile } = useAuth();
+    const [allUsers, setAllUsers] = useState(null);
+    const [dismissed, setDismissed] = useState([]);
+    const friendships = useFriendships(profile.id);
+    useEffect(() => {
+        const unsub = db.collection('users').limit(60)
+            .onSnapshot(snap => setAllUsers(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setAllUsers([]));
+        return unsub;
+    }, []);
+    const connectedIds = new Set((friendships || [])
+        .filter(f => f.status === 'accepted' || f.status === 'pending')
+        .map(f => otherUidOfFriendship(f, profile.id)));
+    const suggestions = (allUsers || [])
+        .filter(u => u.id !== profile.id && !u.suspended)
+        .filter(u => !connectedIds.has(u.id))
+        .filter(u => !(profile.blockedUsers || []).includes(u.id) && !(u.blockedUsers || []).includes(profile.id))
+        .filter(u => !dismissed.includes(u.id))
+        .slice(0, 6);
+    if (allUsers !== null && suggestions.length === 0)
+        return null;
+    const renderCard = (u, i) => {
+        if (allUsers === null) {
+            return React.createElement("div", { key: i, className: "rounded-xl overflow-hidden border border-slate-100 dark:border-ink-700" },
+                React.createElement("div", { className: "aspect-square skeleton" }),
+                React.createElement("div", { className: "p-2 space-y-2" },
+                    React.createElement("div", { className: "h-3 w-3/4 rounded skeleton" }),
+                    React.createElement("div", { className: "h-8 w-full rounded-lg skeleton" })));
+        }
+        const photoSrc = u.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(u.displayName || u.username || '?')}`;
+        const removeBtn = React.createElement("button", { onClick: () => setDismissed(d => [...d, u.id]), title: "Remove", className: "absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-full bg-black/40 hover:bg-black/60 text-white flex items-center justify-center text-xs" },
+            React.createElement("i", { className: "fa-solid fa-xmark" }));
+        const photo = React.createElement("div", { className: "aspect-square cursor-pointer bg-slate-100 dark:bg-ink-700", onClick: () => go({ name: 'profile', uid: u.id }) },
+            React.createElement("img", { src: photoSrc, className: "w-full h-full object-cover" }));
+        const info = React.createElement("div", { className: "p-2" },
+            React.createElement("p", { className: "font-semibold text-sm truncate cursor-pointer", onClick: () => go({ name: 'profile', uid: u.id }) }, u.displayName || u.username),
+            React.createElement("p", { className: "text-xs text-slate-400 truncate mb-2" }, "@", u.username),
+            React.createElement(FriendActionButton, { meId: profile.id, otherId: u.id }));
+        return React.createElement("div", { key: u.id, className: "relative rounded-xl overflow-hidden border border-slate-100 dark:border-ink-700 fade-in" }, removeBtn, photo, info);
+    };
+    const header = React.createElement("div", { className: "flex items-center justify-between mb-3 px-1" },
+        React.createElement("h3", { className: "font-display font-bold text-lg" }, "People you may know"),
+        React.createElement("button", { onClick: () => go({ name: 'search', tab: 'suggested' }), className: "text-brand-600 dark:text-brand-400 text-sm font-semibold" }, "See all"));
+    const grid = React.createElement("div", { className: "grid grid-cols-2 gap-3" },
+        (allUsers === null ? [1, 2] : suggestions).map(renderCard));
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-3 mb-4" }, header, grid);
+}
 function HomeFeed({ go }) {
     const { profile } = useAuth();
     const [posts, setPosts] = useState(null);
@@ -3852,6 +3896,7 @@ function HomeFeed({ go }) {
     return (React.createElement("div", null,
         React.createElement(PostTriggerBar, { go: go }),
         React.createElement(ReelsStrip, { go: go }),
+        React.createElement(PeopleYouMayKnow, { go: go }),
         items === null && React.createElement(React.Fragment, null, [1, 2, 3].map(i => React.createElement(PostSkeleton, { key: i }))),
         items !== null && items.length === 0 && (React.createElement("div", { className: "text-center py-16 text-slate-400" },
             React.createElement("i", { className: "fa-regular fa-face-smile text-4xl mb-3" }),
