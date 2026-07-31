@@ -1941,6 +1941,7 @@ function MainApp({ route, setRoute }) {
         { name: 'search', icon: 'fa-user-group', label: 'People', badge: incomingRequestsCount },
         { name: 'marketplace', icon: 'fa-store', label: 'Marketplace' },
         { name: 'myPages', icon: 'fa-flag', label: 'Pages' },
+        { name: 'groups', icon: 'fa-people-group', label: 'Groups' },
         { name: 'messages', icon: 'fa-comment-dots', label: 'Messages', badge: unreadMessages },
         { name: 'notifications', icon: 'fa-bell', label: 'Notifications' },
         { name: 'bookmarks', icon: 'fa-bookmark', label: 'Saved' },
@@ -1981,6 +1982,9 @@ function MainApp({ route, setRoute }) {
                     React.createElement("button", { onClick: () => go({ name: 'myPages' }), className: "flex items-center gap-3 px-2 py-2.5 rounded-lg text-base font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-ink-800" },
                         React.createElement("i", { className: "fa-solid fa-flag w-6 text-lg" }),
                         "Pages"),
+                    React.createElement("button", { onClick: () => go({ name: 'groups' }), className: "flex items-center gap-3 px-2 py-2.5 rounded-lg text-base font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-ink-800" },
+                        React.createElement("i", { className: "fa-solid fa-people-group w-6 text-lg" }),
+                        "Groups"),
                     React.createElement("button", { onClick: () => go({ name: 'bookmarks' }), className: "flex items-center gap-3 px-2 py-2.5 rounded-lg text-base font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-ink-800" },
                         React.createElement("i", { className: "fa-solid fa-bookmark w-6 text-lg" }),
                         "Saved"),
@@ -1991,7 +1995,7 @@ function MainApp({ route, setRoute }) {
                         React.createElement("i", { className: "fa-solid fa-arrow-right-from-bracket w-6 text-lg" }),
                         "Sign out")),
                 React.createElement("div", { className: "flex items-center justify-around border-t border-slate-100 dark:border-ink-800 px-1" },
-                    nav.filter(n => n.name !== 'admin' && n.name !== 'bookmarks' && n.name !== 'myPages').map(n => React.createElement("button", { key: n.name, onClick: () => go(Object.assign({ name: n.name }, (n.params || {}))), className: "relative flex-1 flex items-center justify-center py-3" },
+                    nav.filter(n => n.name !== 'admin' && n.name !== 'bookmarks' && n.name !== 'myPages' && n.name !== 'groups').map(n => React.createElement("button", { key: n.name, onClick: () => go(Object.assign({ name: n.name }, (n.params || {}))), className: "relative flex-1 flex items-center justify-center py-3" },
                         n.name === 'profile' ?
                             React.createElement("div", { className: "relative" },
                                 React.createElement(Avatar, { user: profile, size: 7 }),
@@ -2016,6 +2020,9 @@ function MainApp({ route, setRoute }) {
                 route.name === 'bookmarks' && React.createElement(BookmarksScreen, { go: go }),
                 route.name === 'profile' && React.createElement(ProfileScreen, { uid: route.uid, go: go }),
                 route.name === 'myPages' && React.createElement(MyPagesScreen, { go: go }),
+                route.name === 'groups' && React.createElement(GroupsHomeScreen, { go: go }),
+                route.name === 'groupForm' && React.createElement(GroupFormScreen, { id: route.id, go: go }),
+                route.name === 'group' && React.createElement(GroupScreen, { id: route.id, go: go }),
                 route.name === 'pageForm' && React.createElement(PageFormScreen, { id: route.id, go: go }),
                 route.name === 'page' && React.createElement(PageProfileScreen, { id: route.id, go: go }),
                 route.name === 'pageAnalytics' && React.createElement(PageAnalyticsScreen, { id: route.id, go: go }),
@@ -2197,7 +2204,9 @@ function PostTriggerBar({ go }) {
         React.createElement(Avatar, { user: profile, size: 10 }),
         React.createElement("button", { onClick: () => go({ name: 'createPost' }), className: "flex-1 text-left bg-slate-100 dark:bg-ink-700 hover:bg-slate-200 dark:hover:bg-ink-600 transition rounded-full px-4 py-2.5 text-slate-500 dark:text-slate-400 text-sm" }, "What's on your mind?"),
         React.createElement("button", { onClick: () => go({ name: 'createPost', openPhotoPicker: true }), title: "Photo/Video", className: "shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-emerald-500 hover:bg-slate-100 dark:hover:bg-ink-700 transition" },
-            React.createElement("i", { className: "fa-solid fa-image text-lg" }))));
+            React.createElement("i", { className: "fa-solid fa-image text-lg" })),
+        React.createElement("button", { onClick: () => go({ name: 'groupForm' }), title: "Create Group", className: "shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-brand-600 hover:bg-slate-100 dark:hover:bg-ink-700 transition" },
+            React.createElement("i", { className: "fa-solid fa-people-group text-lg" }))));
 }
 /* ============================== CREATE POST (full page, Facebook-style) ============================== */
 const AUDIENCE_OPTIONS = [
@@ -2399,11 +2408,12 @@ function CreatePostScreen({ go, route }) {
 function ShareSheet({ post, onClose }) {
     const { profile } = useAuth();
     const toast = useToast();
-    const [step, setStep] = useState('menu'); // 'menu' | 'timeline' | 'message'
+    const [step, setStep] = useState('menu'); // 'menu' | 'timeline' | 'message' | 'group'
     const [comment, setComment] = useState('');
     const [busy, setBusy] = useState(false);
     const [friends, setFriends] = useState(null);
     const [fq, setFq] = useState('');
+    const myGroups = useMyGroups(profile);
     useEffect(() => {
         if (step !== 'message')
             return;
@@ -2442,6 +2452,29 @@ function ShareSheet({ post, onClose }) {
             await sendChatMessage(profile.id, chatId, u.id, { type: 'text', text: `Check out this post: ${postLink}` });
             await logShare();
             toast('Sent to ' + (u.displayName || u.username), 'success');
+            onClose();
+        }
+        catch (e) {
+            toast(e.message, 'error');
+        }
+        finally {
+            setBusy(false);
+        }
+    };
+    const shareToGroupNow = async (group) => {
+        setBusy(true);
+        try {
+            await db.collection('posts').add({
+                authorId: profile.id, groupId: group.id, groupName: group.name, groupPrivacy: group.privacy,
+                text: (comment || '').trim(), images: [], gifURL: null, videoURL: null, documentURL: null, documentName: null, poll: null,
+                bold: false, bgStyle: null, taggedUsers: [], hashtags: extractHashtags(comment),
+                sharedPostId: post.id, sharedFrom: post.authorId,
+                groupPinned: false, groupAnnouncement: false, hiddenByAdmin: false,
+                likesCount: 0, commentsCount: 0, sharesCount: 0, createdAt: FieldValue.serverTimestamp(),
+            });
+            db.collection('groups').doc(group.id).update({ postsCount: FieldValue.increment(1) }).catch(() => { });
+            await logShare();
+            toast('Shared in ' + group.name, 'success');
             onClose();
         }
         catch (e) {
@@ -2493,11 +2526,21 @@ function ShareSheet({ post, onClose }) {
                 React.createElement("span", { className: "text-sm font-semibold flex-1 truncate" }, u.displayName || u.username),
                 React.createElement("i", { className: "fa-solid fa-paper-plane text-brand-600" }))));
     }
+    if (step === 'group') {
+        return React.createElement(BottomSheet, { title: "Share in a group", onClose: onClose },
+            React.createElement("div", { className: "p-2" },
+                React.createElement("textarea", { autoFocus: true, value: comment, onChange: e => setComment(e.target.value), placeholder: "Say something about this\u2026", className: "w-full bg-slate-50 dark:bg-ink-700 rounded-lg p-3 text-sm resize-none mb-3", rows: 2 }),
+                myGroups === null && React.createElement("p", { className: "text-center text-sm text-slate-400 py-6" }, "Loading\u2026"),
+                myGroups && myGroups.length === 0 && React.createElement("p", { className: "text-center text-sm text-slate-400 py-6" }, "You haven't joined any groups yet."),
+                (myGroups || []).map(g => React.createElement("button", { key: g.id, disabled: busy, onClick: () => shareToGroupNow(g), className: "w-full flex items-center gap-3 px-2 py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-ink-700 text-left" },
+                    React.createElement(Avatar, { user: g, size: 9 }),
+                    React.createElement("span", { className: "text-sm font-semibold flex-1 truncate" }, g.name)))));
+    }
     const rows = [
         { icon: 'fa-regular fa-pen-to-square', label: 'Share to Blueface', onClick: () => setStep('timeline') },
         { icon: 'fa-regular fa-circle-plus', label: 'Share to your story now', onClick: soon },
         { icon: 'fa-solid fa-user-plus', label: "Share to a friend's profile", onClick: soon },
-        { icon: 'fa-solid fa-people-group', label: 'Share in a group', onClick: soon },
+        { icon: 'fa-solid fa-people-group', label: 'Share in a group', onClick: () => setStep('group') },
         { icon: 'fa-brands fa-facebook-messenger', label: 'Send as a message', onClick: () => setStep('message') },
         { icon: 'fa-solid fa-share-nodes', label: 'More options\u2026', onClick: moreOptions },
         { icon: 'fa-brands fa-whatsapp', label: 'Send in WhatsApp', onClick: openWhatsApp },
@@ -2740,7 +2783,7 @@ function ReactionsListModal({ reactions, onClose, go }) {
                 React.createElement("span", { className: "text-sm font-semibold truncate" }, u ? (u.displayName || u.username) : 'Loading\u2026'));
         }));
 }
-function PostCard({ post, go }) {
+function PostCard({ post, go, groupCtx }) {
     var _a;
     const { profile } = useAuth();
     const toast = useToast();
@@ -2752,6 +2795,11 @@ function PostCard({ post, go }) {
     const [showComments, setShowComments] = useState(false);
     const [bookmarked, setBookmarked] = useState(false);
     const [menuOpen, setMenuOpen] = useState(false);
+    const [reportOpen, setReportOpen] = useState(false);
+    // groupCtx (only passed by GroupPostsTab / GroupAnnouncementsTab) carries the viewer's role
+    // in this specific group, so admins/moderators get pin + moderator-delete on any member's
+    // post here without PostCard needing to know anything about groups itself elsewhere.
+    const canModerateGroup = !!(groupCtx && (groupCtx.myRole === 'admin' || groupCtx.myRole === 'moderator'));
     const [editing, setEditing] = useState(false);
     const [editText, setEditText] = useState(post.text);
     const editTextareaRef = useRef();
@@ -2837,8 +2885,22 @@ function PostCard({ post, go }) {
         if (!confirm('Delete this post?'))
             return;
         await db.collection('posts').doc(post.id).delete();
-        await db.collection('users').doc(profile.id).update({ postsCount: FieldValue.increment(-1) });
+        if (post.authorId === profile.id) {
+            await db.collection('users').doc(profile.id).update({ postsCount: FieldValue.increment(-1) });
+        }
+        if (post.groupId) {
+            db.collection('groups').doc(post.groupId).update({ postsCount: FieldValue.increment(-1) }).catch(() => { });
+        }
         toast('Post deleted', 'success');
+    };
+    const togglePinInGroup = async () => {
+        try {
+            await setGroupPostPinned(post.id, !post.groupPinned);
+            toast(post.groupPinned ? 'Unpinned' : 'Pinned to group', 'success');
+        }
+        catch (e) {
+            toast('Could not update pin', 'error');
+        }
     };
     const saveEdit = async () => {
         await db.collection('posts').doc(post.id).update({ text: editText.trim(), edited: true });
@@ -2852,13 +2914,15 @@ function PostCard({ post, go }) {
                 React.createElement(Avatar, { user: author, size: 13 }),
                 React.createElement("div", { className: "min-w-0" },
                     React.createElement("p", { className: "font-bold text-base flex items-center gap-1.5" }, author.displayName,
-                        post.pageId && React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-brand-600 bg-brand-50 dark:bg-brand-900/30 dark:text-brand-400 px-1.5 py-0.5 rounded" }, "Page")),
+                        post.pageId && React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-brand-600 bg-brand-50 dark:bg-brand-900/30 dark:text-brand-400 px-1.5 py-0.5 rounded" }, "Page"),
+                        post.groupAnnouncement && React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-amber-600 bg-amber-50 dark:bg-amber-900/30 dark:text-amber-400 px-1.5 py-0.5 rounded flex items-center gap-1" }, React.createElement("i", { className: "fa-solid fa-bullhorn" }), "Announcement")),
                     React.createElement("p", { className: "text-sm text-slate-400" },
                         "@",
                         author.username,
                         " \u00B7 ",
                         timeAgo(post.createdAt),
                         post.edited ? ' · edited' : ''),
+                    post.groupId && !groupCtx && React.createElement("button", { onClick: (e) => { e.stopPropagation(); go({ name: 'group', id: post.groupId }); }, className: "text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline flex items-center gap-1 mt-0.5" }, React.createElement("i", { className: "fa-solid fa-people-group text-[10px]" }), "Posted in " + (post.groupName || 'a group')),
                     React.createElement(TaggedLine, { users: post.taggedUsers, go: go }),
                     React.createElement(PostMetaLine, { post: post }),
                     post.music && React.createElement("p", { className: "text-xs text-brand-600 dark:text-brand-400 flex items-center gap-1.5 mt-0.5" }, React.createElement(MusicPlayBadge, { music: post.music, size: 4 }), post.music.title + ' · ' + post.music.artist))),
@@ -2866,10 +2930,12 @@ function PostCard({ post, go }) {
             React.createElement("div", { className: "relative" },
                 React.createElement("button", { onClick: () => setMenuOpen(m => !m), className: "text-slate-400 px-2" },
                     React.createElement("i", { className: "fa-solid fa-ellipsis text-lg" })),
-                menuOpen && (React.createElement("div", { className: "absolute right-0 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-600 z-10 w-44" },
+                menuOpen && (React.createElement("div", { className: "absolute right-0 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-600 z-10 w-48" },
                     post.authorId === profile.id && React.createElement("button", { onClick: () => { setEditing(true); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Edit"),
-                    post.authorId === profile.id && React.createElement("button", { onClick: deletePost, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Delete"),
-                    React.createElement("button", { onClick: () => { toggleBookmark(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, bookmarked ? 'Remove from saved' : 'Save post'))))),
+                    canModerateGroup && React.createElement("button", { onClick: () => { setMenuOpen(false); togglePinInGroup(); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, post.groupPinned ? 'Unpin from group' : 'Pin to group'),
+                    (post.authorId === profile.id || canModerateGroup) && React.createElement("button", { onClick: deletePost, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Delete"),
+                    React.createElement("button", { onClick: () => { toggleBookmark(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, bookmarked ? 'Remove from saved' : 'Save post'),
+                    post.authorId !== profile.id && React.createElement("button", { onClick: () => { setMenuOpen(false); setReportOpen(true); }, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600 border-t border-slate-100 dark:border-ink-600" }, "Report post"))))),
         editing ? (React.createElement("div", { className: "px-3 sm:px-4 mb-2" },
             React.createElement("textarea", { ref: editTextareaRef, value: editText, onChange: e => setEditText(e.target.value), className: "w-full bg-transparent border border-slate-200 dark:border-ink-600 rounded-lg p-2 text-sm", rows: 3 }),
             React.createElement("div", { className: "flex items-center justify-between mt-1" },
@@ -2894,8 +2960,19 @@ function PostCard({ post, go }) {
         React.createElement("div", { className: "bg-slate-100 dark:bg-ink-900 mb-2" },
             React.createElement("img", { src: post.images[0], loading: "lazy", onClick: () => openLightbox(post.images, 0), className: "w-full max-h-[520px] object-contain cursor-zoom-in mx-auto" }))) : (
         React.createElement("div", { className: "grid grid-cols-2 gap-0.5 overflow-hidden mb-2" }, post.images.map((img, i) => React.createElement("img", { key: i, src: img, loading: "lazy", onClick: () => openLightbox(post.images, i), className: "w-full h-full object-cover max-h-[420px] cursor-zoom-in" }))))),
+        post.gifURL && React.createElement("div", { className: "bg-slate-100 dark:bg-ink-900 mb-2" },
+            React.createElement("img", { src: post.gifURL, loading: "lazy", onClick: () => openLightbox([post.gifURL], 0), className: "w-full max-h-[420px] object-contain cursor-zoom-in mx-auto" })),
+        post.videoURL && React.createElement("div", { className: "bg-black mb-2" },
+            React.createElement("video", { src: post.videoURL, controls: true, playsInline: true, className: "w-full max-h-[480px]" })),
+        post.documentURL && React.createElement("div", { className: "px-3 sm:px-4 mb-2" },
+            React.createElement("a", { href: post.documentURL, target: "_blank", rel: "noopener noreferrer", className: "flex items-center gap-3 bg-slate-50 dark:bg-ink-700 rounded-xl p-3 hover:bg-slate-100 dark:hover:bg-ink-600 transition" },
+                React.createElement("span", { className: "w-10 h-10 rounded-lg bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 flex items-center justify-center shrink-0" }, React.createElement("i", { className: "fa-solid fa-file-lines" })),
+                React.createElement("span", { className: "flex-1 min-w-0 text-sm font-semibold truncate" }, post.documentName || 'Document'),
+                React.createElement("i", { className: "fa-solid fa-arrow-down-to-line text-slate-400" }))),
+        post.poll && React.createElement("div", { className: "px-3 sm:px-4 mb-2" }, React.createElement(PollBlock, { post: post })),
         React.createElement("div", { className: "px-3 sm:px-4" },
             post.sharedPostId && React.createElement(SharedPostPreview, { postId: post.sharedPostId, go: go }),
+            post.sharedGroupId && React.createElement(SharedGroupPreview, { groupId: post.sharedGroupId, go: go }),
             (reactions.length > 0 || commentsCount > 0 || sharesCount > 0) && (React.createElement("div", { className: "flex items-center justify-between pb-2 text-[13px] text-slate-500 dark:text-slate-400" },
                 reactions.length > 0 ? (React.createElement(ReactionSummary, { reactions: reactions, onOpen: () => setReactionsListOpen(true) })) : React.createElement("span", null),
                 (commentsCount > 0 || sharesCount > 0) && (React.createElement("div", { className: "flex items-center gap-3" },
@@ -2911,6 +2988,7 @@ function PostCard({ post, go }) {
                     "Share")),
             shareSheetOpen && React.createElement(ShareSheet, { post: post, onClose: () => setShareSheetOpen(false) }),
             reactionsListOpen && React.createElement(ReactionsListModal, { reactions: reactions, go: go, onClose: () => setReactionsListOpen(false) }),
+            reportOpen && React.createElement(ReportReasonSheet, { targetType: "post", targetId: post.id, targetOwnerId: post.authorId, onClose: () => setReportOpen(false) }),
             showComments && React.createElement(Comments, { postId: post.id, go: go }), React.createElement("div", { className: "pb-3" }))));
 }
 function SharedPostPreview({ postId, go }) {
@@ -3191,9 +3269,12 @@ function HomeFeed({ go }) {
     const [reels, setReels] = useState(null);
     const [refreshing, setRefreshing] = useState(false);
     useEffect(() => {
+        // Group posts are deliberately excluded from the global timeline — they only ever show
+        // inside that group's own Posts tab. Besides matching how Groups behave on Facebook,
+        // this is what keeps a private group's posts from ever leaking into everyone's home feed.
         const unsub = db.collection('posts').orderBy('createdAt', 'desc').limit(30)
             .onSnapshot(snap => setPosts(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))
-                .filter(p => !p.hiddenByAdmin)));
+                .filter(p => !p.hiddenByAdmin && !p.groupId)));
         return unsub;
     }, []);
     useEffect(() => {
@@ -3340,8 +3421,8 @@ function SearchScreen({ go, route }) {
                 React.createElement("div", { className: "space-y-2" }, friendUsers.map(u => React.createElement(PersonRow, { key: u.id, u: u })))))))));
 }
 /* ============================== NOTIFICATIONS ============================== */
-const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel' };
-const SYSTEM_NOTIF_TYPES = ['listing_approved', 'listing_removed', 'ad_approved', 'ad_declined'];
+const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group' };
+const SYSTEM_NOTIF_TYPES = ['listing_approved', 'listing_removed', 'ad_approved', 'ad_declined', 'group_request_approved', 'group_request_rejected'];
 function NotificationsScreen({ go }) {
     const { profile } = useAuth();
     const [items, setItems] = useState(null);
@@ -3375,10 +3456,12 @@ function NotifRow({ n, go }) {
             return go({ name: 'listing', id: n.listingId });
         if (n.reelId)
             return go({ name: 'reels', reelId: n.reelId });
+        if (n.groupId)
+            return go({ name: 'group', id: n.groupId });
         go({ name: 'profile', uid: n.fromUserId });
     };
     return (React.createElement("div", { onClick: openNotif, className: "flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700 cursor-pointer" },
-        isSystem ? React.createElement("div", { className: "w-9 h-9 rounded-full bg-brand-50 dark:bg-brand-900/30 flex items-center justify-center text-brand-600 dark:text-brand-400 shrink-0" }, React.createElement("i", { className: "fa-solid fa-store" })) : React.createElement(Avatar, { user: from, size: 9 }),
+        isSystem ? React.createElement("div", { className: "w-9 h-9 rounded-full bg-brand-50 dark:bg-brand-900/30 flex items-center justify-center text-brand-600 dark:text-brand-400 shrink-0" }, React.createElement("i", { className: "fa-solid " + (n.groupId ? 'fa-people-group' : 'fa-store') })) : React.createElement(Avatar, { user: from, size: 9 }),
         React.createElement("p", { className: "text-sm" },
             !isSystem && React.createElement("span", { className: "font-semibold" }, from.displayName),
             !isSystem && " ",
@@ -3436,7 +3519,9 @@ function ProfileScreen({ uid, go }) {
     useEffect(() => {
         const unsub = db.collection('posts').where('authorId', '==', uid).limit(50)
             .onSnapshot(snap => {
-            const list = snap.docs.map(d => (Object.assign({ id: d.id }, d.data()))).filter(p => !p.hiddenByAdmin);
+            // Group posts are excluded here too — same reasoning as HomeFeed — so a private
+            // group's posts never leak onto a member's public profile timeline.
+            const list = snap.docs.map(d => (Object.assign({ id: d.id }, d.data()))).filter(p => !p.hiddenByAdmin && !p.groupId);
             list.sort((a, b) => { var _a, _b; return (((_a = b.createdAt) === null || _a === void 0 ? void 0 : _a.toMillis) ? b.createdAt.toMillis() : 0) - (((_b = a.createdAt) === null || _b === void 0 ? void 0 : _b.toMillis) ? a.createdAt.toMillis() : 0); });
             setPosts(list);
         });
@@ -5948,9 +6033,11 @@ function ReelsStrip({ go }) {
             React.createElement("p", { className: "font-display font-bold text-sm flex items-center gap-1.5" }, React.createElement("i", { className: "fa-solid fa-clapperboard text-brand-500" }), "Reels"),
             React.createElement("button", { onClick: () => go({ name: 'reels' }), className: "text-xs font-semibold text-brand-600 dark:text-brand-400" }, "See all")),
         React.createElement("div", { className: "flex gap-2.5 overflow-x-auto pb-1 -mx-1 px-1", style: { scrollbarWidth: 'none' } },
-            React.createElement("div", { onClick: () => go({ name: 'reelUpload' }), className: TILE + " bg-gradient-to-b from-brand-100 to-brand-50 dark:from-ink-800 dark:to-ink-800 border-2 border-dashed border-brand-300 dark:border-brand-700 flex flex-col items-center justify-center gap-2" },
-                React.createElement("span", { className: "w-11 h-11 rounded-full bg-brand-600 text-white flex items-center justify-center text-lg" }, React.createElement("i", { className: "fa-solid fa-plus" })),
-                React.createElement("p", { className: "text-brand-700 dark:text-brand-300 text-xs font-semibold px-2 text-center" }, "Create a reel")),
+            React.createElement("div", { onClick: () => go({ name: 'reelUpload' }), className: TILE },
+                React.createElement("img", { src: profile.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(profile.displayName || profile.username || '?')}`, className: "w-full h-full object-cover" }),
+                React.createElement("div", { className: "absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/80 to-transparent" }),
+                React.createElement("span", { className: "absolute left-1/2 -translate-x-1/2 bottom-8 w-11 h-11 rounded-full bg-brand-600 text-white flex items-center justify-center text-lg ring-[3px] ring-white dark:ring-ink-900" }, React.createElement("i", { className: "fa-solid fa-plus" })),
+                React.createElement("p", { className: "absolute bottom-2 inset-x-0 text-center text-white text-xs font-semibold px-2" }, "Create a reel")),
             reels === null && [1, 2, 3].map(i => React.createElement("div", { key: i, className: TILE + " animate-pulse" })),
             reels !== null && reels.length === 0 && React.createElement("div", { className: "shrink-0 w-[136px] h-[224px] rounded-2xl border border-dashed border-slate-200 dark:border-ink-700 flex items-center justify-center text-center px-3" },
                 React.createElement("p", { className: "text-xs text-slate-400" }, "No reels yet — be the first to post one")),
@@ -5960,6 +6047,999 @@ function ReelsStrip({ go }) {
                 React.createElement("i", { className: "fa-solid fa-play absolute top-2.5 right-2.5 text-white text-sm drop-shadow" }),
                 React.createElement("p", { className: "absolute bottom-2 inset-x-0 text-center text-white text-xs font-semibold px-1" }, formatCount(r.viewsCount || 0), " views"))))));
 }
+/* ============================== GROUPS ==============================
+ * Collections used (recommended Firestore/Storage rules are appended to the trailing HTML
+ * comment at the end of this file, alongside the existing Reels rules):
+ *  - groups/{groupId}                              group document + denormalized counters
+ *  - groups/{groupId}/members/{uid}                 { uid, role: 'admin'|'moderator'|'member', muted, joinedAt }
+ *  - groups/{groupId}/joinRequests/{uid}            pending request to join a private group
+ *  - groups/{groupId}/invites/{uid}                 pending invite, { invitedBy, createdAt }
+ *  - groups/{groupId}/events/{eventId}              { title, description, startAt, location, createdBy, attendeeIds }
+ *  - posts/{postId}                                 reused as-is, extended with groupId/groupName/groupPrivacy/
+ *                                                    videoURL/documentURL/documentName/gifURL/poll/groupPinned/
+ *                                                    groupAnnouncement — every existing post feature (reactions,
+ *                                                    comments, replies, shares, mentions, hashtags, bookmarking)
+ *                                                    keeps working on group posts for free.
+ * Users additionally get a denormalized `groupIds` array (kept in sync via arrayUnion/arrayRemove on
+ * join/leave/create) so "which groups am I in" never needs a collectionGroup query or its index. */
+const GROUP_CATEGORIES = [
+    'General', 'Technology', 'Business & Entrepreneurship', 'Health & Wellness', 'Sports & Fitness',
+    'Education & Learning', 'Arts & Culture', 'Music', 'Gaming', 'Travel', 'Food & Cooking',
+    'Parenting & Family', 'Buy & Sell', 'Support & Advice', 'Hobbies', 'Local Community', 'Other'
+];
+const GROUP_ROLE_LABELS = { admin: 'Admin', moderator: 'Moderator', member: 'Member' };
+function groupRoleLabel(role) { return GROUP_ROLE_LABELS[role] || 'Member'; }
+/* ---- Group CRUD ---- */
+async function uploadGroupImage(groupId, file, kind) {
+    // kind: 'avatars' (square profile picture, field photoURL) | 'covers' (banner, field coverURL) —
+    // same kind/field convention as uploadPageImage so Avatar and other shared UI Just Work on groups.
+    const compressed = await compressImage(file, kind === 'avatars' ? 512 : 1400);
+    const ref = storage.ref(`groupAssets/${groupId}/${kind === 'avatars' ? 'photo' : 'cover'}.jpg`);
+    await ref.put(compressed, { contentType: 'image/jpeg' });
+    const url = await ref.getDownloadURL();
+    await db.collection('groups').doc(groupId).update({ [kind === 'avatars' ? 'photoURL' : 'coverURL']: url });
+    return url;
+}
+async function createGroup(creatorId, fields, coverFile, avatarFile) {
+    const groupRef = db.collection('groups').doc();
+    const id = groupRef.id;
+    await groupRef.set({
+        name: fields.name.trim(), displayName: fields.name.trim(), description: (fields.description || '').trim(),
+        category: fields.category || GROUP_CATEGORIES[0], privacy: fields.privacy === 'private' ? 'private' : 'public',
+        rules: fields.rules || [], location: fields.location || '', website: fields.website || '',
+        coverURL: null, photoURL: null, creatorId,
+        membersCount: 1, postsCount: 0, pendingCount: 0,
+        hiddenByAdmin: false, createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
+    });
+    await groupRef.collection('members').doc(creatorId).set({ uid: creatorId, role: 'admin', muted: false, joinedAt: FieldValue.serverTimestamp() });
+    db.collection('users').doc(creatorId).update({ groupIds: FieldValue.arrayUnion(id) }).catch(() => { });
+    if (coverFile) await uploadGroupImage(id, coverFile, 'covers');
+    if (avatarFile) await uploadGroupImage(id, avatarFile, 'avatars');
+    return id;
+}
+async function updateGroup(groupId, fields) {
+    await db.collection('groups').doc(groupId).update(Object.assign({}, fields, {
+        name: fields.name.trim(), displayName: fields.name.trim(), description: (fields.description || '').trim(),
+        updatedAt: FieldValue.serverTimestamp(),
+    }));
+}
+async function deleteGroupPermanently(group) {
+    await storage.ref(`groupAssets/${group.id}/cover.jpg`).delete().catch(() => { });
+    await storage.ref(`groupAssets/${group.id}/photo.jpg`).delete().catch(() => { });
+    await db.collection('groups').doc(group.id).delete();
+}
+/* ---- Membership ---- */
+async function joinGroupDirect(groupId, uid) {
+    await db.collection('groups').doc(groupId).collection('members').doc(uid).set({ uid, role: 'member', muted: false, joinedAt: FieldValue.serverTimestamp() });
+    db.collection('groups').doc(groupId).update({ membersCount: FieldValue.increment(1) }).catch(() => { });
+    db.collection('users').doc(uid).update({ groupIds: FieldValue.arrayUnion(groupId) }).catch(() => { });
+}
+async function leaveGroup(groupId, uid) {
+    await db.collection('groups').doc(groupId).collection('members').doc(uid).delete();
+    db.collection('groups').doc(groupId).update({ membersCount: FieldValue.increment(-1) }).catch(() => { });
+    db.collection('users').doc(uid).update({ groupIds: FieldValue.arrayRemove(groupId) }).catch(() => { });
+}
+// Public groups: joining is instant. Private groups: creates a request an admin/moderator must
+// approve. Returns which of the two happened so the caller can show the right toast.
+async function requestToJoinGroup(group, uid) {
+    if (group.privacy !== 'private') {
+        await joinGroupDirect(group.id, uid);
+        return 'joined';
+    }
+    await db.collection('groups').doc(group.id).collection('joinRequests').doc(uid).set({ uid, createdAt: FieldValue.serverTimestamp() });
+    db.collection('groups').doc(group.id).update({ pendingCount: FieldValue.increment(1) }).catch(() => { });
+    const staffSnap = await db.collection('groups').doc(group.id).collection('members').where('role', 'in', ['admin', 'moderator']).get().catch(() => null);
+    (staffSnap ? staffSnap.docs : []).forEach(d => {
+        db.collection('notifications').doc(d.id).collection('items').add({ type: 'group_join_request', fromUserId: uid, groupId: group.id, read: false, createdAt: FieldValue.serverTimestamp() }).catch(() => { });
+    });
+    return 'requested';
+}
+async function cancelJoinRequest(groupId, uid) {
+    await db.collection('groups').doc(groupId).collection('joinRequests').doc(uid).delete();
+    db.collection('groups').doc(groupId).update({ pendingCount: FieldValue.increment(-1) }).catch(() => { });
+}
+async function approveJoinRequest(group, uid) {
+    await joinGroupDirect(group.id, uid);
+    await db.collection('groups').doc(group.id).collection('joinRequests').doc(uid).delete();
+    db.collection('groups').doc(group.id).update({ pendingCount: FieldValue.increment(-1) }).catch(() => { });
+    db.collection('notifications').doc(uid).collection('items').add({ type: 'group_request_approved', groupId: group.id, read: false, createdAt: FieldValue.serverTimestamp() }).catch(() => { });
+}
+async function rejectJoinRequest(group, uid) {
+    await db.collection('groups').doc(group.id).collection('joinRequests').doc(uid).delete();
+    db.collection('groups').doc(group.id).update({ pendingCount: FieldValue.increment(-1) }).catch(() => { });
+    db.collection('notifications').doc(uid).collection('items').add({ type: 'group_request_rejected', groupId: group.id, read: false, createdAt: FieldValue.serverTimestamp() }).catch(() => { });
+}
+async function inviteToGroup(group, inviterId, inviteeUid) {
+    await db.collection('groups').doc(group.id).collection('invites').doc(inviteeUid).set({ uid: inviteeUid, invitedBy: inviterId, createdAt: FieldValue.serverTimestamp() });
+    db.collection('notifications').doc(inviteeUid).collection('items').add({ type: 'group_invite', fromUserId: inviterId, groupId: group.id, read: false, createdAt: FieldValue.serverTimestamp() }).catch(() => { });
+}
+async function acceptGroupInvite(groupId, uid) {
+    await db.collection('groups').doc(groupId).collection('invites').doc(uid).delete();
+    await joinGroupDirect(groupId, uid);
+}
+async function declineGroupInvite(groupId, uid) {
+    await db.collection('groups').doc(groupId).collection('invites').doc(uid).delete();
+}
+async function setGroupMemberRole(group, actorId, uid, role) {
+    await db.collection('groups').doc(group.id).collection('members').doc(uid).update({ role });
+    db.collection('notifications').doc(uid).collection('items').add({
+        type: role === 'admin' ? 'group_made_admin' : role === 'moderator' ? 'group_made_moderator' : 'group_role_changed',
+        fromUserId: actorId, groupId: group.id, read: false, createdAt: FieldValue.serverTimestamp()
+    }).catch(() => { });
+}
+async function removeGroupMember(groupId, uid) {
+    await db.collection('groups').doc(groupId).collection('members').doc(uid).delete();
+    db.collection('groups').doc(groupId).update({ membersCount: FieldValue.increment(-1) }).catch(() => { });
+    db.collection('users').doc(uid).update({ groupIds: FieldValue.arrayRemove(groupId) }).catch(() => { });
+}
+async function setGroupMemberMuted(groupId, uid, muted) {
+    await db.collection('groups').doc(groupId).collection('members').doc(uid).update({ muted });
+}
+/* ---- Posts inside a group (all still live in the top-level `posts` collection) ---- */
+async function uploadGroupPostImages(groupId, uid, files) {
+    const urls = [];
+    for (let i = 0; i < files.length; i++) {
+        const compressed = await compressImage(files[i]);
+        const ref = storage.ref(`groupPosts/${groupId}/${uid}_${Date.now()}_${i}.jpg`);
+        await ref.put(compressed, { contentType: 'image/jpeg' });
+        urls.push(await ref.getDownloadURL());
+    }
+    return urls;
+}
+async function uploadGroupPostGif(groupId, uid, file) {
+    // Uploaded verbatim (no recompression) so the animation survives — compressImage re-encodes
+    // through a <canvas>, which would flatten a GIF to its first frame.
+    const ref = storage.ref(`groupPosts/${groupId}/${uid}_${Date.now()}.gif`);
+    await ref.put(file, { contentType: 'image/gif' });
+    return ref.getDownloadURL();
+}
+async function uploadGroupPostVideo(groupId, uid, file, onProgress) {
+    const ref = storage.ref(`groupPosts/${groupId}/${uid}_${Date.now()}_video.mp4`);
+    await new Promise((resolve, reject) => {
+        const task = ref.put(file, { contentType: file.type || 'video/mp4' });
+        task.on('state_changed', s => onProgress && onProgress(Math.round((s.bytesTransferred / s.totalBytes) * 100)), reject, resolve);
+    });
+    return ref.getDownloadURL();
+}
+async function uploadGroupPostDocument(groupId, uid, file) {
+    const safeName = file.name.replace(/[^a-zA-Z0-9_.\-]/g, '_');
+    const ref = storage.ref(`groupFiles/${groupId}/${uid}_${Date.now()}_${safeName}`);
+    await ref.put(file, { contentType: file.type || 'application/octet-stream' });
+    return { url: await ref.getDownloadURL(), name: file.name };
+}
+async function createGroupPost(group, profile, { text, imageFiles, gifFile, videoFile, docFile, poll, announcement }, onProgress) {
+    const images = (imageFiles && imageFiles.length) ? await uploadGroupPostImages(group.id, profile.id, imageFiles) : [];
+    let gifURL = null, videoURL = null, documentURL = null, documentName = null;
+    if (gifFile) gifURL = await uploadGroupPostGif(group.id, profile.id, gifFile);
+    if (videoFile) videoURL = await uploadGroupPostVideo(group.id, profile.id, videoFile, onProgress);
+    if (docFile) { const d = await uploadGroupPostDocument(group.id, profile.id, docFile); documentURL = d.url; documentName = d.name; }
+    const ref = await db.collection('posts').add({
+        authorId: profile.id, groupId: group.id, groupName: group.name, groupPrivacy: group.privacy,
+        text: (text || '').trim(), images, gifURL, videoURL, documentURL, documentName,
+        poll: poll ? { question: poll.question, options: poll.options.map(o => ({ text: o, votes: 0 })), voters: {} } : null,
+        bold: false, bgStyle: null, taggedUsers: [], hashtags: extractHashtags(text),
+        groupPinned: false, groupAnnouncement: !!announcement, hiddenByAdmin: false,
+        likesCount: 0, commentsCount: 0, sharesCount: 0, createdAt: FieldValue.serverTimestamp(),
+    });
+    db.collection('groups').doc(group.id).update({ postsCount: FieldValue.increment(1) }).catch(() => { });
+    if (announcement) notifyGroupMembersOfAnnouncement(group, ref.id, profile.id).catch(() => { });
+    return ref.id;
+}
+async function notifyGroupMembersOfAnnouncement(group, postId, authorId) {
+    const membersSnap = await db.collection('groups').doc(group.id).collection('members').limit(500).get().catch(() => null);
+    if (!membersSnap) return;
+    let batch = db.batch(), count = 0;
+    for (const d of membersSnap.docs) {
+        if (d.id === authorId) continue;
+        const ref = db.collection('notifications').doc(d.id).collection('items').doc();
+        batch.set(ref, { type: 'group_announcement', fromUserId: authorId, groupId: group.id, postId, read: false, createdAt: FieldValue.serverTimestamp() });
+        count++;
+        if (count % 400 === 0) { await batch.commit(); batch = db.batch(); }
+    }
+    await batch.commit();
+}
+async function setGroupPostPinned(postId, pinned) { await db.collection('posts').doc(postId).update({ groupPinned: pinned }); }
+// One doc per voter, per post, keyed inside the poll map itself (Firestore has no native way to
+// atomically move a vote from one array entry to another, so this reads-modifies-writes inside a
+// transaction — the same "read current state, recompute, write back" shape as reelHotScore-style
+// derived data elsewhere, just done transactionally since two people could vote at once).
+async function voteGroupPoll(postId, uid, optionIndex) {
+    const ref = db.collection('posts').doc(postId);
+    await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists) return;
+        const post = snap.data();
+        if (!post.poll) return;
+        const voters = Object.assign({}, post.poll.voters || {});
+        const prev = voters[uid];
+        if (prev === optionIndex) return;
+        const options = post.poll.options.map(o => Object.assign({}, o, { votes: o.votes || 0 }));
+        if (prev !== undefined && options[prev]) options[prev].votes = Math.max(0, options[prev].votes - 1);
+        if (options[optionIndex]) options[optionIndex].votes = (options[optionIndex].votes || 0) + 1;
+        voters[uid] = optionIndex;
+        tx.update(ref, { poll: { question: post.poll.question, options, voters } });
+    });
+}
+/* ---- Events ---- */
+async function createGroupEvent(groupId, creatorId, fields) {
+    const ref = await db.collection('groups').doc(groupId).collection('events').add({
+        title: fields.title.trim(), description: (fields.description || '').trim(),
+        startAt: fields.startAt, location: fields.location || '', createdBy: creatorId,
+        attendeeIds: [creatorId], createdAt: FieldValue.serverTimestamp(),
+    });
+    const membersSnap = await db.collection('groups').doc(groupId).collection('members').limit(500).get().catch(() => null);
+    if (membersSnap) {
+        let batch = db.batch(), count = 0;
+        for (const d of membersSnap.docs) {
+            if (d.id === creatorId) continue;
+            const nref = db.collection('notifications').doc(d.id).collection('items').doc();
+            batch.set(nref, { type: 'group_event', fromUserId: creatorId, groupId, eventId: ref.id, read: false, createdAt: FieldValue.serverTimestamp() });
+            count++;
+            if (count % 400 === 0) { await batch.commit(); batch = db.batch(); }
+        }
+        await batch.commit();
+    }
+    return ref.id;
+}
+async function deleteGroupEvent(groupId, eventId) { await db.collection('groups').doc(groupId).collection('events').doc(eventId).delete(); }
+async function toggleEventRSVP(groupId, eventId, uid, going) {
+    await db.collection('groups').doc(groupId).collection('events').doc(eventId)
+        .update({ attendeeIds: going ? FieldValue.arrayUnion(uid) : FieldValue.arrayRemove(uid) });
+}
+/* ---- Hooks ---- */
+function useGroupMembership(groupId, uid) {
+    const [member, setMember] = useState(undefined); // undefined = loading, null = not a member
+    useEffect(() => {
+        if (!groupId || !uid) { setMember(null); return; }
+        const unsub = db.collection('groups').doc(groupId).collection('members').doc(uid)
+            .onSnapshot(s => setMember(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setMember(null));
+        return unsub;
+    }, [groupId, uid]);
+    return member;
+}
+function useGroupJoinRequestStatus(groupId, uid) {
+    const [pending, setPending] = useState(false);
+    useEffect(() => {
+        if (!groupId || !uid) { setPending(false); return; }
+        const unsub = db.collection('groups').doc(groupId).collection('joinRequests').doc(uid)
+            .onSnapshot(s => setPending(s.exists), () => setPending(false));
+        return unsub;
+    }, [groupId, uid]);
+    return pending;
+}
+function useGroupInvite(groupId, uid) {
+    const [invite, setInvite] = useState(undefined);
+    useEffect(() => {
+        if (!groupId || !uid) { setInvite(null); return; }
+        const unsub = db.collection('groups').doc(groupId).collection('invites').doc(uid)
+            .onSnapshot(s => setInvite(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setInvite(null));
+        return unsub;
+    }, [groupId, uid]);
+    return invite;
+}
+// Relies on the denormalized users/{uid}.groupIds array (kept in sync by join/leave/create) rather
+// than a collectionGroup('members') query, so it never needs a collection-group index — same
+// "avoid composite indexes" approach used throughout this file (see ReelsStrip's note on this).
+function useMyGroups(profile) {
+    const [groups, setGroups] = useState(null);
+    const ids = (profile && profile.groupIds) || [];
+    const key = ids.slice().sort().join(',');
+    useEffect(() => {
+        if (!ids.length) { setGroups([]); return; }
+        let cancelled = false;
+        (async () => {
+            const docs = await Promise.all(ids.map(id => db.collection('groups').doc(id).get().catch(() => null)));
+            if (!cancelled) setGroups(docs.filter(d => d && d.exists).map(d => Object.assign({ id: d.id }, d.data())));
+        })();
+        return () => { cancelled = true; };
+    }, [key]);
+    return groups;
+}
+/* ---- Small shared bits ---- */
+function GroupPrivacyBadge({ privacy }) {
+    return React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded flex items-center gap-1 shrink-0 " + (privacy === 'private' ? "text-amber-600 bg-amber-50 dark:bg-amber-900/30 dark:text-amber-400" : "text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 dark:text-emerald-400") },
+        React.createElement("i", { className: "fa-solid " + (privacy === 'private' ? 'fa-lock' : 'fa-earth-africa') }),
+        privacy === 'private' ? 'Private' : 'Public');
+}
+function GroupCard({ group, go }) {
+    return React.createElement("button", { onClick: () => go({ name: 'group', id: group.id }), className: "w-full flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-3 text-left" },
+        React.createElement(Avatar, { user: group, size: 12 }),
+        React.createElement("div", { className: "flex-1 min-w-0" },
+            React.createElement("p", { className: "font-bold text-sm truncate flex items-center gap-1.5" }, group.name,
+                group.hiddenByAdmin && React.createElement("span", { className: "text-amber-500 text-[10px] font-semibold" }, "(hidden)")),
+            React.createElement("p", { className: "text-xs text-slate-400 truncate flex items-center gap-1.5 mt-0.5" },
+                React.createElement(GroupPrivacyBadge, { privacy: group.privacy }),
+                (group.membersCount || 0) + ' members', " \u00B7 ", group.category)),
+        React.createElement("i", { className: "fa-solid fa-chevron-right text-slate-300" }));
+}
+// Generic report bottom sheet, reused for posts, comments, and groups — funnels into the same
+// `reports` collection / admin queue as everything else (see reportContent above).
+function REPORT_REASONS_LIST() { return ['Spam', 'Harassment or bullying', 'Nudity or sexual content', 'Violence', 'False information', 'Hate speech', 'Something else']; }
+function ReportReasonSheet({ targetType, targetId, targetOwnerId, onClose }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const [busy, setBusy] = useState(false);
+    const submit = async (reason) => {
+        setBusy(true);
+        try {
+            await reportContent(targetType, targetId, targetOwnerId, profile.id, reason);
+            toast('Thanks — our team will review this', 'success');
+            onClose();
+        }
+        catch (e) {
+            toast(e.message, 'error');
+        }
+        finally {
+            setBusy(false);
+        }
+    };
+    return React.createElement(BottomSheet, { title: "Report " + targetType, onClose: onClose },
+        React.createElement("p", { className: "text-xs text-slate-400 px-2 pb-1" }, "Why are you reporting this?"),
+        REPORT_REASONS_LIST().map(r => React.createElement("button", { key: r, disabled: busy, onClick: () => submit(r), className: "w-full text-left px-3 py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-ink-700 text-sm" }, r)));
+}
+// Preview card for a group that was shared to someone's personal timeline (Post -> Share sheet
+// doesn't currently offer this for whole groups, but GroupScreen's "Share" button does).
+function SharedGroupPreview({ groupId, go }) {
+    const [group, setGroup] = useState(undefined);
+    useEffect(() => {
+        const unsub = db.collection('groups').doc(groupId).onSnapshot(s => setGroup(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setGroup(null));
+        return unsub;
+    }, [groupId]);
+    if (group === undefined) return React.createElement("div", { className: "border border-slate-100 dark:border-ink-700 rounded-xl p-3 mb-2 text-xs text-slate-400" }, "Loading group\u2026");
+    if (group === null) return React.createElement("div", { className: "border border-slate-100 dark:border-ink-700 rounded-xl p-3 mb-2 text-xs text-slate-400" }, "This group no longer exists.");
+    return React.createElement("div", { onClick: (e) => { e.stopPropagation(); go({ name: 'group', id: group.id }); }, className: "border border-slate-200 dark:border-ink-700 rounded-xl p-3 mb-2 cursor-pointer flex items-center gap-3" },
+        React.createElement(Avatar, { user: group, size: 11 }),
+        React.createElement("div", { className: "min-w-0 flex-1" },
+            React.createElement("p", { className: "font-bold text-sm truncate" }, group.name),
+            React.createElement("p", { className: "text-xs text-slate-400" }, (group.membersCount || 0) + ' members \u00B7 ' + group.category)),
+        React.createElement("span", { className: "text-xs font-semibold text-brand-600 dark:text-brand-400" }, "View"));
+}
+// Interactive poll block used inside PostCard for group posts that carry a `poll` field.
+function PollBlock({ post }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const [busy, setBusy] = useState(false);
+    const poll = post.poll;
+    const myVote = poll.voters ? poll.voters[profile.id] : undefined;
+    const totalVotes = poll.options.reduce((s, o) => s + (o.votes || 0), 0);
+    const vote = async (i) => {
+        if (busy || myVote === i) return;
+        setBusy(true);
+        try {
+            await voteGroupPoll(post.id, profile.id, i);
+        }
+        catch (e) {
+            toast('Could not record your vote', 'error');
+        }
+        finally {
+            setBusy(false);
+        }
+    };
+    return React.createElement("div", { className: "border border-slate-200 dark:border-ink-700 rounded-xl p-3" },
+        React.createElement("p", { className: "font-semibold text-sm mb-2 flex items-center gap-2" }, React.createElement("i", { className: "fa-solid fa-square-poll-vertical text-brand-600" }), poll.question),
+        React.createElement("div", { className: "space-y-1.5" }, poll.options.map((o, i) => {
+            const pct = totalVotes > 0 ? Math.round(((o.votes || 0) / totalVotes) * 100) : 0;
+            const chosen = myVote === i;
+            return React.createElement("button", { key: i, disabled: busy, onClick: () => vote(i), className: "w-full text-left relative rounded-lg overflow-hidden border " + (chosen ? "border-brand-600" : "border-slate-200 dark:border-ink-600") },
+                React.createElement("div", { className: "absolute inset-y-0 left-0 bg-brand-50 dark:bg-brand-900/30", style: { width: pct + '%' } }),
+                React.createElement("div", { className: "relative flex items-center justify-between px-3 py-2 text-sm" },
+                    React.createElement("span", { className: "flex items-center gap-1.5 font-medium" }, chosen && React.createElement("i", { className: "fa-solid fa-circle-check text-brand-600 text-xs" }), o.text),
+                    (myVote !== undefined) && React.createElement("span", { className: "text-xs text-slate-400 font-semibold" }, pct + '%')));
+        })),
+        React.createElement("p", { className: "text-xs text-slate-400 mt-2" }, totalVotes + (totalVotes === 1 ? ' vote' : ' votes')));
+}
+/* ---- Group composer (Posts + Announcements tabs both use this) ---- */
+function GroupPostComposer({ group, myRole, onPosted }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const [text, setText] = useState('');
+    const [imageFiles, setImageFiles] = useState([]);
+    const [imagePreviews, setImagePreviews] = useState([]);
+    const [gifFile, setGifFile] = useState(null);
+    const [videoFile, setVideoFile] = useState(null);
+    const [docFile, setDocFile] = useState(null);
+    const [pollOpen, setPollOpen] = useState(false);
+    const [pollQuestion, setPollQuestion] = useState('');
+    const [pollOptions, setPollOptions] = useState(['', '']);
+    const [asAnnouncement, setAsAnnouncement] = useState(false);
+    const [busy, setBusy] = useState(false);
+    const [progress, setProgress] = useState(0);
+    const imgRef = useRef(); const gifRef = useRef(); const vidRef = useRef(); const docRef = useRef();
+    const canModerate = myRole === 'admin' || myRole === 'moderator';
+    const onImages = (e) => {
+        const chosen = Array.from(e.target.files).slice(0, 10 - imageFiles.length);
+        setImageFiles(f => [...f, ...chosen]);
+        setImagePreviews(p => [...p, ...chosen.map(f => URL.createObjectURL(f))]);
+    };
+    const clearAttachments = () => { setImageFiles([]); setImagePreviews([]); setGifFile(null); setVideoFile(null); setDocFile(null); setPollOpen(false); setPollQuestion(''); setPollOptions(['', '']); };
+    const hasAttachment = imageFiles.length || gifFile || videoFile || docFile || (pollOpen && pollQuestion.trim());
+    const canPost = text.trim() || hasAttachment;
+    const submit = async () => {
+        if (!canPost || busy) return;
+        setBusy(true);
+        setProgress(0);
+        try {
+            const poll = (pollOpen && pollQuestion.trim()) ? { question: pollQuestion.trim(), options: pollOptions.map(o => o.trim()).filter(Boolean) } : null;
+            if (poll && poll.options.length < 2) {
+                toast('A poll needs at least 2 options', 'error');
+                setBusy(false);
+                return;
+            }
+            await createGroupPost(group, profile, { text, imageFiles, gifFile, videoFile, docFile, poll, announcement: asAnnouncement }, setProgress);
+            setText(''); clearAttachments(); setAsAnnouncement(false);
+            toast(asAnnouncement ? 'Announcement posted' : 'Posted to group', 'success');
+            onPosted && onPosted();
+        }
+        catch (e) {
+            toast(e.message, 'error');
+        }
+        finally {
+            setBusy(false);
+        }
+    };
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-3 mb-4" },
+        React.createElement("div", { className: "flex items-start gap-3" },
+            React.createElement(Avatar, { user: profile, size: 10 }),
+            React.createElement("textarea", { value: text, onChange: e => setText(e.target.value), placeholder: asAnnouncement ? "Write an announcement for the group\u2026" : "Write something to the group\u2026", className: "flex-1 resize-none bg-slate-50 dark:bg-ink-700 rounded-xl px-3 py-2 text-sm focus:outline-none", rows: 2 })),
+        imagePreviews.length > 0 && React.createElement("div", { className: "grid grid-cols-3 gap-2 mt-2" }, imagePreviews.map((p, i) => React.createElement("div", { key: i, className: "relative rounded-lg overflow-hidden aspect-square" },
+            React.createElement("img", { src: p, className: "w-full h-full object-cover" }),
+            React.createElement("button", { onClick: () => { setImageFiles(f => f.filter((_, j) => j !== i)); setImagePreviews(p2 => p2.filter((_, j) => j !== i)); }, className: "absolute top-1 right-1 bg-black/60 text-white rounded-full w-5 h-5 text-xs" }, "\u2715")))),
+        gifFile && React.createElement("div", { className: "mt-2 flex items-center gap-2 text-xs bg-slate-50 dark:bg-ink-700 rounded-lg px-3 py-2" }, React.createElement("i", { className: "fa-solid fa-file-image text-brand-600" }), gifFile.name, React.createElement("button", { onClick: () => setGifFile(null), className: "ml-auto text-slate-400" }, "\u2715")),
+        videoFile && React.createElement("div", { className: "mt-2 flex items-center gap-2 text-xs bg-slate-50 dark:bg-ink-700 rounded-lg px-3 py-2" }, React.createElement("i", { className: "fa-solid fa-video text-red-500" }), videoFile.name, React.createElement("button", { onClick: () => setVideoFile(null), className: "ml-auto text-slate-400" }, "\u2715")),
+        docFile && React.createElement("div", { className: "mt-2 flex items-center gap-2 text-xs bg-slate-50 dark:bg-ink-700 rounded-lg px-3 py-2" }, React.createElement("i", { className: "fa-solid fa-file-lines text-brand-600" }), docFile.name, React.createElement("button", { onClick: () => setDocFile(null), className: "ml-auto text-slate-400" }, "\u2715")),
+        pollOpen && React.createElement("div", { className: "mt-2 border border-slate-200 dark:border-ink-600 rounded-xl p-3 space-y-2" },
+            React.createElement("input", { value: pollQuestion, onChange: e => setPollQuestion(e.target.value), placeholder: "Ask a question\u2026", className: "w-full bg-slate-50 dark:bg-ink-700 rounded-lg px-3 py-2 text-sm focus:outline-none" }),
+            pollOptions.map((o, i) => React.createElement("input", { key: i, value: o, onChange: e => setPollOptions(opts => opts.map((x, j) => j === i ? e.target.value : x)), placeholder: "Option " + (i + 1), className: "w-full bg-slate-50 dark:bg-ink-700 rounded-lg px-3 py-2 text-sm focus:outline-none" })),
+            pollOptions.length < 4 && React.createElement("button", { onClick: () => setPollOptions(o => [...o, '']), className: "text-xs font-semibold text-brand-600" }, "+ Add option"),
+            React.createElement("button", { onClick: () => { setPollOpen(false); setPollQuestion(''); setPollOptions(['', '']); }, className: "text-xs font-semibold text-slate-400 ml-3" }, "Remove poll")),
+        busy && progress > 0 && React.createElement("div", { className: "w-full h-1.5 bg-slate-100 dark:bg-ink-700 rounded-full overflow-hidden mt-2" }, React.createElement("div", { className: "h-full bg-brand-600 transition-all", style: { width: progress + '%' } })),
+        React.createElement("div", { className: "flex items-center justify-between mt-2 pt-2 border-t border-slate-100 dark:border-ink-700" },
+            React.createElement("div", { className: "flex items-center gap-1" },
+                React.createElement("input", { ref: imgRef, type: "file", accept: "image/*", multiple: true, hidden: true, onChange: onImages }),
+                React.createElement("button", { title: "Photo", onClick: () => imgRef.current.click(), className: "w-9 h-9 rounded-full flex items-center justify-center text-emerald-500 hover:bg-slate-100 dark:hover:bg-ink-700" }, React.createElement("i", { className: "fa-solid fa-image" })),
+                React.createElement("input", { ref: vidRef, type: "file", accept: "video/*", hidden: true, onChange: e => e.target.files[0] && setVideoFile(e.target.files[0]) }),
+                React.createElement("button", { title: "Video", onClick: () => vidRef.current.click(), className: "w-9 h-9 rounded-full flex items-center justify-center text-red-500 hover:bg-slate-100 dark:hover:bg-ink-700" }, React.createElement("i", { className: "fa-solid fa-video" })),
+                React.createElement("input", { ref: gifRef, type: "file", accept: "image/gif", hidden: true, onChange: e => e.target.files[0] && setGifFile(e.target.files[0]) }),
+                React.createElement("button", { title: "GIF", onClick: () => gifRef.current.click(), className: "w-9 h-9 rounded-full flex items-center justify-center text-pink-500 hover:bg-slate-100 dark:hover:bg-ink-700" }, React.createElement("i", { className: "fa-solid fa-film" })),
+                React.createElement("input", { ref: docRef, type: "file", hidden: true, onChange: e => e.target.files[0] && setDocFile(e.target.files[0]) }),
+                React.createElement("button", { title: "File", onClick: () => docRef.current.click(), className: "w-9 h-9 rounded-full flex items-center justify-center text-brand-600 hover:bg-slate-100 dark:hover:bg-ink-700" }, React.createElement("i", { className: "fa-solid fa-paperclip" })),
+                React.createElement("button", { title: "Poll", onClick: () => setPollOpen(v => !v), className: "w-9 h-9 rounded-full flex items-center justify-center text-amber-500 hover:bg-slate-100 dark:hover:bg-ink-700" }, React.createElement("i", { className: "fa-solid fa-square-poll-vertical" })),
+                canModerate && React.createElement("button", { title: "Post as announcement", onClick: () => setAsAnnouncement(v => !v), className: "w-9 h-9 rounded-full flex items-center justify-center hover:bg-slate-100 dark:hover:bg-ink-700 " + (asAnnouncement ? "text-white bg-amber-500" : "text-amber-500") }, React.createElement("i", { className: "fa-solid fa-bullhorn" }))),
+            React.createElement("button", { onClick: submit, disabled: !canPost || busy, className: "bg-brand-600 hover:bg-brand-700 disabled:opacity-40 text-white text-sm font-semibold px-4 py-2 rounded-full" }, busy ? 'Posting…' : (asAnnouncement ? 'Announce' : 'Post'))));
+}
+/* ---- Discover / search / trending / suggested / joined ---- */
+function GroupsHomeScreen({ go }) {
+    const { profile } = useAuth();
+    const [all, setAll] = useState(null);
+    const [tab, setTab] = useState('discover'); // 'discover' | 'joined'
+    const [q, setQ] = useState('');
+    const myGroups = useMyGroups(profile);
+    useEffect(() => {
+        // No orderBy/where combo here on purpose (see the "avoid composite indexes" notes
+        // elsewhere in this file) — trending/suggested/search are all derived client-side from
+        // one plain query instead.
+        const unsub = db.collection('groups').limit(300).onSnapshot(snap => setAll(snap.docs.map(d => (Object.assign({ id: d.id }, d.data()))).filter(g => !g.hiddenByAdmin)), () => setAll([]));
+        return unsub;
+    }, []);
+    const myGroupIds = new Set((profile.groupIds || []));
+    const searching = q.trim().length > 0;
+    const searchResults = useMemo(() => {
+        if (!all || !searching) return [];
+        const needle = q.trim().toLowerCase();
+        return all.filter(g => (g.name || '').toLowerCase().includes(needle) || (g.description || '').toLowerCase().includes(needle) || (g.category || '').toLowerCase().includes(needle));
+    }, [all, q]);
+    const trending = useMemo(() => (all || []).filter(g => g.privacy === 'public').slice().sort((a, b) => (b.membersCount || 0) - (a.membersCount || 0)).slice(0, 10), [all]);
+    const suggested = useMemo(() => (all || []).filter(g => g.privacy === 'public' && !myGroupIds.has(g.id)).slice().sort((a, b) => millisOf(b.createdAt) - millisOf(a.createdAt)).slice(0, 20), [all, JSON.stringify(profile.groupIds || [])]);
+    return React.createElement("div", null,
+        React.createElement("div", { className: "flex items-center justify-between mb-4" },
+            React.createElement("h2", { className: "font-display text-xl font-bold" }, "Groups"),
+            React.createElement("button", { onClick: () => go({ name: 'groupForm' }), className: "bg-brand-600 hover:bg-brand-700 text-white text-sm font-semibold px-4 py-2 rounded-full" },
+                React.createElement("i", { className: "fa-solid fa-plus mr-1.5" }), "Create Group")),
+        React.createElement("input", { value: q, onChange: e => setQ(e.target.value), placeholder: "Search groups by name, topic, or category\u2026", className: "w-full px-4 py-2.5 rounded-full bg-slate-100 dark:bg-ink-700 text-sm mb-4 focus:outline-none" }),
+        !searching && React.createElement("div", { className: "flex bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 mb-4 overflow-hidden" },
+            [['discover', 'Discover'], ['joined', 'Your Groups']].map(([k, l]) => React.createElement("button", { key: k, onClick: () => setTab(k), className: "flex-1 py-3 text-sm font-semibold border-b-2 " + (tab === k ? "border-brand-600 text-brand-600" : "border-transparent text-slate-400") }, l))),
+        searching ? React.createElement(React.Fragment, null,
+            React.createElement("p", { className: "text-xs font-bold uppercase tracking-wide text-slate-400 mb-2" }, searchResults.length + ' results'),
+            searchResults.length === 0 && all !== null && React.createElement("p", { className: "text-sm text-slate-400 text-center py-10" }, "No groups match \u201C" + q + "\u201D."),
+            React.createElement("div", { className: "space-y-2" }, searchResults.map(g => React.createElement(GroupCard, { key: g.id, group: g, go: go })))) :
+            tab === 'joined' ? React.createElement(React.Fragment, null,
+                myGroups === null && React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026"),
+                myGroups && myGroups.length === 0 && React.createElement("div", { className: "text-center py-16 text-slate-400" }, React.createElement("i", { className: "fa-regular fa-people-group text-4xl mb-3" }), React.createElement("p", null, "You haven't joined any groups yet.")),
+                React.createElement("div", { className: "space-y-2" }, (myGroups || []).map(g => React.createElement(GroupCard, { key: g.id, group: g, go: go })))) :
+                React.createElement(React.Fragment, null,
+                    trending.length > 0 && React.createElement("div", { className: "mb-5" },
+                        React.createElement("p", { className: "text-xs font-bold uppercase tracking-wide text-slate-400 mb-2" }, "Trending"),
+                        React.createElement("div", { className: "space-y-2" }, trending.map(g => React.createElement(GroupCard, { key: g.id, group: g, go: go })))),
+                    React.createElement("div", null,
+                        React.createElement("p", { className: "text-xs font-bold uppercase tracking-wide text-slate-400 mb-2" }, "Suggested for you"),
+                        all === null && React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026"),
+                        all && suggested.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-10" }, "No suggestions right now."),
+                        React.createElement("div", { className: "space-y-2" }, suggested.map(g => React.createElement(GroupCard, { key: g.id, group: g, go: go }))))));
+}
+/* ---- Create / edit group ---- */
+function GroupFormScreen({ id, go }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const isEdit = !!id;
+    const [group, setGroup] = useState(isEdit ? undefined : null);
+    const [name, setName] = useState('');
+    const [category, setCategory] = useState(GROUP_CATEGORIES[0]);
+    const [description, setDescription] = useState('');
+    const [privacy, setPrivacy] = useState('public');
+    const [rulesText, setRulesText] = useState('');
+    const [website, setWebsite] = useState('');
+    const [location, setLocation] = useState('');
+    const [countryPickerOpen, setCountryPickerOpen] = useState(false);
+    const [coverFile, setCoverFile] = useState(null);
+    const [coverPreview, setCoverPreview] = useState(null);
+    const [avatarFile, setAvatarFile] = useState(null);
+    const [avatarPreview, setAvatarPreview] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const coverRef = useRef(); const avatarRef = useRef();
+    const inputCls = "w-full mt-1 px-3 py-2.5 sm:py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm";
+    useEffect(() => {
+        if (!isEdit) return;
+        const unsub = db.collection('groups').doc(id).onSnapshot(s => {
+            const d = s.exists ? Object.assign({ id: s.id }, s.data()) : null;
+            setGroup(d);
+            if (d) {
+                setName(d.name || ''); setCategory(d.category || GROUP_CATEGORIES[0]); setDescription(d.description || '');
+                setPrivacy(d.privacy || 'public'); setRulesText((d.rules || []).join('\n')); setWebsite(d.website || ''); setLocation(d.location || '');
+            }
+        });
+        return unsub;
+    }, [id, isEdit]);
+    if (isEdit && group === undefined) return React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026");
+    if (isEdit && (group === null || group.creatorId !== profile.id)) return React.createElement("p", { className: "text-sm text-slate-400" }, "You don't manage this group.");
+    const submit = async (e) => {
+        e.preventDefault();
+        if (!name.trim()) return;
+        setBusy(true);
+        try {
+            const rules = rulesText.split('\n').map(r => r.trim()).filter(Boolean);
+            const fields = { name, category, description, privacy, rules, website, location };
+            if (isEdit) {
+                await updateGroup(id, fields);
+                if (coverFile) await uploadGroupImage(id, coverFile, 'covers');
+                if (avatarFile) await uploadGroupImage(id, avatarFile, 'avatars');
+                toast('Group updated', 'success');
+                go({ name: 'group', id });
+            }
+            else {
+                const newId = await createGroup(profile.id, fields, coverFile, avatarFile);
+                toast('Group created!', 'success');
+                go({ name: 'group', id: newId });
+            }
+        }
+        catch (err) {
+            toast(err.message, 'error');
+        }
+        finally {
+            setBusy(false);
+        }
+    };
+    return React.createElement("div", { className: "max-w-lg mx-auto px-1 sm:px-0" },
+        React.createElement("button", { onClick: () => go(isEdit ? { name: 'group', id } : { name: 'groups' }), className: "text-sm text-slate-400 mb-3" }, React.createElement("i", { className: "fa-solid fa-arrow-left mr-1.5" }), "Back"),
+        React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, isEdit ? 'Group Settings' : 'Create a Group'),
+        React.createElement("p", { className: "text-sm text-slate-400 mb-5" }, "Groups are a space to post, discuss, and share with people around a shared interest."),
+        React.createElement("form", { onSubmit: submit, className: "space-y-4" },
+            React.createElement("div", { className: "grid grid-cols-2 gap-3" },
+                React.createElement("div", null,
+                    React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Cover photo"),
+                    React.createElement("button", { type: "button", onClick: () => coverRef.current.click(), className: "mt-1 w-full h-20 rounded-lg border-2 border-dashed border-slate-200 dark:border-ink-600 flex items-center justify-center overflow-hidden bg-slate-50 dark:bg-ink-700" },
+                        (coverPreview || (group && group.coverURL)) ? React.createElement("img", { src: coverPreview || group.coverURL, className: "w-full h-full object-cover" }) : React.createElement("i", { className: "fa-solid fa-image text-slate-400" })),
+                    React.createElement("input", { ref: coverRef, type: "file", accept: "image/*", hidden: true, onChange: e => { const f = e.target.files[0]; if (f) { setCoverFile(f); setCoverPreview(URL.createObjectURL(f)); } } })),
+                React.createElement("div", null,
+                    React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Group icon"),
+                    React.createElement("button", { type: "button", onClick: () => avatarRef.current.click(), className: "mt-1 w-full h-20 rounded-lg border-2 border-dashed border-slate-200 dark:border-ink-600 flex items-center justify-center overflow-hidden bg-slate-50 dark:bg-ink-700" },
+                        (avatarPreview || (group && group.photoURL)) ? React.createElement("img", { src: avatarPreview || group.photoURL, className: "w-full h-full object-cover" }) : React.createElement("i", { className: "fa-solid fa-people-group text-slate-400" })),
+                    React.createElement("input", { ref: avatarRef, type: "file", accept: "image/*", hidden: true, onChange: e => { const f = e.target.files[0]; if (f) { setAvatarFile(f); setAvatarPreview(URL.createObjectURL(f)); } } }))),
+            React.createElement(PageFormField, { label: "Group name" },
+                React.createElement("input", { value: name, onChange: e => setName(e.target.value), required: true, className: inputCls, placeholder: "e.g. Lagos Runners Club" })),
+            React.createElement(PageFormField, { label: "Category" },
+                React.createElement("select", { value: category, onChange: e => setCategory(e.target.value), className: inputCls }, GROUP_CATEGORIES.map(c => React.createElement("option", { key: c, value: c }, c)))),
+            React.createElement(PageFormField, { label: "Description" },
+                React.createElement("textarea", { value: description, onChange: e => setDescription(e.target.value), rows: 3, className: inputCls, placeholder: "What is this group about?" })),
+            React.createElement(PageFormField, { label: "Privacy" },
+                React.createElement("div", { className: "flex gap-2 mt-1" },
+                    [['public', 'fa-earth-africa', 'Public — anyone can find it, see posts, and join instantly'], ['private', 'fa-lock', 'Private — people must request to join to see posts']].map(([val, icon, desc]) => React.createElement("button", { key: val, type: "button", onClick: () => setPrivacy(val), className: "flex-1 text-left p-3 rounded-lg border " + (privacy === val ? "border-brand-600 bg-brand-50 dark:bg-brand-900/20" : "border-slate-200 dark:border-ink-600") },
+                        React.createElement("p", { className: "text-sm font-semibold flex items-center gap-1.5" }, React.createElement("i", { className: "fa-solid " + icon }), val === 'public' ? 'Public' : 'Private'),
+                        React.createElement("p", { className: "text-[11px] text-slate-400 mt-0.5" }, desc))))),
+            React.createElement(PageFormField, { label: "Rules (one per line, optional)" },
+                React.createElement("textarea", { value: rulesText, onChange: e => setRulesText(e.target.value), rows: 4, className: inputCls, placeholder: "Be respectful\nNo spam or self-promotion\nStay on topic" })),
+            React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-4" },
+                React.createElement(PageFormField, { label: "Website (optional)" },
+                    React.createElement("input", { value: website, onChange: e => setWebsite(e.target.value), className: inputCls, placeholder: "www.example.com" })),
+                React.createElement(PageFormField, { label: "Location (optional)" },
+                    React.createElement("button", { type: "button", onClick: () => setCountryPickerOpen(true), className: inputCls + " flex items-center justify-between text-left" },
+                        React.createElement("span", { className: location ? "" : "text-slate-400" }, location || 'Select country'),
+                        React.createElement("i", { className: "fa-solid fa-chevron-down text-[10px] text-slate-400" })))),
+            React.createElement("button", { disabled: busy, type: "submit", className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl py-3 sm:py-2.5 font-semibold text-sm" }, busy ? 'Saving…' : (isEdit ? 'Save changes' : 'Create Group')),
+            isEdit && React.createElement("button", { type: "button", onClick: async () => { if (confirm('Delete this group permanently? This cannot be undone.')) { await deleteGroupPermanently(group); toast('Group deleted', 'success'); go({ name: 'groups' }); } }, className: "w-full text-red-500 text-sm font-semibold py-2" }, "Delete group")),
+        countryPickerOpen && React.createElement(CountryPickerSheet, { title: "Select a country", onClose: () => setCountryPickerOpen(false), onSelect: (c) => { setLocation(c.name); setCountryPickerOpen(false); } }));
+}
+/* ---- About tab ---- */
+function GroupAboutTab({ group }) {
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-4 space-y-4" },
+        group.description && React.createElement("div", null,
+            React.createElement("h3", { className: "font-display text-base font-bold mb-1.5" }, "Description"),
+            React.createElement("p", { className: "text-sm whitespace-pre-wrap" }, group.description)),
+        React.createElement("div", { className: "space-y-2.5" },
+            React.createElement(PageAboutRow, { icon: "fa-tag" }, group.category),
+            React.createElement(PageAboutRow, { icon: "fa-earth-africa" }, group.privacy === 'private' ? 'Private group' : 'Public group'),
+            group.location && React.createElement(PageAboutRow, { icon: "fa-location-dot" }, group.location),
+            group.website && React.createElement(PageAboutRow, { icon: "fa-globe" }, React.createElement("a", { href: normalizeWebsiteUrl(group.website), target: "_blank", rel: "noopener noreferrer", className: "text-brand-600 dark:text-brand-400 font-semibold hover:underline" }, group.website)),
+            React.createElement(PageAboutRow, { icon: "fa-users" }, (group.membersCount || 0) + ' members'),
+            React.createElement(PageAboutRow, { icon: "fa-calendar" }, "Created " + timeAgo(group.createdAt))),
+        group.rules && group.rules.length > 0 && React.createElement("div", null,
+            React.createElement("h3", { className: "font-display text-base font-bold mb-1.5" }, "Group rules"),
+            React.createElement("ol", { className: "space-y-1.5" }, group.rules.map((r, i) => React.createElement("li", { key: i, className: "text-sm flex gap-2" }, React.createElement("span", { className: "font-bold text-slate-400 shrink-0" }, (i + 1) + '.'), r)))));
+}
+/* ---- Members + pending requests tab ---- */
+function GroupMemberRow({ group, m, myRole, go }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const [u, setU] = useState(undefined);
+    const [menuOpen, setMenuOpen] = useState(false);
+    useEffect(() => {
+        const unsub = db.collection('users').doc(m.uid).onSnapshot(s => setU(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setU(null));
+        return unsub;
+    }, [m.uid]);
+    if (!u) return null;
+    const isSelf = m.uid === profile.id;
+    const canManage = myRole === 'admin' && !isSelf && m.role !== 'admin';
+    const canModerate = (myRole === 'admin' || myRole === 'moderator') && !isSelf && m.role !== 'admin';
+    const act = async (fn) => { setMenuOpen(false); try { await fn(); } catch (e) { toast(e.message, 'error'); } };
+    return React.createElement("div", { className: "flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-3" },
+        React.createElement("button", { onClick: () => go({ name: 'profile', uid: u.id }), className: "flex items-center gap-3 flex-1 min-w-0 text-left" },
+            React.createElement(Avatar, { user: u, size: 10 }),
+            React.createElement("div", { className: "min-w-0" },
+                React.createElement("p", { className: "font-semibold text-sm truncate" }, u.displayName, m.muted && React.createElement("i", { className: "fa-solid fa-volume-xmark text-slate-400 text-xs ml-1.5", title: "Muted" })),
+                React.createElement("p", { className: "text-xs text-slate-400" }, groupRoleLabel(m.role)))),
+        (canManage || canModerate) && React.createElement("div", { className: "relative shrink-0" },
+            React.createElement("button", { onClick: () => setMenuOpen(v => !v), className: "text-slate-400 w-8 h-8 flex items-center justify-center" }, React.createElement("i", { className: "fa-solid fa-ellipsis" })),
+            menuOpen && React.createElement("div", { className: "absolute right-0 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-600 z-10 w-52" },
+                canManage && m.role !== 'moderator' && React.createElement("button", { onClick: () => act(() => setGroupMemberRole(group, profile.id, m.uid, 'moderator')), className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Make moderator"),
+                canManage && m.role !== 'member' && React.createElement("button", { onClick: () => act(() => setGroupMemberRole(group, profile.id, m.uid, 'member')), className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Remove as moderator"),
+                canManage && React.createElement("button", { onClick: () => act(() => setGroupMemberRole(group, profile.id, m.uid, 'admin')), className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Make admin"),
+                canModerate && React.createElement("button", { onClick: () => act(() => setGroupMemberMuted(group.id, m.uid, !m.muted)), className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, m.muted ? 'Unmute' : 'Mute'),
+                canModerate && React.createElement("button", { onClick: () => { if (confirm('Remove ' + u.displayName + ' from this group?')) act(() => removeGroupMember(group.id, m.uid)); }, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Remove from group"))));
+}
+function GroupJoinRequestRow({ group, uid }) {
+    const toast = useToast();
+    const [u, setU] = useState(undefined);
+    const [busy, setBusy] = useState(false);
+    useEffect(() => {
+        const unsub = db.collection('users').doc(uid).onSnapshot(s => setU(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setU(null));
+        return unsub;
+    }, [uid]);
+    if (!u) return null;
+    const respond = async (approve) => {
+        setBusy(true);
+        try { await (approve ? approveJoinRequest(group, uid) : rejectJoinRequest(group, uid)); }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    return React.createElement("div", { className: "flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-3" },
+        React.createElement(Avatar, { user: u, size: 10 }),
+        React.createElement("p", { className: "font-semibold text-sm flex-1 truncate" }, u.displayName),
+        React.createElement("button", { disabled: busy, onClick: () => respond(true), className: "bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold px-3 py-1.5 rounded-full" }, "Approve"),
+        React.createElement("button", { disabled: busy, onClick: () => respond(false), className: "bg-slate-100 dark:bg-ink-700 text-xs font-semibold px-3 py-1.5 rounded-full" }, "Decline"));
+}
+function GroupMembersTab({ group, myRole, go }) {
+    const [members, setMembers] = useState(null);
+    const [requests, setRequests] = useState([]);
+    useEffect(() => {
+        const unsub = db.collection('groups').doc(group.id).collection('members').limit(500)
+            .onSnapshot(snap => setMembers(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setMembers([]));
+        return unsub;
+    }, [group.id]);
+    useEffect(() => {
+        if (myRole !== 'admin' && myRole !== 'moderator') { setRequests([]); return; }
+        const unsub = db.collection('groups').doc(group.id).collection('joinRequests').limit(200)
+            .onSnapshot(snap => setRequests(snap.docs.map(d => d.id)), () => setRequests([]));
+        return unsub;
+    }, [group.id, myRole]);
+    const sorted = (members || []).slice().sort((a, b) => {
+        const rank = { admin: 0, moderator: 1, member: 2 };
+        return (rank[a.role] ?? 2) - (rank[b.role] ?? 2);
+    });
+    return React.createElement("div", null,
+        requests.length > 0 && React.createElement("div", { className: "mb-5" },
+            React.createElement("p", { className: "text-xs font-bold uppercase tracking-wide text-slate-400 mb-2" }, "Pending requests (" + requests.length + ")"),
+            React.createElement("div", { className: "space-y-2" }, requests.map(uid => React.createElement(GroupJoinRequestRow, { key: uid, group: group, uid: uid })))),
+        React.createElement("p", { className: "text-xs font-bold uppercase tracking-wide text-slate-400 mb-2" }, (members || []).length + ' members'),
+        members === null && React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026"),
+        React.createElement("div", { className: "space-y-2" }, sorted.map(m => React.createElement(GroupMemberRow, { key: m.uid, group: group, m: m, myRole: myRole, go: go }))));
+}
+/* ---- Photos / Videos / Files tabs (derived from the group's already-loaded posts) ---- */
+function GroupPhotosTab({ posts, go }) {
+    const photos = [];
+    posts.forEach(p => { (p.images || []).forEach(url => photos.push(url)); if (p.gifURL) photos.push(p.gifURL); });
+    if (photos.length === 0) return React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "No photos yet.");
+    return React.createElement("div", { className: "grid grid-cols-3 gap-1" }, photos.map((url, i) => React.createElement("img", { key: i, src: url, loading: "lazy", onClick: () => openLightbox(photos, i), className: "w-full aspect-square object-cover cursor-zoom-in rounded" })));
+}
+function GroupVideosTab({ posts }) {
+    const videos = posts.filter(p => p.videoURL);
+    if (videos.length === 0) return React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "No videos yet.");
+    return React.createElement("div", { className: "grid grid-cols-2 gap-2" }, videos.map(p => React.createElement("video", { key: p.id, src: p.videoURL, controls: true, className: "w-full rounded-lg bg-black aspect-video" })));
+}
+function GroupFilesTab({ posts, go }) {
+    const files = posts.filter(p => p.documentURL);
+    if (files.length === 0) return React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "No files shared yet.");
+    return React.createElement("div", { className: "space-y-2" }, files.map(p => React.createElement("a", { key: p.id, href: p.documentURL, target: "_blank", rel: "noopener noreferrer", className: "flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-3" },
+        React.createElement("span", { className: "w-10 h-10 rounded-lg bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 flex items-center justify-center shrink-0" }, React.createElement("i", { className: "fa-solid fa-file-lines" })),
+        React.createElement("div", { className: "min-w-0 flex-1" },
+            React.createElement("p", { className: "text-sm font-semibold truncate" }, p.documentName || 'Document'),
+            React.createElement("p", { className: "text-xs text-slate-400" }, timeAgo(p.createdAt))),
+        React.createElement("i", { className: "fa-solid fa-arrow-down-to-line text-slate-400" }))));
+}
+/* ---- Events tab ---- */
+function GroupEventCard({ group, ev, canManage }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const [busy, setBusy] = useState(false);
+    const going = (ev.attendeeIds || []).includes(profile.id);
+    const when = ev.startAt ? new Date(ev.startAt) : null;
+    const rsvp = async () => {
+        setBusy(true);
+        try { await toggleEventRSVP(group.id, ev.id, profile.id, !going); }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-3" },
+        React.createElement("div", { className: "flex items-start justify-between gap-2" },
+            React.createElement("div", { className: "min-w-0" },
+                React.createElement("p", { className: "font-bold text-sm" }, ev.title),
+                when && React.createElement("p", { className: "text-xs text-slate-400 mt-0.5" }, React.createElement("i", { className: "fa-solid fa-clock mr-1" }), when.toLocaleString()),
+                ev.location && React.createElement("p", { className: "text-xs text-slate-400" }, React.createElement("i", { className: "fa-solid fa-location-dot mr-1" }), ev.location)),
+            canManage && React.createElement("button", { onClick: () => { if (confirm('Delete this event?')) deleteGroupEvent(group.id, ev.id); }, className: "text-slate-400 w-7 h-7 shrink-0" }, React.createElement("i", { className: "fa-solid fa-trash text-xs" }))),
+        ev.description && React.createElement("p", { className: "text-sm mt-2 whitespace-pre-wrap" }, ev.description),
+        React.createElement("div", { className: "flex items-center justify-between mt-3 pt-2 border-t border-slate-100 dark:border-ink-700" },
+            React.createElement("span", { className: "text-xs text-slate-400" }, (ev.attendeeIds || []).length + ' going'),
+            React.createElement("button", { disabled: busy, onClick: rsvp, className: "text-xs font-semibold px-3 py-1.5 rounded-full " + (going ? "bg-slate-100 dark:bg-ink-700" : "bg-brand-600 hover:bg-brand-700 text-white") }, going ? 'Going ✓' : 'RSVP')));
+}
+function GroupEventsTab({ group, myRole }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const [events, setEvents] = useState(null);
+    const [formOpen, setFormOpen] = useState(false);
+    const [title, setTitle] = useState(''); const [desc, setDesc] = useState(''); const [when, setWhen] = useState(''); const [loc, setLoc] = useState('');
+    const [busy, setBusy] = useState(false);
+    const canManage = myRole === 'admin' || myRole === 'moderator';
+    useEffect(() => {
+        const unsub = db.collection('groups').doc(group.id).collection('events').limit(100)
+            .onSnapshot(snap => setEvents(snap.docs.map(d => (Object.assign({ id: d.id }, d.data()))).sort((a, b) => new Date(a.startAt || 0) - new Date(b.startAt || 0))), () => setEvents([]));
+        return unsub;
+    }, [group.id]);
+    const submit = async (e) => {
+        e.preventDefault();
+        if (!title.trim() || !when) return;
+        setBusy(true);
+        try {
+            await createGroupEvent(group.id, profile.id, { title, description: desc, startAt: new Date(when).toISOString(), location: loc });
+            setTitle(''); setDesc(''); setWhen(''); setLoc(''); setFormOpen(false);
+            toast('Event created', 'success');
+        }
+        catch (err) { toast(err.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    return React.createElement("div", null,
+        canManage && React.createElement("div", { className: "mb-4" },
+            !formOpen ? React.createElement("button", { onClick: () => setFormOpen(true), className: "w-full bg-brand-600 hover:bg-brand-700 text-white text-sm font-semibold py-2.5 rounded-xl" }, React.createElement("i", { className: "fa-solid fa-calendar-plus mr-2" }), "Create Event") :
+                React.createElement("form", { onSubmit: submit, className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-3 space-y-2" },
+                    React.createElement("input", { value: title, onChange: e => setTitle(e.target.value), required: true, placeholder: "Event title", className: "w-full bg-slate-50 dark:bg-ink-700 rounded-lg px-3 py-2 text-sm focus:outline-none" }),
+                    React.createElement("input", { type: "datetime-local", value: when, onChange: e => setWhen(e.target.value), required: true, className: "w-full bg-slate-50 dark:bg-ink-700 rounded-lg px-3 py-2 text-sm focus:outline-none" }),
+                    React.createElement("input", { value: loc, onChange: e => setLoc(e.target.value), placeholder: "Location (optional)", className: "w-full bg-slate-50 dark:bg-ink-700 rounded-lg px-3 py-2 text-sm focus:outline-none" }),
+                    React.createElement("textarea", { value: desc, onChange: e => setDesc(e.target.value), placeholder: "Details (optional)", rows: 2, className: "w-full bg-slate-50 dark:bg-ink-700 rounded-lg px-3 py-2 text-sm focus:outline-none" }),
+                    React.createElement("div", { className: "flex gap-2" },
+                        React.createElement("button", { disabled: busy, type: "submit", className: "flex-1 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white text-sm font-semibold py-2 rounded-lg" }, busy ? 'Creating…' : 'Create'),
+                        React.createElement("button", { type: "button", onClick: () => setFormOpen(false), className: "px-4 text-sm font-semibold text-slate-400" }, "Cancel")))),
+        events === null && React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026"),
+        events && events.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "No upcoming events."),
+        React.createElement("div", { className: "space-y-2" }, (events || []).map(ev => React.createElement(GroupEventCard, { key: ev.id, group: group, ev: ev, canManage: canManage }))));
+}
+/* ---- Invite friends to the group ---- */
+function GroupInviteSheet({ group, onClose }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const [friends, setFriends] = useState(null);
+    const [fq, setFq] = useState('');
+    const [invited, setInvited] = useState({});
+    useEffect(() => {
+        (async () => {
+            const snap = await db.collection('friendships').where('users', 'array-contains', profile.id).where('status', '==', 'accepted').get().catch(() => null);
+            if (!snap) { setFriends([]); return; }
+            const otherIds = snap.docs.map(d => otherUidOfFriendship(d.data(), profile.id));
+            const users = await Promise.all(otherIds.map(uid => db.collection('users').doc(uid).get()));
+            setFriends(users.filter(u => u.exists).map(u => Object.assign({ id: u.id }, u.data())));
+        })();
+    }, [profile.id]);
+    const invite = async (u) => {
+        try {
+            await inviteToGroup(group, profile.id, u.id);
+            setInvited(m => Object.assign({}, m, { [u.id]: true }));
+        }
+        catch (e) { toast(e.message, 'error'); }
+    };
+    return React.createElement(BottomSheet, { title: "Invite friends", onClose: onClose },
+        React.createElement("input", { autoFocus: true, value: fq, onChange: e => setFq(e.target.value), placeholder: "Search friends\u2026", className: "w-full px-3 py-2 rounded-full bg-slate-50 dark:bg-ink-700 text-sm mb-2 mx-1 focus:outline-none" }),
+        friends === null && React.createElement("p", { className: "text-center text-sm text-slate-400 py-6" }, "Loading\u2026"),
+        friends && friends.length === 0 && React.createElement("p", { className: "text-center text-sm text-slate-400 py-6" }, "No friends yet"),
+        friends && friends.filter(u => !fq.trim() || (u.displayName || u.username || '').toLowerCase().includes(fq.toLowerCase())).map(u => React.createElement("div", { key: u.id, className: "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-ink-700" },
+            React.createElement(Avatar, { user: u, size: 9 }),
+            React.createElement("span", { className: "text-sm font-semibold flex-1 truncate" }, u.displayName || u.username),
+            React.createElement("button", { disabled: !!invited[u.id], onClick: () => invite(u), className: "text-xs font-semibold px-3 py-1.5 rounded-full " + (invited[u.id] ? "bg-slate-100 dark:bg-ink-700 text-slate-400" : "bg-brand-600 hover:bg-brand-700 text-white") }, invited[u.id] ? 'Invited' : 'Invite'))));
+}
+/* ---- Share a group (copy link / send to a friend) ---- */
+function GroupShareSheet({ group, onClose }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const [step, setStep] = useState('menu');
+    const [friends, setFriends] = useState(null);
+    const [fq, setFq] = useState('');
+    const [busy, setBusy] = useState(false);
+    const link = window.location.href.split('#')[0] + '#group-' + group.id;
+    useEffect(() => {
+        if (step !== 'message') return;
+        (async () => {
+            const snap = await db.collection('friendships').where('users', 'array-contains', profile.id).where('status', '==', 'accepted').get().catch(() => null);
+            if (!snap) { setFriends([]); return; }
+            const otherIds = snap.docs.map(d => otherUidOfFriendship(d.data(), profile.id));
+            const users = await Promise.all(otherIds.map(uid => db.collection('users').doc(uid).get()));
+            setFriends(users.filter(u => u.exists).map(u => Object.assign({ id: u.id }, u.data())));
+        })();
+    }, [step]);
+    const copyLink = () => { var _a; (_a = navigator.clipboard) === null || _a === void 0 ? void 0 : _a.writeText(link); toast('Link copied to clipboard', 'success'); onClose(); };
+    const sendToFriend = async (u) => {
+        setBusy(true);
+        try {
+            const chatId = chatIdFor(profile.id, u.id);
+            await sendChatMessage(profile.id, chatId, u.id, { type: 'text', text: `Check out this group: ${group.name} — ${link}` });
+            toast('Sent to ' + (u.displayName || u.username), 'success');
+            onClose();
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    if (step === 'message') {
+        return React.createElement(BottomSheet, { title: "Send as a message", onClose: onClose },
+            React.createElement("input", { autoFocus: true, value: fq, onChange: e => setFq(e.target.value), placeholder: "Search friends\u2026", className: "w-full px-3 py-2 rounded-full bg-slate-50 dark:bg-ink-700 text-sm mb-2 mx-1 focus:outline-none" }),
+            friends === null && React.createElement("p", { className: "text-center text-sm text-slate-400 py-6" }, "Loading\u2026"),
+            friends && friends.length === 0 && React.createElement("p", { className: "text-center text-sm text-slate-400 py-6" }, "No friends yet"),
+            friends && friends.filter(u => !fq.trim() || (u.displayName || u.username || '').toLowerCase().includes(fq.toLowerCase())).map(u => React.createElement("button", { key: u.id, disabled: busy, onClick: () => sendToFriend(u), className: "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-ink-700 text-left" },
+                React.createElement(Avatar, { user: u, size: 9 }), React.createElement("span", { className: "text-sm font-semibold flex-1 truncate" }, u.displayName || u.username))));
+    }
+    const rows = [
+        { icon: 'fa-brands fa-facebook-messenger', label: 'Send as a message', onClick: () => setStep('message') },
+        { icon: 'fa-regular fa-copy', label: 'Copy link', onClick: copyLink },
+    ];
+    return React.createElement(BottomSheet, { title: "Share group", onClose: onClose }, rows.map((r, i) => React.createElement("button", { key: i, onClick: r.onClick, className: "w-full flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-slate-50 dark:hover:bg-ink-700 text-left" },
+        React.createElement("span", { className: "w-9 h-9 rounded-full bg-slate-100 dark:bg-ink-700 flex items-center justify-center shrink-0 text-slate-600 dark:text-slate-300" }, React.createElement("i", { className: r.icon })),
+        React.createElement("span", { className: "text-sm font-medium" }, r.label))));
+}
+function GroupScreen({ id, go }) {
+    const { profile: me } = useAuth();
+    const toast = useToast();
+    const [group, setGroup] = useState(undefined);
+    const [groupPosts, setGroupPosts] = useState([]);
+    const [tab, setTab] = useState('posts');
+    const [menuOpen, setMenuOpen] = useState(false);
+    const [inviteOpen, setInviteOpen] = useState(false);
+    const [shareOpen, setShareOpen] = useState(false);
+    const [reportOpen, setReportOpen] = useState(false);
+    const [busy, setBusy] = useState(false);
+    const coverRef = useRef(); const avatarRef = useRef();
+    const member = useGroupMembership(id, me.id);
+    const requestPending = useGroupJoinRequestStatus(id, me.id);
+    const invite = useGroupInvite(id, me.id);
+    useEffect(() => {
+        const unsub = db.collection('groups').doc(id).onSnapshot(s => setGroup(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setGroup(null));
+        return unsub;
+    }, [id]);
+    useEffect(() => {
+        const unsub = db.collection('posts').where('groupId', '==', id).limit(200).onSnapshot(snap => {
+            const list = snap.docs.map(d => (Object.assign({ id: d.id }, d.data()))).filter(p => !p.hiddenByAdmin);
+            list.sort((a, b) => {
+                const pin = (b.groupPinned ? 1 : 0) - (a.groupPinned ? 1 : 0);
+                if (pin !== 0) return pin;
+                return millisOf(b.createdAt) - millisOf(a.createdAt);
+            });
+            setGroupPosts(list);
+        }, () => setGroupPosts([]));
+        return unsub;
+    }, [id]);
+    if (group === undefined) return React.createElement(PostSkeleton, null);
+    if (group === null) return React.createElement("p", { className: "text-sm text-slate-400" }, "This group doesn't exist.");
+    const isCreator = group.creatorId === me.id;
+    const isMember = !!member;
+    const myRole = member ? member.role : null;
+    const canModerate = myRole === 'admin' || myRole === 'moderator';
+    const canSeeContent = group.privacy !== 'private' || isMember;
+    const quickUpload = async (file, kind) => {
+        if (!file) return;
+        try { await uploadGroupImage(id, file, kind); toast('Photo updated', 'success'); }
+        catch (e) { toast(e.message, 'error'); }
+    };
+    const doJoin = async () => {
+        setBusy(true);
+        try {
+            const result = await requestToJoinGroup(group, me.id);
+            toast(result === 'joined' ? 'You joined the group' : 'Request sent — an admin will review it', 'success');
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    const doLeave = async () => {
+        if (isCreator) { toast('As the creator, you need to delete the group or transfer it instead of leaving.', 'error'); return; }
+        if (!confirm('Leave this group?')) return;
+        setBusy(true);
+        try { await leaveGroup(id, me.id); toast('You left the group', 'success'); }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    const acceptInvite = async () => { setBusy(true); try { await acceptGroupInvite(id, me.id); toast('You joined the group', 'success'); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); } };
+    const declineInvite = async () => { setBusy(true); try { await declineGroupInvite(id, me.id); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); } };
+    const TABS = [['posts', 'Posts'], ['about', 'About'], ['members', 'Members'], ['photos', 'Photos'], ['videos', 'Videos'], ['files', 'Files'], ['events', 'Events'], ['announcements', 'Announcements']];
+    const announcements = groupPosts.filter(p => p.groupAnnouncement);
+    return React.createElement("div", null,
+        React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 overflow-hidden mb-4" },
+            React.createElement("div", { className: "h-36 sm:h-44 md:h-56 bg-gradient-to-r from-brand-500 to-brand-700 relative" },
+                group.coverURL && React.createElement("img", { src: group.coverURL, onClick: () => openLightbox([group.coverURL], 0), className: "w-full h-full object-cover cursor-zoom-in" }),
+                isCreator && React.createElement("button", { onClick: () => coverRef.current.click(), className: "absolute bottom-3 right-3 bg-black/50 text-white text-xs font-semibold px-2.5 sm:px-3 py-1.5 rounded-full" }, React.createElement("i", { className: "fa-solid fa-camera mr-1.5" }), React.createElement("span", { className: "hidden sm:inline" }, "Edit cover")),
+                React.createElement("input", { ref: coverRef, type: "file", accept: "image/*", hidden: true, onChange: e => quickUpload(e.target.files[0], 'covers') })),
+            React.createElement("div", { className: "px-3 sm:px-4 pb-4" },
+                React.createElement("div", { className: "-mt-10 mb-2 relative inline-block" },
+                    React.createElement(Avatar, { user: group, size: 24, onClick: () => group.photoURL && openLightbox([group.photoURL], 0) }),
+                    React.createElement("div", { className: "absolute inset-0 rounded-full ring-4 ring-white dark:ring-ink-800 pointer-events-none" }),
+                    isCreator && React.createElement("button", { onClick: () => avatarRef.current.click(), className: "absolute bottom-0 right-0 bg-brand-600 text-white w-7 h-7 rounded-full flex items-center justify-center text-xs" }, React.createElement("i", { className: "fa-solid fa-camera" })),
+                    React.createElement("input", { ref: avatarRef, type: "file", accept: "image/*", hidden: true, onChange: e => quickUpload(e.target.files[0], 'avatars') })),
+                React.createElement("p", { className: "font-display text-lg sm:text-xl font-bold flex items-center gap-2 flex-wrap" }, group.name, React.createElement(GroupPrivacyBadge, { privacy: group.privacy })),
+                React.createElement("p", { className: "text-sm text-slate-400 mb-3" }, (group.membersCount || 0) + ' members \u00B7 ' + group.category),
+                invite && !isMember && React.createElement("div", { className: "bg-brand-50 dark:bg-brand-900/20 rounded-xl p-3 mb-3 flex items-center justify-between gap-2" },
+                    React.createElement("span", { className: "text-sm font-semibold" }, "You're invited to this group"),
+                    React.createElement("div", { className: "flex gap-2 shrink-0" },
+                        React.createElement("button", { disabled: busy, onClick: acceptInvite, className: "bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold px-3 py-1.5 rounded-full" }, "Accept"),
+                        React.createElement("button", { disabled: busy, onClick: declineInvite, className: "bg-white dark:bg-ink-700 text-xs font-semibold px-3 py-1.5 rounded-full" }, "Decline"))),
+                React.createElement("div", { className: "flex flex-wrap items-center gap-2" },
+                    isMember ? React.createElement(React.Fragment, null,
+                        React.createElement("button", { onClick: doLeave, disabled: busy, className: "flex-1 min-w-[120px] bg-slate-100 dark:bg-ink-700 rounded-xl py-2.5 text-sm font-semibold" }, React.createElement("i", { className: "fa-solid fa-check mr-2 text-xs" }), isCreator ? 'You created this' : 'Joined'),
+                        React.createElement("button", { onClick: () => setInviteOpen(true), className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center shrink-0", title: "Invite" }, React.createElement("i", { className: "fa-solid fa-user-plus" })),
+                        React.createElement("button", { onClick: () => setShareOpen(true), className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center shrink-0", title: "Share" }, React.createElement("i", { className: "fa-solid fa-share" })),
+                        isCreator && React.createElement("button", { onClick: () => go({ name: 'groupForm', id }), className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center shrink-0", title: "Settings" }, React.createElement("i", { className: "fa-solid fa-gear" })),
+                        !isCreator && React.createElement("div", { className: "relative shrink-0" },
+                            React.createElement("button", { onClick: () => setMenuOpen(v => !v), className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center", title: "More" }, React.createElement("i", { className: "fa-solid fa-ellipsis" })),
+                            menuOpen && React.createElement("div", { className: "absolute right-0 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-600 z-10 w-48" },
+                                React.createElement("button", { onClick: () => { setMenuOpen(false); setReportOpen(true); }, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Report group")))) :
+                        React.createElement(React.Fragment, null,
+                            requestPending ? React.createElement("button", { onClick: () => cancelJoinRequest(id, me.id), disabled: busy, className: "flex-1 min-w-[140px] bg-slate-100 dark:bg-ink-700 rounded-xl py-2.5 text-sm font-semibold" }, "Requested \u00B7 Cancel") :
+                                React.createElement("button", { onClick: doJoin, disabled: busy, className: "flex-1 min-w-[140px] bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl py-2.5 text-sm font-semibold" }, group.privacy === 'private' ? 'Request to Join' : 'Join Group'),
+                            React.createElement("button", { onClick: () => setShareOpen(true), className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center shrink-0", title: "Share" }, React.createElement("i", { className: "fa-solid fa-share" })),
+                            React.createElement("button", { onClick: () => setReportOpen(true), className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center shrink-0", title: "Report" }, React.createElement("i", { className: "fa-solid fa-flag" })))))),
+        React.createElement("div", { className: "flex bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 mb-4 overflow-x-auto" }, TABS.map(([k, l]) => React.createElement("button", { key: k, onClick: () => setTab(k), className: "px-4 py-3 text-sm font-semibold border-b-2 whitespace-nowrap shrink-0 " + (tab === k ? "border-brand-600 text-brand-600" : "border-transparent text-slate-400") }, l))),
+        !canSeeContent ? React.createElement("div", { className: "text-center py-16 text-slate-400" },
+            React.createElement("i", { className: "fa-solid fa-lock text-4xl mb-3" }),
+            React.createElement("p", null, "This is a private group."),
+            React.createElement("p", { className: "text-sm" }, "Join to see posts, photos, and files.")) :
+            React.createElement(React.Fragment, null,
+                tab === 'posts' && React.createElement(React.Fragment, null,
+                    isMember && React.createElement(GroupPostComposer, { group: group, myRole: myRole, onPosted: () => { } }),
+                    groupPosts.length === 0 && React.createElement("div", { className: "text-center py-16 text-slate-400" }, React.createElement("i", { className: "fa-regular fa-note-sticky text-4xl mb-3" }), React.createElement("p", null, "No posts yet. Be the first to post!")),
+                    groupPosts.map(p => React.createElement(PostCard, { key: p.id, post: p, go: go, groupCtx: { myRole: myRole } }))),
+                tab === 'about' && React.createElement(GroupAboutTab, { group: group }),
+                tab === 'members' && React.createElement(GroupMembersTab, { group: group, myRole: myRole, go: go }),
+                tab === 'photos' && React.createElement(GroupPhotosTab, { posts: groupPosts, go: go }),
+                tab === 'videos' && React.createElement(GroupVideosTab, { posts: groupPosts }),
+                tab === 'files' && React.createElement(GroupFilesTab, { posts: groupPosts, go: go }),
+                tab === 'events' && React.createElement(GroupEventsTab, { group: group, myRole: myRole }),
+                tab === 'announcements' && React.createElement(React.Fragment, null,
+                    announcements.length === 0 && React.createElement("div", { className: "text-center py-16 text-slate-400" }, React.createElement("i", { className: "fa-solid fa-bullhorn text-4xl mb-3" }), React.createElement("p", null, "No announcements yet.")),
+                    announcements.map(p => React.createElement(PostCard, { key: p.id, post: p, go: go, groupCtx: { myRole: myRole } })))),
+        inviteOpen && React.createElement(GroupInviteSheet, { group: group, onClose: () => setInviteOpen(false) }),
+        shareOpen && React.createElement(GroupShareSheet, { group: group, onClose: () => setShareOpen(false) }),
+        reportOpen && React.createElement(ReportReasonSheet, { targetType: "group", targetId: group.id, targetOwnerId: group.creatorId, onClose: () => setReportOpen(false) }));
+}
+
 /* ============================== RENDER ============================== */
 ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App, null));
 document.getElementById('root').dataset.mounted = 'true';
@@ -6029,6 +7109,86 @@ below (adjust to match whatever rules you already have for posts/users/pages).
       allow read: if true;
       allow write: if request.auth != null && request.resource.contentType.matches('image/.*')
                    && request.resource.size < 10 * 1024 * 1024;
+    }
+================================================================================
+ GROUPS FEATURE — RECOMMENDED FIRESTORE & STORAGE SECURITY RULES
+================================================================================
+Group *posts* live in the existing top-level `posts` collection (just with a
+groupId set), so they're covered by whatever rules you already have there —
+just make sure that rule lets `update` bump `groupPinned` for a group's
+admins/moderators, not only the post's own author, e.g.:
+
+    match /posts/{postId} {
+      allow update: if signedIn() && (
+        resource.data.authorId == request.auth.uid || isAdmin() ||
+        (resource.data.groupId != null &&
+         get(/databases/$(db)/documents/groups/$(resource.data.groupId)/members/$(request.auth.uid)).data.role in ['admin', 'moderator'])
+      );
+    }
+
+--- Firestore rules ---
+
+    function isGroupMember(groupId) {
+      return exists(/databases/$(db)/documents/groups/$(groupId)/members/$(request.auth.uid));
+    }
+    function groupRole(groupId) {
+      return get(/databases/$(db)/documents/groups/$(groupId)/members/$(request.auth.uid)).data.role;
+    }
+    function isGroupStaff(groupId) {
+      return signedIn() && isGroupMember(groupId) && groupRole(groupId) in ['admin', 'moderator'];
+    }
+
+    match /groups/{groupId} {
+      // A private group's *document* (name/cover/member count) stays discoverable so search
+      // and "request to join" work; it's the group's *posts*, above, that actually gate on
+      // membership for private groups (enforced client-side via post.groupPrivacy today —
+      // for stronger guarantees, duplicate that privacy check into the posts rule as well).
+      allow read: if true;
+      allow create: if signedIn() && request.resource.data.creatorId == request.auth.uid;
+      allow update: if signedIn() && (resource.data.creatorId == request.auth.uid || isAdmin() ||
+                     isGroupStaff(groupId)); // staff can only touch counters in practice — tighten
+                                              // further with field-level checks if desired.
+      allow delete: if signedIn() && (resource.data.creatorId == request.auth.uid || isAdmin());
+
+      match /members/{uid} {
+        allow read: if true;
+        allow create: if isOwner(uid) || isGroupStaff(groupId); // self-join, or staff approving/adding
+        allow update: if isGroupStaff(groupId) || isOwner(uid);  // role/mute changes, or leaving via delete
+        allow delete: if isOwner(uid) || isGroupStaff(groupId);
+      }
+      match /joinRequests/{uid} {
+        allow read: if isOwner(uid) || isGroupStaff(groupId);
+        allow create: if isOwner(uid);
+        allow delete: if isOwner(uid) || isGroupStaff(groupId);
+      }
+      match /invites/{uid} {
+        allow read: if isOwner(uid) || isGroupStaff(groupId);
+        allow create: if isGroupStaff(groupId);
+        allow delete: if isOwner(uid) || isGroupStaff(groupId);
+      }
+      match /events/{eventId} {
+        allow read: if true;
+        allow create: if isGroupStaff(groupId);
+        allow update: if isGroupStaff(groupId) ||
+                       (signedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['attendeeIds'])); // RSVP
+        allow delete: if isGroupStaff(groupId);
+      }
+    }
+
+--- Storage rules ---
+
+    match /groupAssets/{groupId}/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null && request.resource.contentType.matches('image/.*')
+                   && request.resource.size < 10 * 1024 * 1024;
+    }
+    match /groupPosts/{groupId}/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null && request.resource.size < 250 * 1024 * 1024;
+    }
+    match /groupFiles/{groupId}/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null && request.resource.size < 25 * 1024 * 1024;
     }
 ================================================================================
 -->
