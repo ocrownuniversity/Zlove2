@@ -2719,7 +2719,9 @@ function FriendActionButton({ meId, otherId, compact }) {
 }
 /* ============================== POST TRIGGER BAR (Facebook-style "What's on your mind?") ============================== */
 function PostTriggerBar({ go }) {
+    const { profile } = useAuth();
     return (React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-3 mb-4 flex items-center gap-3" },
+        React.createElement(Avatar, { user: profile, size: 10 }),
         React.createElement("button", { onClick: () => go({ name: 'createPost' }), className: "flex-1 text-left bg-slate-100 dark:bg-ink-700 hover:bg-slate-200 dark:hover:bg-ink-600 transition rounded-full px-4 py-2.5 text-slate-500 dark:text-slate-400 text-sm" }, "What's on your mind?"),
         React.createElement("button", { onClick: () => go({ name: 'createPost', openPhotoPicker: true }), title: "Photo/Video", className: "shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-emerald-500 hover:bg-slate-100 dark:hover:bg-ink-700 transition" },
             React.createElement("i", { className: "fa-solid fa-image text-lg" }))));
