@@ -801,6 +801,18 @@ function useFollowersCount(pageId) {
     }, [pageId]);
     return count;
 }
+// Live KYC application doc for one Page (pageKyc/{pageId}). Returns undefined while loading,
+// null when the Page has never applied, otherwise the application data + status. Used by both
+// the owner's Monetization screen and (indirectly, via a fresh onSnapshot) the admin panel.
+function usePageKyc(pageId) {
+    const [kyc, setKyc] = useState(undefined);
+    useEffect(() => {
+        if (!pageId) { setKyc(null); return; }
+        const unsub = db.collection('pageKyc').doc(pageId).onSnapshot(s => setKyc(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setKyc(null));
+        return unsub;
+    }, [pageId]);
+    return kyc;
+}
 // Live follow status for the signed-in user against one Page. Reads a single doc
 // (uid_pageId) rather than the whole pageFollows-for-this-page query, so every button on
 // the site (page profile, timeline posts, Page cards) stays in sync the instant a follow
@@ -1260,6 +1272,60 @@ async function deleteFanPagePermanently(page) {
 }
 async function adminVerifyPage(p) { await db.collection('fanPages').doc(p.id).update({ verified: !p.verified }); }
 async function adminSuspendPage(p) { await db.collection('fanPages').doc(p.id).update({ suspended: !p.suspended }); }
+/* ============================== PAGE MONETIZATION & KYC ==============================
+ * Collections used (see the Monetization security rules documented at the end of this
+ * file for the recommended production rules):
+ *  - fanPages/{pageId}   gains: kycStatus ('none'|'pending'|'approved'|'rejected'),
+ *                                monetizationEnabled (bool, only settable once eligible)
+ *  - pageKyc/{pageId}    one KYC application per Page (re-submitting overwrites it and
+ *                        resets status back to 'pending' so admins always review the
+ *                        latest submission — never more than one live application per Page).
+ */
+const MONETIZATION_FOLLOWERS_REQUIRED = 1000;
+// Single source of truth for "is this Page eligible to monetize" — used by both the owner's
+// Monetization screen (to show/gate the enable toggle) and mirrored into security rules.
+// Followers are read live (see useFollowersCount) rather than from a denormalized counter,
+// since this app deliberately avoids drift-prone follower counters elsewhere too.
+function computePageEligibility(kycStatus, followersCount) {
+    const kycApproved = kycStatus === 'approved';
+    const followersMet = (followersCount || 0) >= MONETIZATION_FOLLOWERS_REQUIRED;
+    return { eligible: kycApproved && followersMet, kycApproved, followersMet };
+}
+async function uploadPageKycImage(pageId, file, kind) {
+    const compressed = await compressImage(file, kind === 'selfie' ? 900 : 1400, 0.85);
+    const ref = storage.ref(`pageKyc/${pageId}/${kind}.jpg`);
+    await ref.put(compressed, { contentType: 'image/jpeg' });
+    return ref.getDownloadURL();
+}
+// Creates or re-submits a Page's KYC application. Re-submission (after a rejection) simply
+// overwrites the single pageKyc/{pageId} doc and flips status back to 'pending' — Firestore's
+// one-doc-per-page id naturally prevents duplicate/parallel applications for the same Page.
+async function submitPageKyc(page, profileId, fields, files) {
+    const [govIdURL, selfieURL] = await Promise.all([
+        uploadPageKycImage(page.id, files.govId, 'govId'),
+        uploadPageKycImage(page.id, files.selfie, 'selfie'),
+    ]);
+    await db.collection('pageKyc').doc(page.id).set({
+        pageId: page.id, ownerId: profileId, pageDisplayName: page.displayName, pageUsername: page.username || '',
+        fullName: fields.fullName.trim(), dob: fields.dob, phone: fields.phone.trim(), address: fields.address.trim(),
+        govIdURL, selfieURL, status: 'pending', rejectionReason: FieldValue.delete(),
+        submittedAt: FieldValue.serverTimestamp(), reviewedAt: null, reviewedBy: null,
+    }, { merge: true });
+    await db.collection('fanPages').doc(page.id).update({ kycStatus: 'pending' });
+}
+async function adminApproveKyc(k, adminUid) {
+    await db.collection('pageKyc').doc(k.pageId).update({ status: 'approved', reviewedAt: FieldValue.serverTimestamp(), reviewedBy: adminUid, rejectionReason: FieldValue.delete() });
+    await db.collection('fanPages').doc(k.pageId).update({ kycStatus: 'approved' });
+}
+async function adminRejectKyc(k, adminUid, reason) {
+    await db.collection('pageKyc').doc(k.pageId).update({ status: 'rejected', reviewedAt: FieldValue.serverTimestamp(), reviewedBy: adminUid, rejectionReason: reason || '' });
+    await db.collection('fanPages').doc(k.pageId).update({ kycStatus: 'rejected', monetizationEnabled: false });
+}
+// Owner-facing toggle — only meaningful once computePageEligibility(...).eligible is true;
+// the Monetization screen never renders this control otherwise.
+async function setPageMonetizationEnabled(pageId, enabled) {
+    await db.collection('fanPages').doc(pageId).update({ monetizationEnabled: enabled });
+}
 async function requestListingPromotion(listingId) {
     await db.collection('listings').doc(listingId).update({ promotionStatus: 'pending' });
 }
@@ -2470,6 +2536,8 @@ function MainApp({ route, setRoute }) {
                 route.name === 'pageForm' && React.createElement(PageFormScreen, { id: route.id, go: go }),
                 route.name === 'page' && React.createElement(PageProfileScreen, { id: route.id, go: go }),
                 route.name === 'pageAnalytics' && React.createElement(PageAnalyticsScreen, { id: route.id, go: go }),
+                route.name === 'monetization' && React.createElement(MonetizationScreen, { id: route.id, go: go }),
+                route.name === 'kycForm' && React.createElement(KycFormScreen, { id: route.id, go: go }),
                 route.name !== 'chat' && React.createElement(Footer, { compact: true })))));
 }
 /* ============================== AVATAR ============================== */
@@ -2589,6 +2657,13 @@ function CountryPickerSheet({ title, showDial, onSelect, onClose }) {
         React.createElement("div", { className: "max-h-[50vh] overflow-y-auto" }, filtered.map(c => React.createElement("button", { key: c.code, onClick: () => onSelect(c), className: "w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-ink-700 text-left" },
             React.createElement("span", { className: "text-sm font-medium" }, c.name),
             showDial && React.createElement("span", { className: "text-xs text-slate-400 shrink-0" }, c.dial)))));
+}
+// Small reusable progress bar — used by the Monetization eligibility screen, kept generic
+// (value/max in, percentage out) in case other features want it later.
+function ProgressBar({ value, max, colorClass = 'bg-brand-600' }) {
+    const pct = Math.max(0, Math.min(100, max > 0 ? (value / max) * 100 : 0));
+    return React.createElement("div", { className: "w-full h-2.5 rounded-full bg-slate-100 dark:bg-ink-700 overflow-hidden" },
+        React.createElement("div", { className: colorClass + " h-full rounded-full transition-all", style: { width: pct + '%' } }));
 }
 function Avatar({ user, size = 10, onClick }) {
     const src = (user === null || user === void 0 ? void 0 : user.photoURL) || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent((user === null || user === void 0 ? void 0 : user.displayName) || (user === null || user === void 0 ? void 0 : user.username) || '?')}`;
@@ -4579,6 +4654,7 @@ function PageProfileScreen({ id, go }) {
                                 React.createElement("button", { onClick: () => go({ name: 'reelUpload', pageId: id }), className: "bg-slate-100 dark:bg-ink-700 rounded-lg w-11 h-11 flex items-center justify-center shrink-0", title: "Upload Reel" }, React.createElement("i", { className: "fa-solid fa-clapperboard" })),
                                 React.createElement("button", { onClick: () => go({ name: 'pageForm', id }), className: "bg-slate-100 dark:bg-ink-700 rounded-lg w-11 h-11 flex items-center justify-center shrink-0", title: "Edit Page" }, React.createElement("i", { className: "fa-solid fa-pen" })),
                                 React.createElement("button", { onClick: () => go({ name: 'pageAnalytics', id }), className: "bg-slate-100 dark:bg-ink-700 rounded-lg w-11 h-11 flex items-center justify-center shrink-0", title: "Insights" }, React.createElement("i", { className: "fa-solid fa-chart-line" })),
+                                React.createElement("button", { onClick: () => go({ name: 'monetization', id }), className: "bg-slate-100 dark:bg-ink-700 rounded-lg w-11 h-11 flex items-center justify-center shrink-0", title: "Monetization" }, React.createElement("i", { className: "fa-solid fa-sack-dollar" })),
                                 React.createElement("div", { className: "relative shrink-0" },
                                     React.createElement("button", { onClick: () => setMenuOpen(v => !v), className: "bg-slate-100 dark:bg-ink-700 rounded-lg w-11 h-11 flex items-center justify-center", title: "More" }, React.createElement("i", { className: "fa-solid fa-ellipsis" })),
                                     menuOpen && React.createElement("div", { className: "absolute right-0 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-600 z-10 w-48" },
@@ -4650,6 +4726,186 @@ function PageAnalyticsScreen({ id, go }) {
             React.createElement("div", { className: "flex items-end gap-1.5 h-24" }, dayCounts.map((c, i) => (React.createElement("div", { key: i, className: "flex-1 flex flex-col items-center justify-end h-full", title: days[i].toLocaleDateString() + ': ' + c },
                 React.createElement("div", { className: "w-full bg-brand-500 rounded-t", style: { height: Math.max(2, (c / maxDay) * 100) + '%' } }))))))));
 }
+/* ============================== PAGE MONETIZATION: KYC FORM ============================== */
+function KycFormScreen({ id, go }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const [page, setPage] = useState(undefined);
+    const kyc = usePageKyc(id);
+    const [fullName, setFullName] = useState('');
+    const [dob, setDob] = useState('');
+    const [dialCode, setDialCode] = useState('');
+    const [localNumber, setLocalNumber] = useState('');
+    const [address, setAddress] = useState('');
+    const [govIdFile, setGovIdFile] = useState(null);
+    const [selfieFile, setSelfieFile] = useState(null);
+    const [countryPickerOpen, setCountryPickerOpen] = useState(false);
+    const [busy, setBusy] = useState(false);
+    const inputCls = "w-full mt-1 px-3 py-2.5 sm:py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm";
+    useEffect(() => {
+        const unsub = db.collection('fanPages').doc(id).onSnapshot(s => setPage(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setPage(null));
+        return unsub;
+    }, [id]);
+    // Pre-fill from a previous (e.g. rejected) submission so re-applying doesn't mean retyping
+    // everything — the owner only needs to fix whatever caused the rejection.
+    useEffect(() => {
+        if (!kyc) return;
+        setFullName(kyc.fullName || '');
+        setDob(kyc.dob || '');
+        setAddress(kyc.address || '');
+        const savedPhone = (kyc.phone || '').trim();
+        const match = savedPhone ? COUNTRIES_BY_DIAL_LENGTH.find(c => savedPhone.startsWith(c.dial)) : null;
+        if (match) { setDialCode(match.dial); setLocalNumber(savedPhone.slice(match.dial.length).trim()); }
+    }, [kyc]);
+    if (page === undefined || kyc === undefined)
+        return React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026");
+    if (page === null || page.ownerId !== profile.id)
+        return React.createElement("p", { className: "text-sm text-slate-400" }, "You don't manage this Page.");
+    // Prevent duplicate applications: block a fresh submission while one is pending or already approved.
+    if (kyc && (kyc.status === 'pending' || kyc.status === 'approved')) {
+        return React.createElement("div", { className: "max-w-lg mx-auto px-1 sm:px-0" },
+            React.createElement("button", { onClick: () => go({ name: 'monetization', id }), className: "text-sm text-slate-400 mb-3" }, React.createElement("i", { className: "fa-solid fa-arrow-left mr-1.5" }), "Back"),
+            React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-5 text-center" },
+                React.createElement("i", { className: "fa-solid fa-circle-check text-3xl text-emerald-500 mb-2" }),
+                React.createElement("p", { className: "font-semibold" }, kyc.status === 'approved' ? 'This Page is already KYC-verified.' : 'A verification application is already under review.'),
+                React.createElement("p", { className: "text-sm text-slate-400 mt-1" }, "You can't submit a duplicate application while one is ", kyc.status, ".")));
+    }
+    const phone = localNumber.trim() ? (dialCode + ' ' + localNumber.trim()) : '';
+    const submit = async (e) => {
+        e.preventDefault();
+        if (!fullName.trim() || !dob || !address.trim() || !localNumber.trim() || !dialCode) {
+            toast('Please fill in every field, including a country code for your phone number', 'error');
+            return;
+        }
+        if ((!govIdFile && !(kyc && kyc.govIdURL)) || (!selfieFile && !(kyc && kyc.selfieURL))) {
+            toast('Please upload a government-issued ID and a selfie', 'error');
+            return;
+        }
+        setBusy(true);
+        try {
+            await submitPageKyc(page, profile.id, { fullName, dob, phone, address }, {
+                govId: govIdFile || (await (await fetch(kyc.govIdURL)).blob()),
+                selfie: selfieFile || (await (await fetch(kyc.selfieURL)).blob()),
+            });
+            toast('Verification submitted for review', 'success');
+            go({ name: 'monetization', id });
+        }
+        catch (err) {
+            toast(err.message, 'error');
+        }
+        finally {
+            setBusy(false);
+        }
+    };
+    return (React.createElement("div", { className: "max-w-lg mx-auto px-1 sm:px-0" },
+        React.createElement("button", { onClick: () => go({ name: 'monetization', id }), className: "text-sm text-slate-400 mb-3" }, React.createElement("i", { className: "fa-solid fa-arrow-left mr-1.5" }), "Back"),
+        React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, "Identity Verification (KYC)"),
+        React.createElement("p", { className: "text-sm text-slate-400 mb-5" }, "Required once before ", page.displayName, " can be reviewed for monetization. Your information is stored securely and only visible to you and platform admins."),
+        kyc && kyc.status === 'rejected' && React.createElement("div", { className: "bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-300 rounded-xl p-3 mb-4 text-sm" },
+            React.createElement("p", { className: "font-semibold mb-0.5" }, "Your previous application was rejected"),
+            kyc.rejectionReason && React.createElement("p", null, kyc.rejectionReason)),
+        React.createElement("form", { onSubmit: submit, className: "space-y-4" },
+            React.createElement(PageFormField, { label: "Full legal name" },
+                React.createElement("input", { value: fullName, onChange: e => setFullName(e.target.value), required: true, className: inputCls, placeholder: "As shown on your ID" })),
+            React.createElement(PageFormField, { label: "Date of birth" },
+                React.createElement("input", { type: "date", value: dob, onChange: e => setDob(e.target.value), required: true, className: inputCls })),
+            React.createElement(PageFormField, { label: "Phone number" },
+                React.createElement("div", { className: "flex gap-2 mt-1" },
+                    React.createElement("button", { type: "button", onClick: () => setCountryPickerOpen(true), className: "shrink-0 px-3 py-2.5 sm:py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm font-medium flex items-center gap-1.5" },
+                        dialCode || 'Code', React.createElement("i", { className: "fa-solid fa-chevron-down text-[10px] text-slate-400" })),
+                    React.createElement("input", { type: "tel", value: localNumber, onChange: e => setLocalNumber(e.target.value.replace(/[^\d\s-]/g, '')), required: true, className: "w-full px-3 py-2.5 sm:py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm", placeholder: "8150898386" }))),
+            React.createElement(PageFormField, { label: "Home address" },
+                React.createElement("textarea", { value: address, onChange: e => setAddress(e.target.value), required: true, rows: 3, className: inputCls, placeholder: "Street, city, state, country" })),
+            React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-4" },
+                React.createElement(PageFormField, { label: "Government-issued ID" },
+                    React.createElement("input", { type: "file", accept: "image/*", onChange: e => setGovIdFile(e.target.files[0]), className: inputCls + " file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-brand-50 file:text-brand-600" }),
+                    kyc && kyc.govIdURL && !govIdFile && React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, "Previously uploaded ID on file \u2014 upload a new one to replace it.")),
+                React.createElement(PageFormField, { label: "Selfie verification" },
+                    React.createElement("input", { type: "file", accept: "image/*", capture: "user", onChange: e => setSelfieFile(e.target.files[0]), className: inputCls + " file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-brand-50 file:text-brand-600" }),
+                    kyc && kyc.selfieURL && !selfieFile && React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, "Previously uploaded selfie on file \u2014 upload a new one to replace it."))),
+            React.createElement("button", { disabled: busy, type: "submit", className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl py-3 sm:py-2.5 font-semibold text-sm" }, busy ? 'Submitting…' : (kyc && kyc.status === 'rejected' ? 'Resubmit for review' : 'Submit for review'))),
+        countryPickerOpen && React.createElement(CountryPickerSheet, { title: "Select country code", showDial: true, onClose: () => setCountryPickerOpen(false), onSelect: (c) => { setDialCode(c.dial); setCountryPickerOpen(false); } })));
+}
+/* ============================== PAGE MONETIZATION: SETTINGS / ELIGIBILITY ============================== */
+function MonetizationScreen({ id, go }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const [page, setPage] = useState(undefined);
+    const kyc = usePageKyc(id);
+    const followersCount = useFollowersCount(id);
+    const [busy, setBusy] = useState(false);
+    useEffect(() => {
+        const unsub = db.collection('fanPages').doc(id).onSnapshot(s => setPage(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setPage(null));
+        return unsub;
+    }, [id]);
+    if (page === undefined || kyc === undefined)
+        return React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026");
+    if (page === null || page.ownerId !== profile.id)
+        return React.createElement("p", { className: "text-sm text-slate-400" }, "You don't manage this Page.");
+    const kycStatus = page.kycStatus || 'none';
+    const { eligible, kycApproved, followersMet } = computePageEligibility(kycStatus, followersCount);
+    const followersNeeded = Math.max(0, MONETIZATION_FOLLOWERS_REQUIRED - followersCount);
+    const progressPct = Math.min(100, Math.round((followersCount / MONETIZATION_FOLLOWERS_REQUIRED) * 100));
+    const KYC_BADGES = {
+        none: ['Not started', 'bg-slate-100 dark:bg-ink-700 text-slate-500'],
+        pending: ['Pending review', 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'],
+        approved: ['Approved', 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'],
+        rejected: ['Rejected', 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'],
+    };
+    const [kycLabel, kycBadgeCls] = KYC_BADGES[kycStatus] || KYC_BADGES.none;
+    const monetizationLabel = page.monetizationEnabled ? 'Active' : (eligible ? 'Eligible \u2014 not yet enabled' : 'Not eligible');
+    const monetizationBadgeCls = page.monetizationEnabled ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+        : eligible ? 'bg-brand-100 text-brand-700 dark:bg-brand-900/30 dark:text-brand-400' : 'bg-slate-100 dark:bg-ink-700 text-slate-500';
+    const toggleMonetization = async () => {
+        setBusy(true);
+        try {
+            await setPageMonetizationEnabled(id, !page.monetizationEnabled);
+            toast(page.monetizationEnabled ? 'Monetization turned off' : 'Monetization enabled!', 'success');
+        }
+        catch (e) {
+            toast(e.message, 'error');
+        }
+        finally {
+            setBusy(false);
+        }
+    };
+    const StatRow = (label, value) => React.createElement("div", { className: "flex items-center justify-between py-2.5 border-b border-slate-100 dark:border-ink-700 last:border-0" },
+        React.createElement("span", { className: "text-sm text-slate-500 dark:text-slate-400" }, label),
+        React.createElement("span", { className: "text-sm font-semibold" }, value));
+    return (React.createElement("div", { className: "max-w-lg mx-auto px-1 sm:px-0" },
+        React.createElement("button", { onClick: () => go({ name: 'page', id }), className: "text-sm text-slate-400 mb-3" }, React.createElement("i", { className: "fa-solid fa-arrow-left mr-1.5" }), "Back to Page"),
+        React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, "Monetization Settings"),
+        React.createElement("p", { className: "text-sm text-slate-400 mb-5" }, page.displayName, " \u00B7 manage KYC verification and monetization eligibility."),
+        React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-4 mb-4" },
+            React.createElement("h3", { className: "font-display text-base font-bold mb-3" }, "Status"),
+            StatRow('KYC status', React.createElement("span", { className: "px-2 py-0.5 rounded-full text-xs font-semibold " + kycBadgeCls }, kycLabel)),
+            StatRow('Monetization status', React.createElement("span", { className: "px-2 py-0.5 rounded-full text-xs font-semibold " + monetizationBadgeCls }, monetizationLabel)),
+            StatRow('Current followers', followersCount.toLocaleString()),
+            StatRow('Followers needed', followersMet ? '0 \u2014 requirement met' : followersNeeded.toLocaleString())),
+        React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-4 mb-4" },
+            React.createElement("div", { className: "flex items-center justify-between mb-2" },
+                React.createElement("h3", { className: "font-display text-base font-bold" }, "Eligibility progress"),
+                React.createElement("span", { className: "text-xs font-semibold text-slate-400" }, progressPct, "%")),
+            React.createElement(ProgressBar, { value: followersCount, max: MONETIZATION_FOLLOWERS_REQUIRED, colorClass: followersMet ? 'bg-emerald-500' : 'bg-brand-600' }),
+            React.createElement("p", { className: "text-xs text-slate-400 mt-2" }, followersCount.toLocaleString(), " / ", MONETIZATION_FOLLOWERS_REQUIRED.toLocaleString(), " followers"),
+            React.createElement("div", { className: "mt-3 space-y-1.5" },
+                React.createElement("p", { className: "text-xs flex items-center gap-1.5 " + (kycApproved ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400") },
+                    React.createElement("i", { className: "fa-solid " + (kycApproved ? 'fa-circle-check' : 'fa-circle') + " text-[10px]" }), "KYC approved"),
+                React.createElement("p", { className: "text-xs flex items-center gap-1.5 " + (followersMet ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400") },
+                    React.createElement("i", { className: "fa-solid " + (followersMet ? 'fa-circle-check' : 'fa-circle') + " text-[10px]" }), "At least ", MONETIZATION_FOLLOWERS_REQUIRED.toLocaleString(), " followers"))),
+        React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-4" },
+            kycStatus === 'none' && React.createElement(React.Fragment, null,
+                React.createElement("p", { className: "text-sm mb-3" }, "Start identity verification (KYC) to become eligible for monetization. This includes your full name, date of birth, government ID, a selfie, phone number, and address."),
+                React.createElement("button", { onClick: () => go({ name: 'kycForm', id }), className: "w-full bg-brand-600 hover:bg-brand-700 text-white rounded-xl py-2.5 text-sm font-semibold" }, "Start KYC Verification")),
+            kycStatus === 'pending' && React.createElement("p", { className: "text-sm text-slate-500 dark:text-slate-400" }, React.createElement("i", { className: "fa-solid fa-clock mr-1.5" }), "Your verification is under review by our team. This usually doesn't take long."),
+            kycStatus === 'rejected' && React.createElement(React.Fragment, null,
+                React.createElement("p", { className: "text-sm text-red-500 mb-3" }, "Your verification was rejected", kyc && kyc.rejectionReason ? (': ' + kyc.rejectionReason) : '.'),
+                React.createElement("button", { onClick: () => go({ name: 'kycForm', id }), className: "w-full bg-brand-600 hover:bg-brand-700 text-white rounded-xl py-2.5 text-sm font-semibold" }, "Resubmit KYC Verification")),
+            kycStatus === 'approved' && !eligible && React.createElement("p", { className: "text-sm text-slate-500 dark:text-slate-400" }, React.createElement("i", { className: "fa-solid fa-hourglass-half mr-1.5" }), "KYC approved! Keep growing \u2014 you'll unlock monetization once this Page reaches ", MONETIZATION_FOLLOWERS_REQUIRED.toLocaleString(), " followers."),
+            kycStatus === 'approved' && eligible && React.createElement(React.Fragment, null,
+                React.createElement("p", { className: "text-sm mb-3" }, page.monetizationEnabled ? "Monetization is active on this Page." : "This Page is eligible! Turn on monetization to start."),
+                React.createElement("button", { disabled: busy, onClick: toggleMonetization, className: "w-full rounded-xl py-2.5 text-sm font-semibold text-white " + (page.monetizationEnabled ? "bg-slate-500 hover:bg-slate-600" : "bg-emerald-500 hover:bg-emerald-600") }, busy ? 'Saving…' : (page.monetizationEnabled ? 'Turn off monetization' : 'Enable Monetization'))))));
+}
 /* ============================== ADMIN ============================== */
 function SuperAdminApp({ theme, setTheme }) {
     const { profile, firebaseUser } = useAuth();
@@ -4659,6 +4915,7 @@ function SuperAdminApp({ theme, setTheme }) {
         { key: 'posts', label: 'Posts', icon: 'fa-note-sticky' },
         { key: 'reels', label: 'Reels', icon: 'fa-clapperboard' },
         { key: 'pages', label: 'Pages', icon: 'fa-flag' },
+        { key: 'monetization', label: 'Monetization', icon: 'fa-sack-dollar' },
         { key: 'marketplace', label: 'Marketplace', icon: 'fa-store' },
         { key: 'reports', label: 'Reports', icon: 'fa-flag' },
         { key: 'announcements', label: 'Announcements', icon: 'fa-bullhorn' },
@@ -4705,6 +4962,8 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
     const [mtab, setMtab] = useState('pending');
     const [listings, setListings] = useState([]);
     const [fanPages, setFanPages] = useState([]);
+    const [kycApps, setKycApps] = useState([]);
+    const [kycFilter, setKycFilter] = useState('pending');
     const [listingReports, setListingReports] = useState([]);
     const [sellerReports, setSellerReports] = useState([]);
     const [genericReports, setGenericReports] = useState([]);
@@ -4714,7 +4973,7 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
     useEffect(() => {
         if (tab !== 'dashboard') return;
         (async () => {
-            const [usersSnap, postsSnap, listingsSnap, chatsSnap, notifSnap, reportsA, reportsB, reportsC, pagesSnap] = await Promise.all([
+            const [usersSnap, postsSnap, listingsSnap, chatsSnap, notifSnap, reportsA, reportsB, reportsC, pagesSnap, kycPendingSnap] = await Promise.all([
                 db.collection('users').get(), db.collection('posts').get(), db.collection('listings').get(),
                 db.collection('chatMembers').get().catch(() => ({ size: 0 })),
                 db.collection('announcements').get().catch(() => ({ size: 0 })),
@@ -4722,6 +4981,7 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
                 db.collection('sellerReports').where('status', '==', 'open').get().catch(() => ({ size: 0 })),
                 db.collection('reports').where('status', '==', 'open').get().catch(() => ({ size: 0 })),
                 db.collection('fanPages').get().catch(() => ({ size: 0 })),
+                db.collection('pageKyc').where('status', '==', 'pending').get().catch(() => ({ size: 0 })),
             ]);
             let comments = 0, likes = 0, shares = 0, newToday = 0;
             const dayAgo = Date.now() - 86400000;
@@ -4731,6 +4991,7 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
                 users: usersSnap.size, newToday, posts: postsSnap.size, comments, likes, shares,
                 marketplace: listingsSnap.size, messages: chatsSnap.size, announcements: notifSnap.size,
                 reports: (reportsA.size || 0) + (reportsB.size || 0) + (reportsC.size || 0), pages: pagesSnap.size,
+                pendingKyc: kycPendingSnap.size,
             });
         })();
     }, [tab]);
@@ -4747,6 +5008,11 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
     useEffect(() => {
         if (tab !== 'pages') return;
         const unsub = db.collection('fanPages').limit(300).onSnapshot(snap => setFanPages(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setFanPages([]));
+        return unsub;
+    }, [tab]);
+    useEffect(() => {
+        if (tab !== 'monetization') return;
+        const unsub = db.collection('pageKyc').limit(300).onSnapshot(snap => setKycApps(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setKycApps([]));
         return unsub;
     }, [tab]);
     useEffect(() => {
@@ -4783,7 +5049,7 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
             'Total users': stats.users, 'New registrations (24h)': stats.newToday, 'Total posts': stats.posts,
             'Total comments': stats.comments, 'Total likes': stats.likes, 'Total shares': stats.shares,
             'Marketplace listings': stats.marketplace, 'Chat threads': stats.messages, 'Total Pages': stats.pages,
-            'Open reports': stats.reports, 'Announcements sent': stats.announcements,
+            'Open reports': stats.reports, 'Announcements sent': stats.announcements, 'Pending KYC applications': stats.pendingKyc,
         } : null;
         return React.createElement("div", null,
             React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, "Super Admin Dashboard"),
@@ -4819,6 +5085,17 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
             React.createElement("input", { value: search, onChange: e => setSearch(e.target.value), placeholder: "Search by Page name or username\u2026", className: "w-full mb-3 px-4 py-2 rounded-xl border border-slate-200 dark:border-ink-700 bg-white dark:bg-ink-800 text-sm" }),
             filteredPages.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No Pages found."),
             React.createElement("div", { className: "space-y-2" }, filteredPages.map(p => React.createElement(AdminPageRow, { key: p.id, page: p, adminUid: adminUid, adminEmail: adminEmail }))));
+    }
+    if (tab === 'monetization') {
+        const filteredKyc = kycApps.filter(k => kycFilter === 'all' || k.status === kycFilter);
+        return React.createElement("div", null,
+            React.createElement("div", { className: "flex items-center justify-between mb-3 gap-3" },
+                React.createElement("h2", { className: "font-display text-lg font-bold" }, "Page Monetization \u00B7 KYC Review"),
+                React.createElement("button", { onClick: () => exportToCsv('kyc-applications.csv', kycApps.map(k => ({ id: k.id, page: k.pageDisplayName || '', ownerId: k.ownerId, fullName: k.fullName || '', status: k.status }))), className: "text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-100 dark:bg-ink-700" }, React.createElement("i", { className: "fa-solid fa-file-arrow-down mr-1.5" }), "Export CSV")),
+            React.createElement("p", { className: "text-xs text-slate-400 mb-3" }, "Approve or reject each Page's identity verification. A Page becomes eligible for monetization once KYC is approved and it reaches ", MONETIZATION_FOLLOWERS_REQUIRED.toLocaleString(), " followers."),
+            React.createElement("div", { className: "flex gap-2 mb-3 overflow-x-auto", style: { scrollbarWidth: 'none' } }, [['pending', 'Pending'], ['approved', 'Approved'], ['rejected', 'Rejected'], ['all', 'All']].map(([k, l]) => (React.createElement("button", { key: k, onClick: () => setKycFilter(k), className: "shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold " + (kycFilter === k ? "bg-brand-600 text-white" : "bg-white dark:bg-ink-800 border border-slate-200 dark:border-ink-700") }, l)))),
+            filteredKyc.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No ", kycFilter === 'all' ? '' : kycFilter, " applications."),
+            React.createElement("div", { className: "space-y-2" }, filteredKyc.map(k => React.createElement(AdminKycRow, { key: k.id, k: k, adminUid: adminUid, adminEmail: adminEmail }))));
     }
     if (tab === 'marketplace') {
         return React.createElement("div", null,
@@ -5044,6 +5321,58 @@ function AdminPageRow({ page, adminUid, adminEmail }) {
                 React.createElement("button", { disabled: busy, onClick: () => run(() => adminVerifyPage(page), 'toggle_verify_page'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-900/20" }, page.verified ? 'Unverify' : 'Verify'),
                 React.createElement("button", { disabled: busy, onClick: () => run(() => adminSuspendPage(page), 'toggle_suspend_page'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg " + (page.suspended ? "bg-emerald-500 text-white" : "bg-amber-500 text-white") }, page.suspended ? 'Reactivate' : 'Suspend'),
                 React.createElement("button", { disabled: busy, onClick: () => confirm('Permanently delete this Page? This cannot be undone.') && run(() => deleteFanPagePermanently(page), 'delete_page'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Delete Permanently"))));
+}
+/* ============================== SUPER ADMIN: KYC (MONETIZATION) ROW ============================== */
+function AdminKycRow({ k, adminUid, adminEmail }) {
+    const toast = useToast();
+    const [busy, setBusy] = useState(false);
+    const [open, setOpen] = useState(false);
+    const [reason, setReason] = useState('');
+    const STATUS_BADGE = {
+        pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+        approved: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+        rejected: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400',
+    };
+    const approve = async () => {
+        setBusy(true);
+        try {
+            await adminApproveKyc(k, adminUid);
+            logAdminAction(adminUid, adminEmail, 'approve_page_kyc', 'page', k.pageId, k.pageDisplayName);
+            toast('KYC approved', 'success');
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    const reject = async () => {
+        setBusy(true);
+        try {
+            await adminRejectKyc(k, adminUid, reason.trim());
+            logAdminAction(adminUid, adminEmail, 'reject_page_kyc', 'page', k.pageId, k.pageDisplayName);
+            toast('KYC rejected', 'success');
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
+        React.createElement("div", { className: "flex items-center justify-between" },
+            React.createElement("div", { className: "min-w-0 cursor-pointer", onClick: () => setOpen(v => !v) },
+                React.createElement("p", { className: "text-sm font-semibold truncate" }, k.pageDisplayName || k.pageId, " ",
+                    React.createElement("span", { className: "px-2 py-0.5 rounded-full text-[10px] font-semibold ml-1 " + (STATUS_BADGE[k.status] || '') }, k.status)),
+                React.createElement("p", { className: "text-xs text-slate-400 truncate" }, "@", k.pageUsername, " \u00B7 applicant: ", k.fullName, " \u00B7 owner: ", React.createElement(AdminUserLabel, { uid: k.ownerId }))),
+            React.createElement("button", { onClick: () => setOpen(v => !v), className: "text-slate-300 shrink-0" }, React.createElement("i", { className: "fa-solid " + (open ? 'fa-chevron-up' : 'fa-chevron-down') }))),
+        open && React.createElement("div", { className: "mt-3 pt-3 border-t border-slate-100 dark:border-ink-700 space-y-2 text-xs text-slate-500 dark:text-slate-400" },
+            React.createElement("p", null, React.createElement("b", { className: "text-slate-700 dark:text-slate-200" }, "Full name: "), k.fullName),
+            React.createElement("p", null, React.createElement("b", { className: "text-slate-700 dark:text-slate-200" }, "Date of birth: "), k.dob),
+            React.createElement("p", null, React.createElement("b", { className: "text-slate-700 dark:text-slate-200" }, "Phone: "), k.phone),
+            React.createElement("p", null, React.createElement("b", { className: "text-slate-700 dark:text-slate-200" }, "Address: "), k.address),
+            React.createElement("div", { className: "flex gap-3" },
+                k.govIdURL && React.createElement("a", { href: k.govIdURL, target: "_blank", rel: "noopener noreferrer", className: "text-brand-500 font-semibold hover:underline" }, "View ID \u2197"),
+                k.selfieURL && React.createElement("a", { href: k.selfieURL, target: "_blank", rel: "noopener noreferrer", className: "text-brand-500 font-semibold hover:underline" }, "View selfie \u2197")),
+            k.status === 'rejected' && k.rejectionReason && React.createElement("p", { className: "text-red-500" }, React.createElement("b", null, "Rejection reason: "), k.rejectionReason),
+            k.status !== 'approved' && React.createElement("input", { value: reason, onChange: e => setReason(e.target.value), placeholder: "Rejection reason (optional, shown to the owner)", className: "w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-xs" }),
+            React.createElement("div", { className: "flex flex-wrap gap-1.5 pt-1" },
+                k.status !== 'approved' && React.createElement("button", { disabled: busy, onClick: approve, className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-500 text-white" }, "Approve"),
+                k.status !== 'rejected' && React.createElement("button", { disabled: busy, onClick: reject, className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Reject"))));
 }
 /* ============================== SUPER ADMIN: POST ROW ============================== */
 function AdminPostRow({ post, adminUid, adminEmail }) {
@@ -7744,6 +8073,77 @@ admins/moderators, not only the post's own author, e.g.:
       allow read: if true;
       allow write: if request.auth != null && request.resource.size < 25 * 1024 * 1024;
     }
+================================================================================
+ PAGE MONETIZATION & KYC — RECOMMENDED FIRESTORE & STORAGE SECURITY RULES
+================================================================================
+KYC documents contain sensitive personal data (full name, DOB, ID photo, selfie,
+phone, address), so `pageKyc/{pageId}` must only ever be readable by the Page's
+owner and admins — never public. One document per Page id also means a second
+`create` for the same Page simply overwrites the existing application instead
+of creating a duplicate, which combined with `allow create/update` below is
+what prevents a page from having two live applications at once.
+
+--- Firestore rules (add inside `service cloud.firestore { match /databases/{db}/documents { ... } }`) ---
+
+    function signedIn() { return request.auth != null; }
+    function isAdmin() {
+      return signedIn() &&
+        get(/databases/$(db)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+    }
+    function ownsPage(pageId) {
+      return signedIn() &&
+        get(/databases/$(db)/documents/fanPages/$(pageId)).data.ownerId == request.auth.uid;
+    }
+
+    match /fanPages/{pageId} {
+      // Existing Page rules stay as they are; just make sure whatever `update` rule you
+      // already have lets the owner touch kycStatus indirectly (via submitPageKyc, which
+      // only ever sets kycStatus itself — never approves it) and monetizationEnabled, while
+      // reserving the actual approval transition (kycStatus -> 'approved'/'rejected') for
+      // admins only:
+      allow update: if signedIn() && (
+        (resource.data.ownerId == request.auth.uid &&
+         request.resource.data.kycStatus == resource.data.kycStatus) || // owner can't self-approve
+        isAdmin()
+      );
+    }
+
+    match /pageKyc/{pageId} {
+      // Only the Page's owner or an admin may ever read the application (it holds an ID
+      // photo, a selfie, and personal contact details).
+      allow read: if ownsPage(pageId) || isAdmin();
+      // Only the owner may create/re-submit their own Page's application, and only while it
+      // isn't already 'pending' or 'approved' (prevents duplicate/parallel applications —
+      // mirrors the client-side check in KycFormScreen for defense in depth).
+      allow create: if ownsPage(pageId) && request.resource.data.ownerId == request.auth.uid;
+      allow update: if isAdmin() ||
+        (ownsPage(pageId) && resource.data.status == 'rejected' && request.resource.data.status == 'pending');
+      allow delete: if isAdmin();
+    }
+
+--- Storage rules (add inside `service firebase.storage { match /b/{bucket}/o { ... } }`) ---
+
+    match /pageKyc/{pageId}/{fileName} {
+      // ID photos and selfies are private: only the uploading owner and admins can read them.
+      // firestore.get() lets Storage rules check the *Firestore* fanPages/users docs directly
+      // (supported on modern Firebase projects) so this stays consistent with the app's
+      // single admin flag rather than needing separate custom claims.
+      allow read: if request.auth != null && (
+        firestore.get(/databases/(default)/documents/fanPages/$(pageId)).data.ownerId == request.auth.uid ||
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin == true
+      );
+      allow write: if request.auth != null &&
+        firestore.get(/databases/(default)/documents/fanPages/$(pageId)).data.ownerId == request.auth.uid &&
+        request.resource.contentType.matches('image/.*') && request.resource.size < 10 * 1024 * 1024;
+    }
+
+Note: enforcing the "1,000 followers" half of eligibility purely in security rules would need
+a denormalized follower counter (this app intentionally reads follower counts live from the
+pageFollows collection instead, to avoid counter-drift bugs — see useFollowersCount). The
+1,000-follower gate is therefore enforced client-side in MonetizationScreen, same as this file's
+existing "enforced client-side" caveats for reel privacy and group post visibility above. If you
+need it enforced server-side too, add a Cloud Function that maintains fanPages/{pageId}.followersCount
+and check that field in the fanPages update rule alongside kycStatus.
 ================================================================================
 -->
 </body>
