@@ -4685,7 +4685,7 @@ function ChatListScreen({ go }) {
         React.createElement("div", { className: "relative mb-3" },
             React.createElement("i", { className: "fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm" }),
             React.createElement("input", { value: search, onChange: e => setSearch(e.target.value), placeholder: "Search conversations\u2026", className: "w-full pl-10 pr-4 py-2.5 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" })),
-        React.createElement("div", { className: "flex gap-2 mb-4" }, [['all', 'All'], ['requests', 'Requests'], ['archived', 'Archived']].map(([k, l]) => (React.createElement("button", { key: k, onClick: () => setTab(k), className: "px-3.5 py-1.5 rounded-full text-xs font-semibold " + (tab === k ? "bg-brand-600 text-white" : "bg-white dark:bg-ink-800 border border-slate-200 dark:border-ink-700 text-slate-500") },
+        React.createElement("div", { className: "flex gap-2 mb-4" }, [['all', 'All'], ['requests', 'Requests'], ['archived', 'Archived']].map(([k, l]) => (React.createElement("button", { key: k, onClick: () => setTab(k), className: "px-3.5 py-1.5 rounded-full text-xs font-semibold " + (tab === k ? "bg-[#0866FF] text-white" : "bg-white dark:bg-ink-800 border border-slate-200 dark:border-ink-700 text-slate-500") },
             l,
             k === 'requests' && requestCount > 0 && React.createElement("span", { className: "ml-1" },
                 "(",
@@ -4706,23 +4706,24 @@ function ChatRow({ row, go, search, onPin, onArchive, onDelete, onAccept, onDecl
     const previewMap = { image: '📷 Photo', video: '🎥 Video', audio: '🎤 Voice note', document: '📄 Document' };
     const preview = row.lastMessage ? (row.lastMessage.type === 'text' ? row.lastMessage.text : (previewMap[row.lastMessage.type] || 'Message')) : 'Say hello 👋';
     const openChat = () => go({ name: 'chat', chatId: row.chatId, otherUid: row.otherUid });
-    return (React.createElement("div", { className: "flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
+    const unread = row.unreadCount > 0;
+    return (React.createElement("div", { className: "flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl p-2 hover:bg-slate-50 dark:hover:bg-ink-700" },
         React.createElement("div", { className: "relative cursor-pointer shrink-0", onClick: openChat },
-            React.createElement(Avatar, { user: user, size: 11 }),
-            isUserOnline(user) && React.createElement("span", { className: "absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-500 border-2 border-white dark:border-ink-800" })),
+            React.createElement(Avatar, { user: user, size: 14 }),
+            isUserOnline(user) && React.createElement("span", { className: "absolute bottom-0.5 right-0 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-white dark:border-ink-800" })),
         React.createElement("div", { className: "flex-1 min-w-0 cursor-pointer", onClick: openChat },
             React.createElement("div", { className: "flex items-center justify-between gap-2" },
-                React.createElement("p", { className: "font-semibold text-sm truncate flex items-center gap-1" },
+                React.createElement("p", { className: "text-sm truncate flex items-center gap-1 " + (unread ? "font-bold text-[#050505] dark:text-white" : "font-semibold") },
                     row.pinned && React.createElement("i", { className: "fa-solid fa-thumbtack text-[10px] text-slate-400" }),
                     user.displayName),
                 React.createElement("span", { className: "text-xs text-slate-400 shrink-0" }, timeAgo(row.lastMessageAt))),
-            React.createElement("p", { className: "text-xs text-slate-400 truncate" },
+            React.createElement("p", { className: "text-xs truncate " + (unread ? "text-[#050505] dark:text-white font-medium" : "text-slate-400") },
                 ((_c = row.lastMessage) === null || _c === void 0 ? void 0 : _c.senderId) && row.lastMessage.senderId !== user.id ? 'You: ' : '',
                 preview)),
         row.status === 'pending' ? (React.createElement("div", { className: "flex flex-col gap-1 shrink-0" },
-            React.createElement("button", { onClick: onAccept, className: "text-xs bg-brand-600 text-white rounded-full px-3 py-1" }, "Accept"),
+            React.createElement("button", { onClick: onAccept, className: "text-xs bg-[#0866FF] text-white rounded-full px-3 py-1" }, "Accept"),
             React.createElement("button", { onClick: onDecline, className: "text-xs border border-slate-200 dark:border-ink-600 rounded-full px-3 py-1" }, "Decline"))) : (React.createElement("div", { className: "flex items-center gap-2 shrink-0" },
-            row.unreadCount > 0 && React.createElement("span", { className: "bg-brand-600 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1" }, row.unreadCount),
+            unread && React.createElement("span", { className: "bg-[#0866FF] w-2.5 h-2.5 rounded-full" }),
             React.createElement("div", { className: "relative" },
                 React.createElement("button", { onClick: () => setMenuOpen(!menuOpen), className: "text-slate-400 px-1" },
                     React.createElement("i", { className: "fa-solid fa-ellipsis-vertical" })),
@@ -4743,29 +4744,30 @@ function DateSeparator({ prev, curr }) {
     const label = currDate === new Date().toDateString() ? 'Today' : curr.createdAt.toDate().toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
     return React.createElement("div", { className: "text-center text-xs text-slate-400 my-2" }, label);
 }
-function MessageBubble({ message, isMe, otherUid, menuOpen, setMenuOpen, onReply, onForward, onCopy, onEdit, onDelete, onReact }) {
+function MessageBubble({ message, isMe, otherUid, otherUser, showAvatar, menuOpen, setMenuOpen, onReply, onForward, onCopy, onEdit, onDelete, onReact }) {
     var _a;
     const status = () => {
         if ((message.readBy || []).includes(otherUid))
-            return React.createElement("i", { className: "fa-solid fa-check-double text-brand-200" });
+            return React.createElement("i", { className: "fa-solid fa-check-double text-[#0866FF]" });
         if ((message.deliveredTo || []).includes(otherUid))
             return React.createElement("i", { className: "fa-solid fa-check-double text-white/60" });
         return React.createElement("i", { className: "fa-solid fa-check text-white/60" });
     };
     const reactions = message.reactions ? Object.entries(message.reactions) : [];
-    return (React.createElement("div", { className: "flex " + (isMe ? "justify-end" : "justify-start") },
+    return (React.createElement("div", { className: "flex items-end gap-1.5 " + (isMe ? "justify-end" : "justify-start") },
+        !isMe && React.createElement("div", { className: "w-6 shrink-0" }, showAvatar && React.createElement(Avatar, { user: otherUser, size: 6 })),
         React.createElement("div", { className: "max-w-[75%] group relative" },
             message.forwardedFrom && React.createElement("p", { className: "text-[10px] text-slate-400 mb-0.5 flex items-center gap-1" },
                 React.createElement("i", { className: "fa-solid fa-share" }),
                 "Forwarded"),
             message.replyTo && (React.createElement("div", { className: "text-xs px-2.5 py-1 rounded-t-lg border-l-2 border-brand-400 bg-black/5 dark:bg-white/5" },
                 React.createElement("p", { className: "truncate opacity-70 max-w-[220px]" }, message.replyTo.text))),
-            React.createElement("div", { className: "relative px-3.5 py-2 rounded-2xl text-sm " + (isMe ? "bg-brand-600 text-white rounded-br-sm" : "bg-slate-100 dark:bg-ink-700 rounded-bl-sm") },
+            React.createElement("div", { className: "relative px-3.5 py-2 rounded-[18px] text-sm " + (isMe ? "bg-[#0866FF] text-white" : "bg-[#F0F0F0] dark:bg-[#3A3B3C] text-[#050505] dark:text-white") },
                 message.type === 'text' && React.createElement("p", { className: "whitespace-pre-wrap break-words" }, message.text),
                 message.type === 'image' && React.createElement("img", { src: message.mediaURL, onClick: () => openLightbox(message.mediaURL), loading: "lazy", className: "rounded-lg max-w-[240px] cursor-zoom-in" }),
                 message.type === 'video' && React.createElement("video", { src: message.mediaURL, controls: true, className: "rounded-lg max-w-[240px]" }),
                 message.type === 'audio' && React.createElement("audio", { src: message.mediaURL, controls: true, className: "w-56" }),
-                message.type === 'document' && (React.createElement("a", { href: message.mediaURL, target: "_blank", className: "flex items-center gap-2 " + (isMe ? "text-white" : "text-brand-600") },
+                message.type === 'document' && (React.createElement("a", { href: message.mediaURL, target: "_blank", className: "flex items-center gap-2 " + (isMe ? "text-white" : "text-[#0866FF]") },
                     React.createElement("i", { className: "fa-solid fa-file-lines text-lg" }),
                     React.createElement("span", { className: "truncate max-w-[160px] underline" }, message.mediaName || 'Document'))),
                 React.createElement("div", { className: "flex items-center gap-1 mt-1 justify-end text-[10px] " + (isMe ? "text-white/70" : "text-slate-400") },
@@ -4991,16 +4993,20 @@ function ChatWindow({ chatId, otherUid, go }) {
             React.createElement(PostSkeleton, null));
     const visibleMessages = (messages || []).filter(m => !(m.deletedFor || []).includes(profile.id));
     return (React.createElement("div", { className: "flex flex-col bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 md:rounded-2xl overflow-hidden h-[calc(100dvh-7.25rem)] md:h-[calc(100vh-2rem)]" },
-        React.createElement("div", { className: "flex items-center gap-3 px-4 py-3 border-b border-slate-100 dark:border-ink-700 shrink-0" },
-            React.createElement("button", { onClick: () => go({ name: 'messages' }), className: "text-slate-400 md:hidden" },
+        React.createElement("div", { className: "flex items-center gap-3 px-3 py-2.5 border-b border-slate-100 dark:border-ink-700 shrink-0" },
+            React.createElement("button", { onClick: () => go({ name: 'messages' }), className: "text-[#0866FF] w-8 h-8 flex items-center justify-center md:hidden" },
                 React.createElement("i", { className: "fa-solid fa-arrow-left" })),
             React.createElement("div", { className: "relative cursor-pointer", onClick: () => go({ name: 'profile', uid: otherUid }) },
                 React.createElement(Avatar, { user: otherUser, size: 9 }),
                 isUserOnline(otherUser) && React.createElement("span", { className: "absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-white dark:border-ink-800" })),
             React.createElement("div", { className: "flex-1 min-w-0 cursor-pointer", onClick: () => go({ name: 'profile', uid: otherUid }) },
                 React.createElement("p", { className: "font-semibold text-sm truncate" }, otherUser.displayName),
-                React.createElement("p", { className: "text-xs text-slate-400 truncate" }, ((_a = chatDoc === null || chatDoc === void 0 ? void 0 : chatDoc.typing) === null || _a === void 0 ? void 0 : _a[otherUid]) ? React.createElement("span", { className: "text-brand-500" }, "typing\u2026") : lastSeenLabel(otherUser)))),
-        React.createElement("div", { className: "flex-1 overflow-y-auto px-4 py-4 space-y-3" },
+                React.createElement("p", { className: "text-xs text-slate-400 truncate" }, ((_a = chatDoc === null || chatDoc === void 0 ? void 0 : chatDoc.typing) === null || _a === void 0 ? void 0 : _a[otherUid]) ? React.createElement("span", { className: "text-[#0866FF]" }, "typing\u2026") : lastSeenLabel(otherUser))),
+            React.createElement("button", { className: "text-[#0866FF] w-9 h-9 rounded-full hover:bg-[#0866FF]/10 flex items-center justify-center" },
+                React.createElement("i", { className: "fa-solid fa-phone" })),
+            React.createElement("button", { className: "text-[#0866FF] w-9 h-9 rounded-full hover:bg-[#0866FF]/10 flex items-center justify-center" },
+                React.createElement("i", { className: "fa-solid fa-video" }))),
+        React.createElement("div", { className: "flex-1 overflow-y-auto px-4 py-4 space-y-1 bg-white dark:bg-ink-800" },
             messages === null && React.createElement("p", { className: "text-sm text-slate-400 text-center" }, "Loading\u2026"),
             (messages === null || messages === void 0 ? void 0 : messages.length) === 0 && (React.createElement("div", { className: "text-center text-slate-400 py-10" },
                 React.createElement("div", { className: "flex justify-center" },
@@ -5009,7 +5015,7 @@ function ChatWindow({ chatId, otherUid, go }) {
                 React.createElement("p", { className: "text-xs mt-1" }, "Say hello to start the conversation \uD83D\uDC4B"))),
             visibleMessages.map((m, i) => (React.createElement(React.Fragment, { key: m.id },
                 React.createElement(DateSeparator, { prev: visibleMessages[i - 1], curr: m }),
-                React.createElement(MessageBubble, { message: m, isMe: m.senderId === profile.id, otherUid: otherUid, menuOpen: activeMenuId === m.id, setMenuOpen: (v) => setActiveMenuId(v ? m.id : null), onReply: () => setReplyTo(m), onForward: () => setForwardMsg(m), onCopy: () => copyText(m), onEdit: () => { setEditingMessage(m); setText(m.text || ''); }, onDelete: () => deleteForMe(m), onReact: (e) => react(m, e) })))),
+                React.createElement(MessageBubble, { message: m, isMe: m.senderId === profile.id, otherUid: otherUid, otherUser: otherUser, showAvatar: !visibleMessages[i + 1] || visibleMessages[i + 1].senderId !== m.senderId, menuOpen: activeMenuId === m.id, setMenuOpen: (v) => setActiveMenuId(v ? m.id : null), onReply: () => setReplyTo(m), onForward: () => setForwardMsg(m), onCopy: () => copyText(m), onEdit: () => { setEditingMessage(m); setText(m.text || ''); }, onDelete: () => deleteForMe(m), onReact: (e) => react(m, e) })))),
             React.createElement("div", { ref: bottomRef })),
         blocked && (React.createElement("div", { className: "px-4 py-2 text-xs text-center text-red-500 bg-red-50 dark:bg-red-900/20 shrink-0" }, iBlockedThem ? "You've blocked this user." : "You can't reply to this conversation.")),
         (replyTo || editingMessage) && (React.createElement("div", { className: "flex items-center justify-between px-4 py-2 border-t border-slate-100 dark:border-ink-700 bg-slate-50 dark:bg-ink-700 shrink-0" },
@@ -5022,10 +5028,10 @@ function ChatWindow({ chatId, otherUid, go }) {
             emojiOpen && (React.createElement("div", { className: "absolute bottom-14 left-3 bg-white dark:bg-ink-700 border border-slate-100 dark:border-ink-600 rounded-xl shadow-lg p-2 grid grid-cols-6 gap-1 z-20" }, EMOJI_PICKER_SET.map(e => React.createElement("button", { key: e, onClick: () => { setText(t => t + e); setEmojiOpen(false); }, className: "text-lg hover:bg-slate-100 dark:hover:bg-ink-600 rounded-lg p-1" }, e)))),
             attachOpen && (React.createElement("div", { className: "absolute bottom-14 left-3 bg-white dark:bg-ink-700 border border-slate-100 dark:border-ink-600 rounded-xl shadow-lg p-2 flex gap-2 z-20" },
                 React.createElement("button", { onClick: () => { imageInputRef.current.click(); setAttachOpen(false); }, className: "flex flex-col items-center gap-1 px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-ink-600 rounded-lg" },
-                    React.createElement("i", { className: "fa-solid fa-image text-brand-500" }),
+                    React.createElement("i", { className: "fa-solid fa-image text-[#0866FF]" }),
                     "Photo"),
                 React.createElement("button", { onClick: () => { videoInputRef.current.click(); setAttachOpen(false); }, className: "flex flex-col items-center gap-1 px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-ink-600 rounded-lg" },
-                    React.createElement("i", { className: "fa-solid fa-video text-purple-500" }),
+                    React.createElement("i", { className: "fa-solid fa-video text-[#0866FF]" }),
                     "Video"),
                 React.createElement("button", { onClick: () => { docInputRef.current.click(); setAttachOpen(false); }, className: "flex flex-col items-center gap-1 px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-ink-600 rounded-lg" },
                     React.createElement("i", { className: "fa-solid fa-file text-amber-500" }),
@@ -5046,16 +5052,19 @@ function ChatWindow({ chatId, otherUid, go }) {
                 React.createElement("button", { onClick: () => stopRecording(true), className: "text-slate-400 text-sm" }, "Cancel"),
                 React.createElement("button", { onClick: () => stopRecording(false), className: "bg-brand-600 text-white rounded-full w-8 h-8 flex items-center justify-center" },
                     React.createElement("i", { className: "fa-solid fa-paper-plane text-xs" })))) : (React.createElement("div", { className: "flex items-center gap-2" },
-                React.createElement("button", { onClick: () => { setAttachOpen(a => !a); setEmojiOpen(false); }, disabled: blocked, className: "text-slate-400 w-9 h-9 flex items-center justify-center disabled:opacity-40" },
-                    React.createElement("i", { className: "fa-solid fa-paperclip" })),
-                React.createElement("button", { onClick: () => { setEmojiOpen(a => !a); setAttachOpen(false); }, disabled: blocked, className: "text-slate-400 w-9 h-9 flex items-center justify-center disabled:opacity-40" },
-                    React.createElement("i", { className: "fa-regular fa-face-smile" })),
-                React.createElement("input", { value: text, onChange: e => onTextChange(e.target.value), onKeyDown: e => { if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        sendText();
-                    } }, disabled: blocked, placeholder: blocked ? "You can't message this user" : "Message…", className: "flex-1 bg-slate-50 dark:bg-ink-700 rounded-full px-4 py-2 text-sm disabled:opacity-50" }),
-                text.trim() ? (React.createElement("button", { onClick: sendText, className: "bg-brand-600 text-white rounded-full w-9 h-9 flex items-center justify-center shrink-0" },
-                    React.createElement("i", { className: "fa-solid fa-paper-plane text-sm" }))) : (React.createElement("button", { onClick: startRecording, disabled: blocked, className: "text-slate-400 w-9 h-9 flex items-center justify-center disabled:opacity-40" },
+                React.createElement("button", { onClick: () => { setAttachOpen(a => !a); setEmojiOpen(false); }, disabled: blocked, className: "text-[#0866FF] w-9 h-9 flex items-center justify-center disabled:opacity-40 text-lg" },
+                    React.createElement("i", { className: "fa-solid fa-circle-plus" })),
+                React.createElement("button", { onClick: () => { imageInputRef.current.click(); }, disabled: blocked, className: "text-[#0866FF] w-9 h-9 hidden sm:flex items-center justify-center disabled:opacity-40 text-lg" },
+                    React.createElement("i", { className: "fa-solid fa-image" })),
+                React.createElement("div", { className: "flex-1 relative flex items-center" },
+                    React.createElement("input", { value: text, onChange: e => onTextChange(e.target.value), onKeyDown: e => { if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            sendText();
+                        } }, disabled: blocked, placeholder: blocked ? "You can't message this user" : "Aa", className: "w-full bg-[#F0F0F0] dark:bg-ink-700 rounded-full pl-4 pr-9 py-2 text-sm disabled:opacity-50" }),
+                    React.createElement("button", { onClick: () => { setEmojiOpen(a => !a); setAttachOpen(false); }, disabled: blocked, className: "absolute right-2 text-[#0866FF] w-6 h-6 flex items-center justify-center disabled:opacity-40" },
+                        React.createElement("i", { className: "fa-regular fa-face-smile" }))),
+                text.trim() ? (React.createElement("button", { onClick: sendText, className: "text-[#0866FF] rounded-full w-9 h-9 flex items-center justify-center shrink-0 text-xl" },
+                    React.createElement("i", { className: "fa-solid fa-paper-plane" }))) : (React.createElement("button", { onClick: startRecording, disabled: blocked, className: "text-[#0866FF] w-9 h-9 flex items-center justify-center disabled:opacity-40 text-xl" },
                     React.createElement("i", { className: "fa-solid fa-microphone" })))))),
         forwardMsg && React.createElement(ForwardModal, { message: forwardMsg, onClose: () => setForwardMsg(null) })));
 }
