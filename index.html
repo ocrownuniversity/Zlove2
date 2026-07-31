@@ -3755,18 +3755,28 @@ function SharedPostPreview({ postId, go }) {
     useEffect(() => {
         if (!(orig === null || orig === void 0 ? void 0 : orig.authorId))
             return;
+        // A post made "as a Page" always keeps authorId = the owner's uid (so the owner can still
+        // manage/delete it), with pageId set alongside it — so the *displayed* author here has to
+        // come from fanPages, exactly like PostCard already does, or a page-authored share would
+        // wrongly show the human owner's name instead of the Page's.
+        if (orig.pageId) {
+            const unsub = db.collection('fanPages').doc(orig.pageId).onSnapshot(s => setAuthor(s.exists ? Object.assign({ id: s.id }, s.data()) : null));
+            return unsub;
+        }
         const unsub = db.collection('users').doc(orig.authorId).onSnapshot(s => setAuthor(s.exists ? s.data() : null));
         return unsub;
-    }, [orig === null || orig === void 0 ? void 0 : orig.authorId]);
+    }, [orig === null || orig === void 0 ? void 0 : orig.authorId, orig === null || orig === void 0 ? void 0 : orig.pageId]);
     if (orig === undefined)
         return React.createElement("div", { className: "border border-slate-100 dark:border-ink-700 rounded-xl p-3 mb-2 text-xs text-slate-400" }, "Loading shared post\u2026");
     if (orig === null)
         return React.createElement("div", { className: "border border-slate-100 dark:border-ink-700 rounded-xl p-3 mb-2 text-xs text-slate-400" }, "This post is no longer available.");
-    return React.createElement("div", { onClick: () => go({ name: 'profile', uid: orig.authorId }), className: "border border-slate-200 dark:border-ink-700 rounded-xl p-3 mb-2 cursor-pointer" },
+    const openOrigin = () => orig.pageId ? go({ name: 'page', id: orig.pageId }) : go({ name: 'profile', uid: orig.authorId });
+    return React.createElement("div", { onClick: openOrigin, className: "border border-slate-200 dark:border-ink-700 rounded-xl p-3 mb-2 cursor-pointer" },
         React.createElement("div", { className: "flex items-center gap-2 mb-1.5" },
             React.createElement(Avatar, { user: author, size: 7 }),
             React.createElement("div", null,
-                React.createElement("p", { className: "font-semibold text-xs" }, author ? author.displayName : '…'),
+                React.createElement("p", { className: "font-semibold text-xs flex items-center gap-1.5" }, author ? (author.displayName || author.pageDisplayName) : '…',
+                    orig.pageId && React.createElement("span", { className: "text-[9px] font-bold uppercase tracking-wide text-brand-600 bg-brand-50 dark:bg-brand-900/30 dark:text-brand-400 px-1.5 py-0.5 rounded" }, "Page")),
                 React.createElement("p", { className: "text-[11px] text-slate-400" }, timeAgo(orig.createdAt)),
                 orig.groupId && React.createElement("button", { onClick: (e) => { e.stopPropagation(); go({ name: 'group', id: orig.groupId }); }, className: "text-[11px] font-semibold text-brand-600 dark:text-brand-400 hover:underline flex items-center gap-1 mt-0.5" },
                     React.createElement("i", { className: "fa-solid fa-people-group text-[9px]" }), "Posted in " + (orig.groupName || 'a group')))),
