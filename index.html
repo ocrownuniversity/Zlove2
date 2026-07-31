@@ -2032,7 +2032,8 @@ function MainApp({ route, setRoute }) {
 const PAGE_CATEGORIES = [
     'Business', 'Brand', 'Public Figure', 'Community', 'Entertainment', 'Media/News',
     'Nonprofit', 'Local Service', 'Church/Religious Org', 'Musician/Band', 'Restaurant/Cafe',
-    'Shopping/Retail', 'Education', 'Sports', 'App/Website', 'Other'
+    'Shopping/Retail', 'Education', 'Sports', 'App/Website', 'Bank', 'Financial Service',
+    'Insurance', 'Health/Medical', 'Other'
 ];
 /* ============================== COUNTRIES (Location + phone country code) ============================== */
 // Used by both the Page's "Location" field (owner picks their country from a searchable list
@@ -2147,7 +2148,7 @@ function CountryPickerSheet({ title, showDial, onSelect, onClose }) {
 }
 function Avatar({ user, size = 10, onClick }) {
     const src = (user === null || user === void 0 ? void 0 : user.photoURL) || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent((user === null || user === void 0 ? void 0 : user.displayName) || (user === null || user === void 0 ? void 0 : user.username) || '?')}`;
-    return React.createElement("img", { onClick: onClick, src: src, className: `w-${size} h-${size} rounded-full object-cover shrink-0 ${onClick ? 'cursor-pointer' : ''}`, style: { width: size * 4, height: size * 4 } });
+    return React.createElement("img", { onClick: onClick, src: src, className: `w-${size} h-${size} rounded-lg object-cover shrink-0 ${onClick ? 'cursor-pointer' : ''}`, style: { width: size * 4, height: size * 4 } });
 }
 /* ============================== FRIEND ACTION BUTTON ============================== */
 function FriendActionButton({ meId, otherId, compact }) {
@@ -3020,7 +3021,7 @@ function SharedPostPreview({ postId, go }) {
 function PostSkeleton() {
     return (React.createElement("div", { className: "bg-white dark:bg-ink-800 -mx-2 sm:mx-0 rounded-none sm:rounded-2xl border-y sm:border border-slate-100 dark:border-ink-700 mb-2 p-3 sm:p-4" },
         React.createElement("div", { className: "flex items-center gap-3 mb-3" },
-            React.createElement("div", { className: "w-10 h-10 rounded-full skeleton" }),
+            React.createElement("div", { className: "w-10 h-10 rounded-lg skeleton" }),
             React.createElement("div", { className: "space-y-1.5" },
                 React.createElement("div", { className: "w-32 h-3 rounded skeleton" }),
                 React.createElement("div", { className: "w-20 h-2.5 rounded skeleton" }))),
@@ -3630,7 +3631,7 @@ function ProfileScreen({ uid, go }) {
             React.createElement("div", { className: "px-5 pb-5" },
                 React.createElement("div", { className: "flex justify-between items-end -mt-12 mb-3" },
                     React.createElement("div", { className: "relative" },
-                        React.createElement("img", { src: user.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${user.displayName}`, onClick: () => openLightbox(user.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${user.displayName}`), className: "w-24 h-24 rounded-full border-4 border-white dark:border-ink-800 object-cover bg-white dark:bg-ink-800 cursor-zoom-in" }),
+                        React.createElement("img", { src: user.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${user.displayName}`, onClick: () => openLightbox(user.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${user.displayName}`), className: "w-24 h-24 rounded-xl border-4 border-white dark:border-ink-800 object-cover bg-white dark:bg-ink-800 cursor-zoom-in" }),
                         isMe && (React.createElement("button", { onClick: () => avatarInputRef.current.click(), disabled: uploadingAvatar, className: "absolute bottom-0 right-0 bg-brand-600 hover:bg-brand-700 text-white rounded-full w-8 h-8 flex items-center justify-center border-2 border-white dark:border-ink-800" },
                             React.createElement("i", { className: "fa-solid " + (uploadingAvatar ? "fa-spinner fa-spin" : "fa-camera") + " text-xs" }))),
                         React.createElement("input", { ref: avatarInputRef, type: "file", accept: "image/*", hidden: true, onChange: e => quickUpload(e.target.files[0], 'avatars') }))),
@@ -4073,7 +4074,7 @@ function PageProfileScreen({ id, go }) {
                 React.createElement("input", { ref: coverInputRef, type: "file", accept: "image/*", hidden: true, onChange: e => quickUpload(e.target.files[0], 'covers') })),
             React.createElement("div", { className: "px-3 sm:px-4 pb-4" },
                 React.createElement("div", { className: "-mt-10 mb-2 relative inline-block" },
-                    React.createElement("div", { className: "rounded-full ring-4 ring-white dark:ring-ink-800" }, React.createElement(Avatar, { user: page, size: 24, onClick: () => page.photoURL && openLightbox(page.photoURL) })),
+                    React.createElement("div", { className: "rounded-xl ring-4 ring-white dark:ring-ink-800" }, React.createElement(Avatar, { user: page, size: 24, onClick: () => page.photoURL && openLightbox(page.photoURL) })),
                     isOwner && React.createElement("button", { onClick: () => avatarInputRef.current.click(), className: "absolute bottom-0.5 right-0.5 bg-white dark:bg-ink-700 text-[#050505] dark:text-white w-8 h-8 rounded-full flex items-center justify-center shadow border border-slate-200 dark:border-ink-600 text-xs" }, React.createElement("i", { className: "fa-solid fa-camera" })),
                     React.createElement("input", { ref: avatarInputRef, type: "file", accept: "image/*", hidden: true, onChange: e => quickUpload(e.target.files[0], 'avatars') })),
                 React.createElement("p", { className: "font-display text-xl sm:text-2xl font-extrabold flex items-center gap-1.5 flex-wrap" }, page.displayName,
@@ -7011,7 +7012,7 @@ function GroupScreen({ id, go }) {
             React.createElement("div", { className: "px-3 sm:px-4 pb-4" },
                 React.createElement("div", { className: "-mt-10 mb-2 relative inline-block" },
                     React.createElement(Avatar, { user: group, size: 24, onClick: () => group.photoURL && openLightbox([group.photoURL], 0) }),
-                    React.createElement("div", { className: "absolute inset-0 rounded-full ring-4 ring-white dark:ring-ink-800 pointer-events-none" }),
+                    React.createElement("div", { className: "absolute inset-0 rounded-xl ring-4 ring-white dark:ring-ink-800 pointer-events-none" }),
                     isCreator && React.createElement("button", { onClick: () => avatarRef.current.click(), className: "absolute bottom-0 right-0 bg-brand-600 text-white w-7 h-7 rounded-full flex items-center justify-center text-xs" }, React.createElement("i", { className: "fa-solid fa-camera" })),
                     React.createElement("input", { ref: avatarRef, type: "file", accept: "image/*", hidden: true, onChange: e => quickUpload(e.target.files[0], 'avatars') })),
                 React.createElement("p", { className: "font-display text-lg sm:text-xl font-bold flex items-center gap-2 flex-wrap" }, group.name, React.createElement(GroupPrivacyBadge, { privacy: group.privacy })),
