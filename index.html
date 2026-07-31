@@ -2949,7 +2949,8 @@ function FriendActionButton({ meId, otherId, compact }) {
 function PostTriggerBar({ go }) {
     const { profile } = useAuth();
     return (React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-3 mb-4 flex items-center gap-3" },
-        React.createElement(Avatar, { user: profile, size: 10 }),
+        React.createElement("button", { onClick: () => go({ name: 'profile', uid: profile.id }), className: "shrink-0" },
+            React.createElement(Avatar, { user: profile, size: 10 })),
         React.createElement("button", { onClick: () => go({ name: 'createPost' }), className: "flex-1 text-left bg-slate-100 dark:bg-ink-700 hover:bg-slate-200 dark:hover:bg-ink-600 transition rounded-full px-4 py-2.5 text-slate-500 dark:text-slate-400 text-sm" }, "What's on your mind?"),
         React.createElement("button", { onClick: () => go({ name: 'createPost', openPhotoPicker: true }), title: "Photo/Video", className: "shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-emerald-500 hover:bg-slate-100 dark:hover:bg-ink-700 transition" },
             React.createElement("i", { className: "fa-solid fa-image text-lg" }))));
@@ -4034,19 +4035,27 @@ function TimelineReelCard({ reel, go }) {
             React.createElement("div", { className: "pb-3" }))));
 }
 /* ============================== PEOPLE YOU MAY KNOW ============================== */
+function initialsOf(name) {
+    const parts = (name || '?').trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return '?';
+    return (parts[0][0] + (parts[1] ? parts[1][0] : '')).toUpperCase();
+}
 function PeopleYouMayKnowCard({ u, go, meId, myFriendIds, onDismiss }) {
     const mutualCount = useMutualFriendsCount(myFriendIds, u.id);
-    const photoSrc = u.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(u.displayName || u.username || '?')}`;
+    const displayName = u.displayName || u.username || 'Blueface user';
+    const photo = u.photoURL
+        ? React.createElement("img", { src: u.photoURL, className: "w-full h-full object-cover" })
+        : React.createElement("div", { className: "w-full h-full flex items-center justify-center bg-brand-600" },
+            React.createElement("span", { className: "text-white font-display font-extrabold text-3xl" }, initialsOf(displayName)));
     return React.createElement("div", { className: "relative rounded-lg overflow-hidden border border-slate-200 dark:border-ink-700 bg-white dark:bg-ink-800 fade-in" },
         React.createElement("button", { onClick: () => onDismiss(u.id), title: "Remove", className: "absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-full bg-black/40 hover:bg-black/60 text-white flex items-center justify-center text-xs" },
             React.createElement("i", { className: "fa-solid fa-xmark" })),
-        React.createElement("div", { className: "aspect-square cursor-pointer bg-slate-100 dark:bg-ink-700", onClick: () => go({ name: 'profile', uid: u.id }) },
-            React.createElement("img", { src: photoSrc, className: "w-full h-full object-cover" })),
+        React.createElement("div", { className: "aspect-square cursor-pointer bg-slate-100 dark:bg-ink-700", onClick: () => go({ name: 'profile', uid: u.id }) }, photo),
         React.createElement("div", { className: "p-2.5" },
-            React.createElement("p", { className: "font-semibold text-[15px] leading-tight truncate cursor-pointer", onClick: () => go({ name: 'profile', uid: u.id }) }, u.displayName || u.username),
+            React.createElement("p", { className: "font-semibold text-[15px] leading-tight truncate cursor-pointer", onClick: () => go({ name: 'profile', uid: u.id }) }, displayName),
             React.createElement("p", { className: "text-[13px] text-slate-500 dark:text-slate-400 truncate mb-2.5" },
-                mutualCount > 0 ? (mutualCount + " mutual friend" + (mutualCount > 1 ? "s" : "")) : ("@" + u.username)),
-            React.createElement(FriendActionButton, { meId: meId, otherId: u.id }),
+                mutualCount > 0 ? (mutualCount + " mutual friend" + (mutualCount > 1 ? "s" : "")) : (u.username ? ("@" + u.username) : "New on Blueface")),
+            React.createElement("div", { className: "flex" }, React.createElement(FriendActionButton, { meId: meId, otherId: u.id })),
             React.createElement("button", { onClick: () => onDismiss(u.id), className: "w-full mt-1.5 py-2 rounded-md bg-slate-100 dark:bg-ink-700 text-slate-800 dark:text-slate-200 text-[15px] font-semibold hover:bg-slate-200 dark:hover:bg-ink-600 transition" }, "Remove")));
 }
 function PeopleYouMayKnow({ go }) {
@@ -4956,7 +4965,7 @@ function PageProfileScreen({ id, go }) {
                                     React.createElement("button", { onClick: () => setMenuOpen(v => !v), className: "bg-slate-100 dark:bg-ink-700 rounded-lg w-11 h-11 flex items-center justify-center", title: "More" }, React.createElement("i", { className: "fa-solid fa-ellipsis" })),
                                     menuOpen && React.createElement("div", { className: "absolute right-0 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-600 z-10 w-48" },
                                         React.createElement("button", { onClick: async () => { if (confirm('Delete this Page permanently? This cannot be undone.')) { setMenuOpen(false); await deleteFanPagePermanently(page); toast('Page deleted', 'success'); go({ name: 'myPages' }); } }, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Delete Page")))),
-                            React.createElement("button", { onClick: () => go({ name: 'pageAnalytics', id }), className: "w-full bg-slate-100 dark:bg-ink-700 text-[#050505] dark:text-white rounded-lg py-2.5 text-sm font-bold flex items-center justify-center gap-2" }, React.createElement("i", { className: "fa-solid fa-chart-simple" }), "Professional dashboard"))
+                            React.createElement("button", { onClick: () => go({ name: 'pageAnalytics', id }), className: "w-full bg-brand-600 hover:bg-brand-700 text-white rounded-lg py-2.5 text-sm font-bold flex items-center justify-center gap-2" }, React.createElement("i", { className: "fa-solid fa-chart-simple" }), "Professional dashboard"))
                     ) : (
                         React.createElement("div", { className: "flex flex-wrap items-center gap-2" },
                             React.createElement(PageFollowButton, { page: page, className: "flex-1 min-w-[140px] rounded-lg py-2.5 text-sm font-bold" }),
