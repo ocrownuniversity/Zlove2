@@ -2461,6 +2461,7 @@ function MainApp({ route, setRoute }) {
                 route.name === 'chat' && React.createElement(ChatWindow, { chatId: route.chatId, otherUid: route.otherUid, go: go }),
                 route.name === 'notifications' && React.createElement(NotificationsScreen, { go: go }),
                 route.name === 'bookmarks' && React.createElement(BookmarksScreen, { go: go }),
+                route.name === 'post' && React.createElement(PostDetailScreen, { id: route.id, go: go, openComments: route.openComments }),
                 route.name === 'profile' && React.createElement(ProfileScreen, { uid: route.uid, go: go }),
                 route.name === 'myPages' && React.createElement(MyPagesScreen, { go: go }),
                 route.name === 'groups' && React.createElement(GroupsHomeScreen, { go: go }),
@@ -3227,7 +3228,7 @@ function ReactionsListModal({ reactions, onClose, go }) {
                 React.createElement("span", { className: "text-sm font-semibold truncate" }, u ? (u.displayName || u.username) : 'Loading\u2026'));
         }));
 }
-function PostCard({ post, go, groupCtx }) {
+function PostCard({ post, go, groupCtx, autoOpenComments }) {
     var _a;
     const { profile } = useAuth();
     const toast = useToast();
@@ -3236,7 +3237,7 @@ function PostCard({ post, go, groupCtx }) {
     const [reactions, setReactions] = useState([]); // [{uid, type}] — every reaction on this post, live
     const [reactionsListOpen, setReactionsListOpen] = useState(false);
     const [commentsCount, setCommentsCount] = useState(post.commentsCount || 0);
-    const [showComments, setShowComments] = useState(false);
+    const [showComments, setShowComments] = useState(!!autoOpenComments);
     const [bookmarked, setBookmarked] = useState(false);
     const [menuOpen, setMenuOpen] = useState(false);
     const [reportOpen, setReportOpen] = useState(false);
@@ -3889,7 +3890,7 @@ function SearchScreen({ go, route }) {
                 React.createElement("div", { className: "space-y-2" }, friendUsers.map(u => React.createElement(PersonRow, { key: u.id, u: u })))))))));
 }
 /* ============================== NOTIFICATIONS ============================== */
-const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group' };
+const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', reply: 'replied to your comment', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group' };
 const SYSTEM_NOTIF_TYPES = ['listing_approved', 'listing_removed', 'ad_approved', 'ad_declined', 'group_request_approved', 'group_request_rejected'];
 function NotificationsScreen({ go }) {
     const { profile } = useAuth();
@@ -3920,10 +3921,14 @@ function NotifRow({ n, go }) {
     const openNotif = () => {
         if (n.type === 'message')
             return go({ name: 'chat', chatId: chatIdFor(profile.id, n.fromUserId), otherUid: n.fromUserId });
-        if (n.listingId)
-            return go({ name: 'listing', id: n.listingId });
+        if (n.type === 'friend_request')
+            return go({ name: 'search', tab: 'requests' });
+        if (n.postId)
+            return go({ name: 'post', id: n.postId, openComments: n.type === 'comment' || n.type === 'reply' || n.type === 'tag' });
         if (n.reelId)
             return go({ name: 'reels', reelId: n.reelId });
+        if (n.listingId)
+            return go({ name: 'listing', id: n.listingId });
         if (n.groupId)
             return go({ name: 'group', id: n.groupId });
         go({ name: 'profile', uid: n.fromUserId });
@@ -3938,6 +3943,19 @@ function NotifRow({ n, go }) {
             React.createElement("span", { className: "text-slate-400" },
                 "\u00B7 ",
                 timeAgo(n.createdAt)))));
+}
+/* ============================== SINGLE POST (deep link target for notifications) ============================== */
+function PostDetailScreen({ id, go, openComments }) {
+    const [post, setPost] = useState(undefined); // undefined = loading, null = not found/deleted
+    useEffect(() => {
+        const unsub = db.collection('posts').doc(id).onSnapshot(s => setPost(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setPost(null));
+        return unsub;
+    }, [id]);
+    return (React.createElement("div", { className: "max-w-xl mx-auto" },
+        React.createElement("button", { onClick: () => go({ name: 'home' }), className: "text-sm font-semibold text-slate-500 flex items-center gap-1.5 mb-3" }, React.createElement("i", { className: "fa-solid fa-arrow-left" }), "Back"),
+        post === undefined && React.createElement(PostSkeleton, null),
+        post === null && React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "This post is no longer available."),
+        post && React.createElement(PostCard, { post: post, go: go, autoOpenComments: openComments })));
 }
 /* ============================== BOOKMARKS ============================== */
 function BookmarksScreen({ go }) {
