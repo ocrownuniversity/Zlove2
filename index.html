@@ -4996,10 +4996,15 @@ function DobPicker({ value, onChange }) {
     // itself. Keeping day/month/year as this component's own state fixes that: each dropdown
     // remembers its own choice regardless of whether the full date is complete yet, and we only
     // ever call onChange once all three are actually picked (or the person clears one).
+    // Note: the <option> values for month/day are plain unpadded numbers (1-12, 1-31), so the
+    // local state below must stay unpadded too — otherwise a padded "06" won't match any
+    // option's value "6" and the <select> will render as blank even though the right month is
+    // stored. Zero-padding only happens when we build the final ISO string for onChange.
+    const unpad = s => (s ? String(Number(s)) : '');
     const initial = value ? value.split('-') : ['', '', ''];
     const [year, setYear] = useState(initial[0] || '');
-    const [month, setMonth] = useState(initial[1] || '');
-    const [day, setDay] = useState(initial[2] || '');
+    const [month, setMonth] = useState(unpad(initial[1]));
+    const [day, setDay] = useState(unpad(initial[2]));
     // Handles the case where `value` arrives *after* this component already mounted with an
     // empty one — e.g. the KYC form pre-fills dob from a previous application once it finishes
     // loading. Harmless no-op the rest of the time, since our own onChange below already keeps
@@ -5008,8 +5013,8 @@ function DobPicker({ value, onChange }) {
         if (!value) return;
         const p = value.split('-');
         setYear(p[0] || '');
-        setMonth(p[1] || '');
-        setDay(p[2] || '');
+        setMonth(unpad(p[1]));
+        setDay(unpad(p[2]));
     }, [value]);
     const thisYear = new Date().getFullYear();
     const years = [];
