@@ -4716,8 +4716,28 @@ function ProfileScreen({ uid, go }) {
 }
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 function DobPicker({ value, onChange }) {
-    const parts = value ? value.split('-') : ['', '', ''];
-    const [year, month, day] = [parts[0] || '', parts[1] || '', parts[2] || ''];
+    // Bug this fixes: the old version derived day/month/year purely from `value`, and `value`
+    // (the parent's dob string) only ever gets set once ALL THREE are picked — so picking just
+    // the day called onChange('') (still incomplete), which re-rendered this component with
+    // value='' and reset the day dropdown right back to blank. Every single selection undid
+    // itself. Keeping day/month/year as this component's own state fixes that: each dropdown
+    // remembers its own choice regardless of whether the full date is complete yet, and we only
+    // ever call onChange once all three are actually picked (or the person clears one).
+    const initial = value ? value.split('-') : ['', '', ''];
+    const [year, setYear] = useState(initial[0] || '');
+    const [month, setMonth] = useState(initial[1] || '');
+    const [day, setDay] = useState(initial[2] || '');
+    // Handles the case where `value` arrives *after* this component already mounted with an
+    // empty one — e.g. the KYC form pre-fills dob from a previous application once it finishes
+    // loading. Harmless no-op the rest of the time, since our own onChange below already keeps
+    // `value` in sync with this local state.
+    useEffect(() => {
+        if (!value) return;
+        const p = value.split('-');
+        setYear(p[0] || '');
+        setMonth(p[1] || '');
+        setDay(p[2] || '');
+    }, [value]);
     const thisYear = new Date().getFullYear();
     const years = [];
     for (let y = thisYear; y >= thisYear - 100; y--)
@@ -4727,14 +4747,17 @@ function DobPicker({ value, onChange }) {
     for (let d = 1; d <= daysInMonth; d++)
         days.push(d);
     const update = (part, v) => {
-        const d = { year, month, day, [part]: v };
-        if (!d.year || !d.month || !d.day) {
+        const next = { year, month, day, [part]: v };
+        setYear(next.year);
+        setMonth(next.month);
+        setDay(next.day);
+        if (!next.year || !next.month || !next.day) {
             onChange('');
             return;
         }
-        const dd = String(d.day).padStart(2, '0');
-        const mm = String(d.month).padStart(2, '0');
-        onChange(`${d.year}-${mm}-${dd}`);
+        const dd = String(next.day).padStart(2, '0');
+        const mm = String(next.month).padStart(2, '0');
+        onChange(`${next.year}-${mm}-${dd}`);
     };
     const selectClass = "flex-1 mt-1 px-2 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm";
     return (React.createElement("div", null,
@@ -5210,7 +5233,7 @@ function PageAnalyticsScreen({ id, go }) {
     return (React.createElement("div", null,
         React.createElement("button", { onClick: () => go({ name: 'page', id }), className: "text-sm text-slate-400 mb-3" }, React.createElement("i", { className: "fa-solid fa-arrow-left mr-1.5" }), "Back to Page"),
         React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, page.displayName, " \u00B7 Insights"),
-        React.createElement("p", { className: "text-sm text-slate-400 mb-5" }, "Analytics for your Page, live from Firestore."),
+        React.createElement("p", { className: "text-sm text-slate-400 mb-5" }, "Analytics for your Page."),
         React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-3 mb-6" }, cards.map(([label, val, icon]) => (React.createElement("div", { key: label, className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-4" },
             React.createElement("i", { className: "fa-solid " + icon + " text-brand-500 mb-2" }),
             React.createElement("p", { className: "text-2xl font-display font-bold" }, val),
@@ -5744,7 +5767,7 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
         } : null;
         return React.createElement("div", null,
             React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, "Super Admin Dashboard"),
-            React.createElement("p", { className: "text-sm text-slate-400 mb-5" }, "Platform-wide statistics, live from Firestore."),
+            React.createElement("p", { className: "text-sm text-slate-400 mb-5" }, "Platform-wide statistics."),
             React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" }, cards ? Object.entries(cards).map(([label, val]) => (React.createElement("div", { key: label, className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-4" },
                 React.createElement("p", { className: "text-2xl font-display font-bold" }, val),
                 React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, label)))) : React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026")),
