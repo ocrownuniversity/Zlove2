@@ -7315,23 +7315,30 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
         // hadn't finished registering yet (every unpaid male, and any free female whose auto-
         // registration write hadn't landed) counted toward "Total Dating users" but toward neither
         // "Male users" nor "Female users" — exactly the 2-total/0-male/0-female mismatch reported.
-        // Registration gender is still the source of truth when present (a user's chosen gender
-        // can't change after KYC, but this keeps the older data path authoritative); KYC gender is
-        // the fallback for everyone still short of a completed registration.
-        const datingUserRows = Array.from(datingUserIdSet).map(uid => {
+        // Registration gender is still the source of truth when present; KYC gender is the
+        // fallback for everyone still short of a completed registration.
+        const allDatingUserRows = Array.from(datingUserIdSet).map(uid => {
             const reg = datingRegistrations.find(r => (r.uid || r.id) === uid) || null;
             const kyc = datingKycApps.find(k => (k.uid || k.id) === uid) || null;
             const gender = (reg && reg.gender) || (kyc && kyc.gender) || null;
             return { uid, reg, kyc, gender };
-        }).filter(row => {
+        });
+        // IMPORTANT: maleUsers/femaleUsers/totalDatingUsers must come from allDatingUserRows
+        // (unfiltered), not from the list below — that list is filtered by whatever the admin
+        // has selected in the Users-tab search dropdown (datingUserFilter). Deriving the Overview
+        // counts from the filtered list was a bug: switching the dropdown to e.g. "Male" and then
+        // going back to Overview would make every count reflect that leftover filter instead of
+        // the real totals, which is exactly the kind of "counts don't match reality" confusion
+        // this dashboard exists to prevent.
+        const maleUsers = allDatingUserRows.filter(row => row.gender === 'male').length;
+        const femaleUsers = allDatingUserRows.filter(row => row.gender === 'female').length;
+        const datingUserRows = allDatingUserRows.filter(row => {
             if (datingUserFilter === 'male' && row.gender !== 'male') return false;
             if (datingUserFilter === 'female' && row.gender !== 'female') return false;
             if (datingUserFilter === 'pendingKyc' && (!row.kyc || row.kyc.status !== 'pending')) return false;
             if (datingUserFilter === 'unpaidMale' && !(row.kyc && row.kyc.status === 'verified' && (!row.reg || row.reg.status !== 'active'))) return false;
             return true;
         });
-        const maleUsers = datingUserRows.filter(row => row.gender === 'male').length;
-        const femaleUsers = datingUserRows.filter(row => row.gender === 'female').length;
         const SubtabBtn = (key, label) => React.createElement("button", { key: key, onClick: () => setDatingSubtab(key), className: "px-3 py-1.5 rounded-full text-xs font-semibold " + (datingSubtab === key ? "bg-rose-500 text-white" : "bg-white dark:bg-ink-800 border border-slate-200 dark:border-ink-700") }, label);
         return React.createElement("div", null,
             React.createElement("h2", { className: "font-display text-lg font-bold mb-1" }, "Dating"),
