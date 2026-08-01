@@ -4637,7 +4637,7 @@ function PeopleYouMayKnow({ go }) {
                     React.createElement("div", { className: "h-3 w-3/4 rounded skeleton" }),
                     React.createElement("div", { className: "h-8 w-full rounded-md skeleton" }))))
             : suggestions.map(u => React.createElement(PeopleYouMayKnowCard, { key: u.id, u: u, go: go, meId: profile.id, myFriendIds: myFriendIds, onDismiss: dismiss })));
-    const seeAll = suggestions.length > 0 && React.createElement("button", { onClick: () => go({ name: 'search', tab: 'suggested' }), className: "w-full text-center mt-3 py-2 text-brand-600 dark:text-brand-400 text-[15px] font-semibold hover:underline" },
+    const seeAll = suggestions.length > 0 && React.createElement("button", { onClick: () => go({ name: 'search', tab: 'suggested' }), className: "w-full text-center mt-3 py-2 text-brand-600 dark:text-brand-400 font-display font-bold text-[19px] hover:underline" },
         "See all");
     return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-lg border border-slate-200 dark:border-ink-700 p-3 mb-2 -mx-2 sm:mx-0 sm:rounded-2xl" }, header, grid, seeAll);
 }
