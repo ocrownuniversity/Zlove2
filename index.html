@@ -7826,6 +7826,10 @@ function AdminDatingUserRow({ uid, reg, kyc, adminUid, adminEmail }) {
     const [busy, setBusy] = useState(false);
     const [open, setOpen] = useState(false);
     const [u, setU] = useState(null);
+    // Full Dating profile (photos/bio/age/location/interests) — separate doc from users/{uid} and
+    // from the KYC record above, so it's fetched independently for the admin's "view complete
+    // dating profile" expansion below.
+    const dp = useDatingProfileDoc(open ? uid : null);
     useEffect(() => { const unsub = db.collection('users').doc(uid).onSnapshot(s => setU(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setU(null)); return unsub; }, [uid]);
     const STATUS_BADGE = {
         pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
@@ -7861,10 +7865,21 @@ function AdminDatingUserRow({ uid, reg, kyc, adminUid, adminEmail }) {
                         React.createElement("span", { className: "px-1.5 py-0.5 rounded-full text-[10px] font-semibold " + (STATUS_BADGE[kyc ? kyc.status : 'none'] || '') }, KYC_STATUS_LABELS[kyc ? kyc.status : 'none'] || 'Not started')))),
             React.createElement("button", { onClick: () => setOpen(v => !v), className: "text-slate-300 shrink-0" }, React.createElement("i", { className: "fa-solid " + (open ? 'fa-chevron-up' : 'fa-chevron-down') }))),
         open && React.createElement("div", { className: "mt-3 pt-3 border-t border-slate-100 dark:border-ink-700" },
+            dp === undefined && React.createElement("p", { className: "text-xs text-slate-400 mb-3" }, "Loading Dating profile…"),
+            dp === null && React.createElement("p", { className: "text-xs text-slate-400 mb-3" }, "This user hasn't created a Dating profile yet (KYC/registration only)."),
+            dp && React.createElement("div", { className: "mb-3 flex gap-3" },
+                React.createElement("div", { className: "w-20 h-20 rounded-lg overflow-hidden bg-slate-100 dark:bg-ink-700 shrink-0" }, (dp.photos || [])[0] && React.createElement("img", { src: dp.photos[0], className: "w-full h-full object-cover" })),
+                React.createElement("div", { className: "min-w-0 text-xs text-slate-500 dark:text-slate-400 space-y-0.5" },
+                    React.createElement("p", { className: "text-sm font-semibold text-slate-800 dark:text-slate-100 truncate flex items-center gap-1" }, dp.displayName, dp.verified && React.createElement(VerifiedBadge, { size: "sm" }), dp.visible === false && React.createElement("span", { className: "text-amber-500 font-normal" }, "(paused)")),
+                    React.createElement("p", null, dp.age, " \u00B7 ", dp.gender, " \u00B7 ", dp.location || 'No location set'),
+                    dp.bio && React.createElement("p", { className: "truncate" }, dp.bio),
+                    ((dp.interests || []).length > 0 || (dp.hobbies || []).length > 0) && React.createElement("p", { className: "truncate" }, [].concat(dp.interests || [], dp.hobbies || []).join(', ')),
+                    React.createElement("p", null, (dp.photos || []).length, " photo", (dp.photos || []).length === 1 ? '' : 's'))),
             React.createElement("div", { className: "flex flex-wrap gap-1.5" },
                 React.createElement("button", { disabled: busy || !u, onClick: toggleSuspend, className: "text-[11px] font-semibold px-2 py-1 rounded-lg " + (u && u.suspended ? "bg-emerald-500 text-white" : "bg-amber-500 text-white") }, u && u.suspended ? 'Reactivate' : 'Suspend'),
                 !(u && u.banned) ? React.createElement("button", { disabled: busy || !u, onClick: () => confirm('Ban this user? They will be signed out and blocked from the platform.') && ban(), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-500 text-white" }, "Ban") :
                     React.createElement("button", { disabled: busy, onClick: unban, className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-500 text-white" }, "Unban"),
+                dp && React.createElement("button", { disabled: busy, onClick: () => run(() => setDatingPaused(uid, dp.visible !== false), dp.visible !== false ? 'suspend_dating_profile' : 'resume_dating_profile'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-amber-50 text-amber-600 dark:bg-amber-900/20" }, dp.visible === false ? 'Unhide from Discover' : 'Hide from Discover'),
                 React.createElement("button", { disabled: busy, onClick: () => confirm('Remove this user\'s Dating profile, matches, likes and passes? Their main account is unaffected.') && removeFromDating(), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Remove from Dating"))));
 }
 /* ============================== SUPER ADMIN: DATING REPORT ROW ============================== */
