@@ -2900,7 +2900,6 @@ function OnboardingScreen() {
 function MainApp({ route, setRoute }) {
     const { profile } = useAuth();
     const { theme, setTheme } = useContext(ThemeContext);
-    const [sidebarOpen, setSidebarOpen] = useState(false);
     const unreadMessages = useUnreadMessages(profile.id);
     const unreadNotifications = useUnreadNotifications(profile.id);
     const friendships = useFriendships(profile.id);
@@ -2950,7 +2949,7 @@ function MainApp({ route, setRoute }) {
                 React.createElement("i", { className: "fa-solid fa-arrow-right-from-bracket w-6 text-xl" }),
                 "Sign out")),
         React.createElement("div", { className: "flex-1 min-w-0 flex flex-col" },
-            React.createElement("header", { className: "sticky top-0 z-30 bg-white dark:bg-ink-900 border-b border-slate-200 dark:border-ink-800 md:hidden" },
+            route.name !== 'menu' && React.createElement("header", { className: "sticky top-0 z-30 bg-white dark:bg-ink-900 border-b border-slate-200 dark:border-ink-800 md:hidden" },
                 React.createElement("div", { className: "px-3 py-2 flex items-center justify-between" },
                     React.createElement("div", { className: "flex items-center gap-1.5 text-brand-600 dark:text-brand-400" },
                         React.createElement("span", { className: "font-display font-extrabold text-3xl tracking-tight" }, "Blueface")),
@@ -2959,7 +2958,7 @@ function MainApp({ route, setRoute }) {
                             React.createElement("i", { className: "fa-solid fa-plus text-base" })),
                         React.createElement("button", { onClick: () => go({ name: 'search' }), className: "w-9 h-9 rounded-full bg-slate-100 dark:bg-ink-800 flex items-center justify-center text-ink-900 dark:text-slate-200" },
                             React.createElement("i", { className: "fa-solid fa-magnifying-glass text-base" })),
-                        React.createElement("button", { onClick: () => setSidebarOpen(v => !v), className: "w-9 h-9 rounded-full bg-slate-100 dark:bg-ink-800 flex items-center justify-center text-ink-900 dark:text-slate-200" },
+                        React.createElement("button", { onClick: () => go({ name: 'menu' }), className: "w-9 h-9 rounded-full bg-slate-100 dark:bg-ink-800 flex items-center justify-center text-ink-900 dark:text-slate-200" },
                             React.createElement("i", { className: "fa-solid fa-bars text-base" })))),
                 React.createElement("div", { className: "flex items-stretch justify-around border-t border-slate-200 dark:border-ink-800" },
                     ['home', 'search', 'messages', 'reels', 'notifications', 'marketplace']
@@ -2968,27 +2967,9 @@ function MainApp({ route, setRoute }) {
                         .map(n => React.createElement("button", { key: n.name, onClick: () => go(Object.assign({ name: n.name }, (n.params || {}))), className: "relative flex-1 flex items-center justify-center py-2.5" },
                             React.createElement("i", { className: "fa-solid " + n.icon + " text-[24px] " + (route.name === n.name ? "text-brand-600" : "text-slate-500 dark:text-slate-400") }),
                             !!n.badge && React.createElement("span", { className: "absolute top-1 right-1/4 min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center" }, n.badge > 9 ? '9+' : n.badge),
-                            route.name === n.name && React.createElement("span", { className: "absolute bottom-0 left-1/2 -translate-x-1/2 w-9 h-[3px] rounded-full bg-brand-600" })))),
-                sidebarOpen && React.createElement("div", { className: "px-4 pb-3 flex flex-col gap-1 border-t border-slate-100 dark:border-ink-800 pt-2" },
-                    React.createElement("button", { onClick: () => go({ name: 'games' }), className: "flex items-center gap-3 px-2 py-2.5 rounded-lg text-base font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-ink-800" },
-                        React.createElement("i", { className: "fa-solid fa-gamepad w-6 text-lg" }),
-                        "Games"),
-                    React.createElement("button", { onClick: () => go({ name: 'myPages' }), className: "flex items-center gap-3 px-2 py-2.5 rounded-lg text-base font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-ink-800" },
-                        React.createElement("i", { className: "fa-solid fa-flag w-6 text-lg" }),
-                        "Pages"),
-                    React.createElement("button", { onClick: () => go({ name: 'groups' }), className: "flex items-center gap-3 px-2 py-2.5 rounded-lg text-base font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-ink-800" },
-                        React.createElement("i", { className: "fa-solid fa-people-group w-6 text-lg" }),
-                        "Groups"),
-                    React.createElement("button", { onClick: () => go({ name: 'bookmarks' }), className: "flex items-center gap-3 px-2 py-2.5 rounded-lg text-base font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-ink-800" },
-                        React.createElement("i", { className: "fa-solid fa-bookmark w-6 text-lg" }),
-                        "Saved"),
-                    React.createElement("button", { onClick: () => setTheme(theme === 'dark' ? 'light' : 'dark'), className: "flex items-center gap-3 px-2 py-2.5 rounded-lg text-base font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-ink-800" },
-                        React.createElement("i", { className: "fa-solid " + (theme === 'dark' ? 'fa-sun' : 'fa-moon') + " w-6 text-lg" }),
-                        theme === 'dark' ? 'Light mode' : 'Dark mode'),
-                    React.createElement("button", { onClick: () => auth.signOut(), className: "flex items-center gap-3 px-2 py-2.5 rounded-lg text-base font-bold text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20" },
-                        React.createElement("i", { className: "fa-solid fa-arrow-right-from-bracket w-6 text-lg" }),
-                        "Sign out"))),
-            React.createElement("main", { className: route.name === 'chat' ? "flex-1 max-w-2xl w-full mx-auto md:px-6 md:py-4" : "flex-1 max-w-2xl w-full mx-auto px-2 md:px-6 py-2 pb-8" },
+                            route.name === n.name && React.createElement("span", { className: "absolute bottom-0 left-1/2 -translate-x-1/2 w-9 h-[3px] rounded-full bg-brand-600" }))))),
+            React.createElement("main", { className: route.name === 'menu' ? "flex-1 max-w-2xl w-full mx-auto md:px-6 md:py-4" : route.name === 'chat' ? "flex-1 max-w-2xl w-full mx-auto md:px-6 md:py-4" : "flex-1 max-w-2xl w-full mx-auto px-2 md:px-6 py-2 pb-8" },
+                route.name === 'menu' && React.createElement(MenuScreen, { go: go, theme: theme, setTheme: setTheme }),
                 route.name === 'home' && React.createElement(HomeFeed, { go: go }),
                 route.name === 'reels' && React.createElement(ReelsFeedScreen, { go: go, route: route }),
                 route.name === 'reelUpload' && React.createElement(ReelUploadScreen, { go: go, route: route }),
@@ -3018,7 +2999,113 @@ function MainApp({ route, setRoute }) {
                 route.name === 'monetization' && React.createElement(MonetizationScreen, { id: route.id, go: go }),
                 route.name === 'withdrawals' && React.createElement(WithdrawalsScreen, { id: route.id, go: go }),
                 route.name === 'kycForm' && React.createElement(KycFormScreen, { id: route.id, go: go }),
-                route.name !== 'chat' && React.createElement(Footer, { compact: true })))));
+                route.name !== 'chat' && route.name !== 'menu' && React.createElement(Footer, { compact: true })))));
+}
+/* ============================== MENU SCREEN (hamburger "\u2261" menu) ============================== */
+// Tiles that map to a real, working screen in this app navigate there.
+// Tiles with route: null are not implemented yet, so tapping them just shows a "Coming soon" toast
+// instead of pretending the feature exists.
+const MENU_TILES = [
+    { key: 'dashboard', label: 'Dashboard', icon: 'fa-chart-simple', route: null },
+    { key: 'messages', label: 'Messages', icon: 'fa-comment-dots', route: { name: 'messages' } },
+    { key: 'groups', label: 'Groups', icon: 'fa-people-group', route: { name: 'groups' } },
+    { key: 'friends', label: 'Friends', icon: 'fa-user-group', route: { name: 'search' } },
+    { key: 'reels', label: 'Reels', icon: 'fa-clapperboard', route: { name: 'reels' } },
+    { key: 'marketplace', label: 'Marketplace', icon: 'fa-store', route: { name: 'marketplace' } },
+    { key: 'games', label: 'Games', icon: 'fa-gamepad', route: { name: 'games' } },
+    { key: 'pages', label: 'Pages', icon: 'fa-flag', route: { name: 'myPages' } },
+    { key: 'saved', label: 'Saved', icon: 'fa-bookmark', route: { name: 'bookmarks' } },
+    { key: 'memories', label: 'Memories', icon: 'fa-clock-rotate-left', route: null },
+    { key: 'birthdays', label: 'Birthdays', icon: 'fa-gift', route: null },
+    { key: 'events', label: 'Events', icon: 'fa-calendar-days', route: null },
+    { key: 'metaVerified', label: 'Meta Verified', icon: 'fa-certificate', route: null },
+    { key: 'adCentre', label: 'Ad Centre', icon: 'fa-bullhorn', route: null },
+    { key: 'feeds', label: 'Feeds', icon: 'fa-table-cells-large', route: null },
+    { key: 'instagramLite', label: 'Instagram Lite', icon: 'fa-brands fa-instagram', route: null },
+];
+const MENU_TILE_COLORS = {
+    dashboard: 'bg-blue-100 text-blue-600', messages: 'bg-fuchsia-100 text-fuchsia-600',
+    groups: 'bg-sky-100 text-sky-600', friends: 'bg-emerald-100 text-emerald-600',
+    reels: 'bg-pink-100 text-pink-600', marketplace: 'bg-teal-100 text-teal-600',
+    games: 'bg-violet-100 text-violet-600', pages: 'bg-orange-100 text-orange-600',
+    saved: 'bg-purple-100 text-purple-600', memories: 'bg-blue-100 text-blue-600',
+    birthdays: 'bg-red-100 text-red-500', events: 'bg-red-100 text-red-500',
+    metaVerified: 'bg-blue-100 text-blue-600', adCentre: 'bg-blue-100 text-blue-600',
+    feeds: 'bg-orange-100 text-orange-600', instagramLite: 'bg-pink-100 text-pink-600',
+};
+function MenuTile({ tile, onOpen }) {
+    return React.createElement("button", { onClick: () => onOpen(tile), className: "flex items-center gap-3 bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3 text-left active:scale-[0.98] transition" },
+        React.createElement("span", { className: "w-9 h-9 rounded-lg flex items-center justify-center text-base shrink-0 " + (MENU_TILE_COLORS[tile.key] || 'bg-slate-100 text-slate-600') },
+            React.createElement("i", { className: "fa-solid " + tile.icon })),
+        React.createElement("span", { className: "font-semibold text-[15px] leading-tight" }, tile.label));
+}
+function MenuExpandRow({ icon, label, expanded, onToggle, children }) {
+    return React.createElement("div", { className: "border-b border-slate-100 dark:border-ink-800" },
+        React.createElement("button", { onClick: onToggle, className: "w-full flex items-center gap-4 px-4 py-3.5 text-left" },
+            React.createElement("span", { className: "w-8 h-8 rounded-full bg-slate-100 dark:bg-ink-800 flex items-center justify-center shrink-0" },
+                React.createElement("i", { className: "fa-solid " + icon + " text-slate-600 dark:text-slate-300" })),
+            React.createElement("span", { className: "flex-1 font-semibold text-[15px]" }, label),
+            React.createElement("i", { className: "fa-solid fa-chevron-" + (expanded ? 'up' : 'down') + " text-slate-400 text-sm" })),
+        expanded && React.createElement("div", { className: "pb-3 pl-16 pr-4 flex flex-col gap-1" }, children));
+}
+function MenuScreen({ go, theme, setTheme }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const pages = usePages();
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [helpOpen, setHelpOpen] = useState(false);
+    const soon = (label) => toast((label || 'This feature') + ' is coming soon', 'info');
+    const openTile = (tile) => tile.route ? go(tile.route) : soon(tile.label);
+    const doLogout = () => { if (confirm('Log out of Blueface?')) auth.signOut(); };
+    return (React.createElement("div", { className: "min-h-screen md:min-h-0 bg-slate-50 dark:bg-ink-900 -mx-2 md:mx-0" },
+        React.createElement("div", { className: "sticky top-0 z-20 bg-white dark:bg-ink-900 border-b border-slate-100 dark:border-ink-800 px-3 py-2.5 flex items-center justify-between" },
+            React.createElement("div", { className: "flex items-center gap-3" },
+                React.createElement("button", { onClick: () => go({ name: 'home' }), className: "w-9 h-9 flex items-center justify-center text-xl" },
+                    React.createElement("i", { className: "fa-solid fa-chevron-left" })),
+                React.createElement("h1", { className: "font-display text-2xl font-extrabold" }, "Menu")),
+            React.createElement("div", { className: "flex items-center gap-1" },
+                React.createElement("button", { onClick: () => soon('Reordering shortcuts'), className: "w-9 h-9 rounded-full flex items-center justify-center text-slate-600 dark:text-slate-300" },
+                    React.createElement("i", { className: "fa-solid fa-arrow-up-short-wide" })),
+                React.createElement("button", { onClick: () => go({ name: 'search' }), className: "w-9 h-9 rounded-full flex items-center justify-center text-slate-600 dark:text-slate-300" },
+                    React.createElement("i", { className: "fa-solid fa-magnifying-glass" })))),
+        React.createElement("div", { className: "px-3 py-3 space-y-3" },
+            React.createElement("button", { onClick: () => go({ name: 'profile', uid: profile.id }), className: "w-full flex items-center gap-3 bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3 text-left" },
+                React.createElement(Avatar, { user: profile, size: 12 }),
+                React.createElement("div", { className: "flex-1 min-w-0" },
+                    React.createElement("p", { className: "font-bold text-base leading-tight truncate" }, profile.displayName || profile.username),
+                    React.createElement("p", { className: "text-xs text-brand-600 dark:text-brand-400 font-semibold" }, "View your profile")),
+                React.createElement("span", { onClick: (e) => { e.stopPropagation(); soon('Switching accounts'); }, className: "w-9 h-9 rounded-full bg-slate-100 dark:bg-ink-700 flex items-center justify-center shrink-0" },
+                    React.createElement("i", { className: "fa-solid fa-chevron-down text-slate-500 text-xs" }))),
+            React.createElement("button", { onClick: () => soon('Inviting friends'), className: "w-full flex items-center gap-3 bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3.5 text-left" },
+                React.createElement("i", { className: "fa-solid fa-heart text-red-500 text-lg" }),
+                React.createElement("span", { className: "font-semibold text-[15px]" }, "Invite friends")),
+            React.createElement("div", { className: "grid grid-cols-2 gap-3" }, MENU_TILES.map(t => React.createElement(MenuTile, { key: t.key, tile: t, onOpen: openTile }))),
+            React.createElement("div", { className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl overflow-hidden" },
+                React.createElement(MenuExpandRow, { icon: "fa-gear", label: "Settings & privacy", expanded: settingsOpen, onToggle: () => setSettingsOpen(v => !v) },
+                    React.createElement("button", { onClick: () => setTheme(theme === 'dark' ? 'light' : 'dark'), className: "flex items-center gap-3 py-2 text-left text-sm font-semibold text-slate-600 dark:text-slate-300" },
+                        React.createElement("i", { className: "fa-solid " + (theme === 'dark' ? 'fa-sun' : 'fa-moon') + " w-5" }),
+                        theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'),
+                    React.createElement("button", { onClick: () => soon('Settings'), className: "flex items-center gap-3 py-2 text-left text-sm font-semibold text-slate-600 dark:text-slate-300" },
+                        React.createElement("i", { className: "fa-solid fa-user-gear w-5" }),
+                        "Account settings"),
+                    React.createElement("button", { onClick: () => soon('Privacy checkup'), className: "flex items-center gap-3 py-2 text-left text-sm font-semibold text-slate-600 dark:text-slate-300" },
+                        React.createElement("i", { className: "fa-solid fa-lock w-5" }),
+                        "Privacy checkup")),
+                React.createElement(MenuExpandRow, { icon: "fa-circle-question", label: "Help & support", expanded: helpOpen, onToggle: () => setHelpOpen(v => !v) },
+                    React.createElement("button", { onClick: () => pages.openPage('help'), className: "flex items-center gap-3 py-2 text-left text-sm font-semibold text-slate-600 dark:text-slate-300" },
+                        React.createElement("i", { className: "fa-solid fa-life-ring w-5" }),
+                        "Help Center"),
+                    React.createElement("button", { onClick: () => pages.openPage('contact'), className: "flex items-center gap-3 py-2 text-left text-sm font-semibold text-slate-600 dark:text-slate-300" },
+                        React.createElement("i", { className: "fa-solid fa-envelope w-5" }),
+                        "Contact us")),
+                React.createElement("button", { onClick: () => soon('Adding another account'), className: "w-full flex items-center gap-4 px-4 py-3.5 text-left border-b border-slate-100 dark:border-ink-800" },
+                    React.createElement("span", { className: "w-8 h-8 rounded-full bg-slate-100 dark:bg-ink-800 flex items-center justify-center shrink-0" },
+                        React.createElement("i", { className: "fa-solid fa-user-plus text-slate-600 dark:text-slate-300" })),
+                    React.createElement("span", { className: "font-semibold text-[15px]" }, "Add Account")),
+                React.createElement("button", { onClick: doLogout, className: "w-full flex items-center gap-4 px-4 py-3.5 text-left" },
+                    React.createElement("span", { className: "w-8 h-8 rounded-full bg-slate-100 dark:bg-ink-800 flex items-center justify-center shrink-0" },
+                        React.createElement("i", { className: "fa-solid fa-arrow-right-from-bracket text-red-500" })),
+                    React.createElement("span", { className: "font-semibold text-[15px] text-red-500" }, "Log Out"))))));
 }
 /* ============================== AVATAR ============================== */
 const PAGE_CATEGORIES = [
@@ -8124,8 +8211,7 @@ function ReelsStrip({ go }) {
                 React.createElement("p", { className: "absolute bottom-2 inset-x-0 text-center text-white text-xs font-semibold px-1" }, formatCount(r.viewsCount || 0), " views"))))));
 }
 /* ============================== GROUPS ==============================
- * Collections used (recommended Firestore/Storage rules are appended to the trailing HTML
- * comment at the end of this file, alongside the existing Reels rules):
+ * Collections used:
  *  - groups/{groupId}                              group document + denormalized counters
  *  - groups/{groupId}/members/{uid}                 { uid, role: 'admin'|'moderator'|'member', muted, joinedAt }
  *  - groups/{groupId}/joinRequests/{uid}            pending request to join a private group
@@ -9121,326 +9207,5 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
 document.getElementById('root').dataset.mounted = 'true';
 
 </script>
-<!--
-================================================================================
- REELS FEATURE — RECOMMENDED FIRESTORE & STORAGE SECURITY RULES
-================================================================================
-This app talks to Firestore/Storage directly from the client, so access control
-must be enforced with security rules in the Firebase Console (Firestore Database
--> Rules, and Storage -> Rules), not just in the UI. Paste the two rule sets
-below (adjust to match whatever rules you already have for posts/users/pages).
-
---- Firestore rules (add inside `service cloud.firestore { match /databases/{db}/documents { ... } }`) ---
-
-    function signedIn() { return request.auth != null; }
-    function isOwner(id) { return signedIn() && request.auth.uid == id; }
-
-    match /reels/{reelId} {
-      allow read: if true; // privacy (public/followers/friends/private) is enforced client-side
-                            // in canViewReel(); for stricter server-side enforcement, replace this
-                            // with a Cloud Function-backed check or duplicate that logic here.
-      allow create: if signedIn() && request.resource.data.authorId == request.auth.uid;
-      allow update: if signedIn() && (resource.data.authorId == request.auth.uid || isAdmin());
-      allow delete: if signedIn() && (resource.data.authorId == request.auth.uid || isAdmin());
-
-      match /likes/{uid} {
-        allow read: if true;
-        allow write: if isOwner(uid);
-      }
-      match /views/{uid} {
-        allow read: if false;
-        allow write: if isOwner(uid);
-      }
-      match /comments/{commentId} {
-        allow read: if true;
-        allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
-        allow delete: if signedIn() && (resource.data.uid == request.auth.uid ||
-                       get(/databases/$(db)/documents/reels/$(reelId)).data.authorId == request.auth.uid || isAdmin());
-        match /likes/{uid} {
-          allow read: if true;
-          allow write: if isOwner(uid);
-        }
-      }
-    }
-    match /savedReels/{uid}/items/{reelId} {
-      allow read, write: if isOwner(uid);
-    }
-    match /reelReports/{reportId} {
-      allow create: if signedIn();
-      allow read, update, delete: if isAdmin();
-    }
-    // isAdmin() should already exist in your ruleset for the rest of the app
-    // (e.g. checking a custom claim or an `admins/{uid}` doc) — reuse it here.
-
---- Storage rules (add inside `service firebase.storage { match /b/{bucket}/o { ... } }`) ---
-
-    match /reels/{authorId}/{reelId}/{fileName} {
-      allow read: if true;
-      allow write: if request.auth != null && request.auth.uid == authorId
-                   && request.resource.size < 250 * 1024 * 1024
-                   && (fileName == 'video.mp4' ? request.resource.contentType.matches('video/.*')
-                                                : request.resource.contentType.matches('image/.*'));
-    }
-    match /reelComments/{reelId}/{fileName} {
-      allow read: if true;
-      allow write: if request.auth != null && request.resource.contentType.matches('image/.*')
-                   && request.resource.size < 10 * 1024 * 1024;
-    }
-================================================================================
- GROUPS FEATURE — RECOMMENDED FIRESTORE & STORAGE SECURITY RULES
-================================================================================
-Group *posts* live in the existing top-level `posts` collection (just with a
-groupId set), so they're covered by whatever rules you already have there —
-just make sure that rule lets `update` bump `groupPinned` for a group's
-admins/moderators, not only the post's own author, e.g.:
-
-    match /posts/{postId} {
-      allow update: if signedIn() && (
-        resource.data.authorId == request.auth.uid || isAdmin() ||
-        (resource.data.groupId != null &&
-         get(/databases/$(db)/documents/groups/$(resource.data.groupId)/members/$(request.auth.uid)).data.role in ['admin', 'moderator'])
-      );
-    }
-
---- Firestore rules ---
-
-    function isGroupMember(groupId) {
-      return exists(/databases/$(db)/documents/groups/$(groupId)/members/$(request.auth.uid));
-    }
-    function groupRole(groupId) {
-      return get(/databases/$(db)/documents/groups/$(groupId)/members/$(request.auth.uid)).data.role;
-    }
-    function isGroupStaff(groupId) {
-      return signedIn() && isGroupMember(groupId) && groupRole(groupId) in ['admin', 'moderator'];
-    }
-
-    match /groups/{groupId} {
-      // A private group's *document* (name/cover/member count) stays discoverable so search
-      // and "request to join" work; it's the group's *posts*, above, that actually gate on
-      // membership for private groups (enforced client-side via post.groupPrivacy today —
-      // for stronger guarantees, duplicate that privacy check into the posts rule as well).
-      allow read: if true;
-      allow create: if signedIn() && request.resource.data.creatorId == request.auth.uid;
-      allow update: if signedIn() && (resource.data.creatorId == request.auth.uid || isAdmin() ||
-                     isGroupStaff(groupId)); // staff can only touch counters in practice — tighten
-                                              // further with field-level checks if desired.
-      allow delete: if signedIn() && (resource.data.creatorId == request.auth.uid || isAdmin());
-
-      match /members/{uid} {
-        allow read: if true;
-        allow create: if isOwner(uid) || isGroupStaff(groupId); // self-join, or staff approving/adding
-        allow update: if isGroupStaff(groupId) || isOwner(uid);  // role/mute changes, or leaving via delete
-        allow delete: if isOwner(uid) || isGroupStaff(groupId);
-      }
-      match /joinRequests/{uid} {
-        allow read: if isOwner(uid) || isGroupStaff(groupId);
-        allow create: if isOwner(uid);
-        allow delete: if isOwner(uid) || isGroupStaff(groupId);
-      }
-      match /invites/{uid} {
-        allow read: if isOwner(uid) || isGroupStaff(groupId);
-        allow create: if isGroupStaff(groupId);
-        allow delete: if isOwner(uid) || isGroupStaff(groupId);
-      }
-      match /events/{eventId} {
-        allow read: if true;
-        allow create: if isGroupStaff(groupId);
-        allow update: if isGroupStaff(groupId) ||
-                       (signedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['attendeeIds'])); // RSVP
-        allow delete: if isGroupStaff(groupId);
-      }
-    }
-
---- Storage rules ---
-
-    match /groupAssets/{groupId}/{fileName} {
-      allow read: if true;
-      allow write: if request.auth != null && request.resource.contentType.matches('image/.*')
-                   && request.resource.size < 10 * 1024 * 1024;
-    }
-    match /groupPosts/{groupId}/{fileName} {
-      allow read: if true;
-      allow write: if request.auth != null && request.resource.size < 250 * 1024 * 1024;
-    }
-    match /groupFiles/{groupId}/{fileName} {
-      allow read: if true;
-      allow write: if request.auth != null && request.resource.size < 25 * 1024 * 1024;
-    }
-================================================================================
- PAGE MONETIZATION & KYC — RECOMMENDED FIRESTORE & STORAGE SECURITY RULES
-================================================================================
-KYC documents contain sensitive personal data (full name, DOB, country/state,
-address, phone, email, ID document, selfie, and bank account details), so
-`pageKyc/{pageId}` must only ever be readable by the Page's owner and admins —
-never public. One document per Page id also means a second `create` for the
-same Page simply overwrites the existing application instead of creating a
-duplicate, which combined with `allow create/update` below is what prevents a
-page from having two live KYC applications at once. The same one-doc-per-page
-pattern is reused for `pageMonetizationApplications/{pageId}`, the separate
-collection that tracks the actual monetization application (Eligible / Pending
-Review / Approved / Rejected / Suspended) once KYC has been verified.
-
---- Firestore rules (add inside `service cloud.firestore { match /databases/{db}/documents { ... } }`) ---
-
-    function signedIn() { return request.auth != null; }
-    function isAdmin() {
-      return signedIn() &&
-        get(/databases/$(db)/documents/users/$(request.auth.uid)).data.isAdmin == true;
-    }
-    function ownsPage(pageId) {
-      return signedIn() &&
-        get(/databases/$(db)/documents/fanPages/$(pageId)).data.ownerId == request.auth.uid;
-    }
-
-    match /fanPages/{pageId} {
-      // Existing Page rules stay as they are; just make sure whatever `update` rule you
-      // already have lets the owner touch kycStatus and monetizationStatus indirectly (via
-      // submitPageKyc / applyForMonetization, which only ever set those fields to 'pending' —
-      // never to 'verified'/'approved') and monetizationEnabled, while reserving the actual
-      // approval transitions for admins only:
-      // Also add `request.resource.data.displayName == resource.data.displayName` to the owner
-      // branch below so an owner can never rename a Page with a direct write — only the
-      // pageNameChangeRequests approval transaction (which runs as an admin) may change it.
-      allow update: if signedIn() && (
-        (resource.data.ownerId == request.auth.uid &&
-         request.resource.data.kycStatus == resource.data.kycStatus &&
-         request.resource.data.monetizationEnabled == resource.data.monetizationEnabled &&
-         request.resource.data.displayName == resource.data.displayName) || // owner can't self-approve or self-rename
-        isAdmin()
-      );
-    }
-
-    match /pageNames/{nameKey} {
-      // Reservation doc backing the globally-unique Page name index (nameKey is the
-      // case/whitespace-insensitive normalization of the name — see normalizePageNameKey).
-      // Public read so create-Page/request-name-change flows can check availability client-side;
-      // only ever created by the Page-creation transaction (owner, for a key that doesn't yet
-      // exist) or moved by the name-change-approval transaction (admin only, from then on).
-      allow read: if true;
-      allow create: if signedIn() && ownsPage(request.resource.data.pageId) &&
-        !exists(/databases/$(db)/documents/pageNames/$(nameKey));
-      allow update, delete: if isAdmin();
-    }
-
-    match /pageNameChangeRequests/{requestId} {
-      // Owners may read/create their own Page's requests; only admins can read across every
-      // Page (needed for the admin Page Name Change Requests panel) or transition status
-      // (approve/reject). The Page's displayName itself is never writable by the owner directly
-      // (see the fanPages `update` rule above) — approval is the only path that changes it.
-      allow read: if isAdmin() || (signedIn() && resource.data.ownerId == request.auth.uid);
-      allow create: if signedIn() && ownsPage(request.resource.data.pageId) &&
-        request.resource.data.ownerId == request.auth.uid && request.resource.data.status == 'pending';
-      allow update: if isAdmin();
-      allow delete: if isAdmin();
-    }
-
-    match /pageKyc/{pageId} {
-      // Only the Page's owner or an admin may ever read the application (it holds an ID
-      // photo, a selfie, and personal/financial details).
-      allow read: if ownsPage(pageId) || isAdmin();
-      // Only the owner may create/re-submit their own Page's application, and only while it
-      // isn't already 'pending' or 'verified' (prevents duplicate/parallel applications —
-      // mirrors the client-side check in KycFormScreen for defense in depth).
-      allow create: if ownsPage(pageId) && request.resource.data.ownerId == request.auth.uid;
-      allow update: if isAdmin() ||
-        (ownsPage(pageId) && resource.data.status == 'rejected' && request.resource.data.status == 'pending');
-      allow delete: if isAdmin();
-    }
-
-    match /pageMonetizationApplications/{pageId} {
-      // Only the Page's owner or an admin may ever read a monetization application.
-      allow read: if ownsPage(pageId) || isAdmin();
-      // Owner may (re-)apply while eligible; server-side re-verification of the 1,000-follower
-      // and verified-KYC requirements should live in a Cloud Function trigger if you need this
-      // enforced beyond the client-side check in MonetizationScreen (see note below).
-      allow create: if ownsPage(pageId) && request.resource.data.ownerId == request.auth.uid;
-      allow update: if isAdmin() ||
-        (ownsPage(pageId) && resource.data.status == 'rejected' && request.resource.data.status == 'pending');
-      allow delete: if isAdmin();
-    }
-
---- Storage rules (add inside `service firebase.storage { match /b/{bucket}/o { ... } }`) ---
-
-    match /pageKyc/{pageId}/{fileName} {
-      // ID photos and selfies are private: only the uploading owner and admins can read them.
-      // firestore.get() lets Storage rules check the *Firestore* fanPages/users docs directly
-      // (supported on modern Firebase projects) so this stays consistent with the app's
-      // single admin flag rather than needing separate custom claims.
-      allow read: if request.auth != null && (
-        firestore.get(/databases/(default)/documents/fanPages/$(pageId)).data.ownerId == request.auth.uid ||
-        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin == true
-      );
-      allow write: if request.auth != null &&
-        firestore.get(/databases/(default)/documents/fanPages/$(pageId)).data.ownerId == request.auth.uid &&
-        request.resource.contentType.matches('image/.*') && request.resource.size < 10 * 1024 * 1024;
-    }
-
---- Withdrawals, earnings log & monetization settings (add alongside the rules above) ---
-
-    match /withdrawalRequests/{id} {
-      // Owner may read/create their own Page's requests; only admins can read across all Pages
-      // (needed for the admin Withdrawals panel) or transition status (approve/reject/mark paid).
-      allow read: if isAdmin() || (signedIn() && resource.data.ownerId == request.auth.uid);
-      allow create: if signedIn() && ownsPage(request.resource.data.pageId) &&
-        request.resource.data.ownerId == request.auth.uid && request.resource.data.status == 'pending';
-      allow update: if isAdmin();
-      allow delete: if isAdmin();
-    }
-
-    match /pageEarningsLog/{id} {
-      // Audit trail of manual earnings adjustments — admin-only read/write, owner cannot see or
-      // forge entries (their live balance is exposed via fanPages.earningsBalance instead).
-      allow read, write: if isAdmin();
-    }
-
-    match /pageEarningsLedger/{id} {
-      // One doc per automatically-credited engagement earning (see creditEngagementEarning) —
-      // the id itself (e.g. like_<postId>_<uid>) is what makes duplicate crediting impossible,
-      // so this collection must never be deletable by anyone but an admin, and never writable
-      // by a client claiming a status of 'matured' (only matureEarnings, run by the owner's own
-      // client today, may flip pending -> matured; move this into a Cloud Function for
-      // production if you don't want the owner's client to be trusted with even that).
-      allow read: if isAdmin() || (signedIn() && ownsPage(resource.data.pageId));
-      allow create: if signedIn() && request.resource.data.status == 'pending' &&
-        request.resource.data.actorId == request.auth.uid;
-      allow update: if isAdmin() || (signedIn() && ownsPage(resource.data.pageId) &&
-        resource.data.status == 'pending' && request.resource.data.status == 'matured');
-      allow delete: if isAdmin();
-    }
-
-    match /pageEarningsCaps/{id} {
-      // Per (page, actor, source, day) counters backing creditEngagementEarning's daily farming
-      // caps. Only the actor named in the doc id may increment their own counter.
-      allow read: if isAdmin();
-      allow write: if signedIn() && id.split('_')[1] == request.auth.uid;
-    }
-
-    match /settings/site {
-      // Public read (site branding + monetization toggles need to be visible to all signed-in
-      // users so the client can gate Apply/Withdraw buttons); only admins can write.
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-
-Caution: the existing fanPages `allow update` rule above only blocks an owner from touching
-kycStatus/monetizationEnabled themselves — it does not stop a malicious client from writing
-earningsBalance, pendingEarnings, lifetimeEarnings, lifetimeWithdrawn, totalValidStreams,
-totalValidLikes, or totalValidComments directly. For production, tighten it to also require
-each of those fields equal their previous value for any *non-admin, non-transaction* update
-(all legitimate changes already go through creditEngagementEarning/matureEarnings/
-adminAdjustEarnings/requestWithdrawal), or move every balance mutation into a Cloud Function
-entirely — the client-side transaction in creditEngagementEarning is a reasonable first line of
-defense but, being client code, is not something a determined attacker is bound by.
-
-Note: enforcing the "1,000 followers" half of eligibility purely in security rules would need
-a denormalized follower counter (this app intentionally reads follower counts live from the
-pageFollows collection instead, to avoid counter-drift bugs — see useFollowersCount). The
-1,000-follower gate is therefore enforced client-side in MonetizationScreen, same as this file's
-existing "enforced client-side" caveats for reel privacy and group post visibility above. If you
-need it enforced server-side too, add a Cloud Function that maintains fanPages/{pageId}.followersCount
-and check that field (alongside kycStatus == 'verified') in the pageMonetizationApplications
-create rule above.
-================================================================================
--->
 </body>
 </html>
