@@ -1098,6 +1098,12 @@ const DEFAULT_SITE_SETTINGS = {
     pendingClearanceHours: 24,
     // Soft per-page-per-actor-per-day caps so one account can't farm a single Page's payouts.
     dailyCapStreams: 500, dailyCapLikes: 500, dailyCapComments: 200,
+    // Dating platform: one-time registration fee (NGN) charged to male users only — female
+    // users always register free, see registerDatingFree/confirmDatingPayment below. Admin can
+    // change the amount any time from Super Admin → Dating → Settings; it takes effect on the
+    // next payment attempt immediately, no redeploy needed. datingEnabled is a kill-switch that
+    // hides the feature entirely (menu tile still shows a "temporarily unavailable" state).
+    datingFeeNaira: 1000, datingEnabled: true,
 };
 function formatUSD(n) {
     return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -1758,6 +1764,99 @@ async function adminRejectKyc(k, adminUid, reason) {
     // KYC is a hard requirement for monetization to stay enabled.
     await db.collection('fanPages').doc(k.pageId).update({ kycStatus: 'rejected', monetizationEnabled: false, monetizationStatus: 'none' });
     notifyPageOwner(k.ownerId, k.pageId, 'kyc_rejected', { reason: reason || '' });
+}
+/* ============================== DATING: KYC + REGISTRATION DATA LAYER ==============================
+ * Mirrors the Page-KYC pattern above (one-doc-per-uid, re-submission overwrites and resets to
+ * 'pending'), but keyed by user uid instead of pageId, in two collections:
+ *   - datingKyc/{uid}            — government ID + selfie verification, admin-reviewed
+ *   - datingRegistrations/{uid}  — the (free or paid) registration record that actually grants access
+ * A denormalized `datingKycStatus` + `datingActive` flag is also mirrored onto users/{uid} so the
+ * gate can be checked in one read (e.g. from the menu tile) without hitting either subcollection,
+ * same denormalization trick used for fanPages.kycStatus elsewhere in this file.
+ */
+async function uploadDatingKycImage(uid, file, kind) {
+    const compressed = await compressImage(file, kind === 'selfie' ? 900 : 1400, 0.85);
+    const ref = storage.ref(`datingKyc/${uid}/${kind}.jpg`);
+    await ref.put(compressed, { contentType: 'image/jpeg' });
+    return ref.getDownloadURL();
+}
+async function submitDatingKyc(uid, fields, files) {
+    const [govIdURL, selfieURL] = await Promise.all([
+        uploadDatingKycImage(uid, files.govId, 'govId'),
+        uploadDatingKycImage(uid, files.selfie, 'selfie'),
+    ]);
+    await db.collection('datingKyc').doc(uid).set({
+        uid, fullName: fields.fullName.trim(), dob: fields.dob, idType: fields.idType,
+        govIdURL, selfieURL, status: 'pending', rejectionReason: FieldValue.delete(),
+        submittedAt: FieldValue.serverTimestamp(), reviewedAt: null, reviewedBy: null,
+    }, { merge: true });
+    await db.collection('users').doc(uid).update({ datingKycStatus: 'pending' });
+}
+async function adminApproveDatingKyc(k, adminUid) {
+    await db.collection('datingKyc').doc(k.uid).update({ status: 'verified', reviewedAt: FieldValue.serverTimestamp(), reviewedBy: adminUid, rejectionReason: FieldValue.delete() });
+    await db.collection('users').doc(k.uid).update({ datingKycStatus: 'verified' });
+    notifyUser(k.uid, 'dating_kyc_approved', {});
+    // Female users register free — grant access immediately now that KYC is the last requirement
+    // cleared. Male users still need to pay; registerDatingFree is a no-op for anyone already
+    // registered so this is safe to call unconditionally.
+    const userSnap = await db.collection('users').doc(k.uid).get();
+    if (userSnap.exists && userSnap.data().gender === 'female') {
+        await registerDatingFree(k.uid);
+    }
+}
+async function adminRejectDatingKyc(k, adminUid, reason) {
+    await db.collection('datingKyc').doc(k.uid).update({ status: 'rejected', reviewedAt: FieldValue.serverTimestamp(), reviewedBy: adminUid, rejectionReason: reason || '' });
+    await db.collection('users').doc(k.uid).update({ datingKycStatus: 'rejected', datingActive: false });
+    notifyUser(k.uid, 'dating_kyc_rejected', { reason: reason || '' });
+}
+// Free registration path for female users. Uses the uid as the doc id (same one-doc-per-user
+// pattern as datingKyc above) so it's naturally idempotent — calling it twice just overwrites the
+// same record instead of creating duplicates.
+async function registerDatingFree(uid) {
+    await db.collection('datingRegistrations').doc(uid).set({
+        uid, gender: 'female', amountNaira: 0, method: 'free', status: 'active',
+        registeredAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    await db.collection('users').doc(uid).update({ datingActive: true });
+}
+// Records a completed payment and grants access for male users. `reference` is the payment
+// gateway transaction reference (or a 'DEMO-' prefixed id when using the in-app payment
+// simulator — see DatingPaymentPanel). IMPORTANT: this function only *records* a payment as
+// successful; it does not itself verify one. In production, call this from a Cloud Function that
+// verifies the reference server-side against your payment provider's API (e.g. Paystack's
+// /transaction/verify endpoint) using your secret key — never trust a client-reported "success"
+// for real money. The client-side call here is left in place so the UI/Firestore flow is fully
+// wired end-to-end for demo/testing purposes.
+async function confirmDatingPayment(uid, amountNaira, reference, method) {
+    await db.collection('datingRegistrations').doc(uid).set({
+        uid, gender: 'male', amountNaira: amountNaira || 0, method: method || 'simulated', status: 'active',
+        reference: reference || ('DEMO-' + Date.now()), registeredAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    await db.collection('users').doc(uid).update({ datingActive: true });
+}
+// Generic "notify one user" helper (as opposed to notifyPageOwner, which carries pageId). Used by
+// the Dating KYC approve/reject flow above.
+function notifyUser(uid, type, extra) {
+    if (!uid) return;
+    db.collection('notifications').doc(uid).collection('items').add(Object.assign({ type, read: false, createdAt: FieldValue.serverTimestamp() }, extra || {})).catch(() => { });
+}
+function useDatingKyc(uid) {
+    const [kyc, setKyc] = useState(undefined);
+    useEffect(() => {
+        if (!uid) { setKyc(null); return; }
+        const unsub = db.collection('datingKyc').doc(uid).onSnapshot(s => setKyc(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setKyc(null));
+        return unsub;
+    }, [uid]);
+    return kyc;
+}
+function useDatingRegistration(uid) {
+    const [reg, setReg] = useState(undefined);
+    useEffect(() => {
+        if (!uid) { setReg(null); return; }
+        const unsub = db.collection('datingRegistrations').doc(uid).onSnapshot(s => setReg(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setReg(null));
+        return unsub;
+    }, [uid]);
+    return reg;
 }
 // Owner applies for monetization once both requirements (verified KYC + follower threshold)
 // are met. Creates/overwrites the single pageMonetizationApplications/{pageId} doc, same
@@ -3038,6 +3137,8 @@ function MainApp({ route, setRoute }) {
                 route.name === 'post' && React.createElement(PostDetailScreen, { id: route.id, go: go, openComments: route.openComments }),
                 route.name === 'profile' && React.createElement(ProfileScreen, { uid: route.uid, go: go }),
                 route.name === 'myPages' && React.createElement(MyPagesScreen, { go: go }),
+                route.name === 'dating' && React.createElement(DatingScreen, { go: go }),
+                route.name === 'datingProfile' && React.createElement(DatingProfileScreen, { uid: route.uid, go: go }),
                 route.name === 'groups' && React.createElement(GroupsHomeScreen, { go: go }),
                 route.name === 'groupForm' && React.createElement(GroupFormScreen, { id: route.id, go: go }),
                 route.name === 'group' && React.createElement(GroupScreen, { id: route.id, go: go }),
@@ -3058,6 +3159,7 @@ const MENU_TILES = [
     { key: 'messages', label: 'Messages', icon: 'fa-comment-dots', route: { name: 'messages' } },
     { key: 'groups', label: 'Groups', icon: 'fa-people-group', route: { name: 'groups' } },
     { key: 'friends', label: 'Friends', icon: 'fa-user-group', route: { name: 'search' } },
+    { key: 'dating', label: 'Dating', icon: 'fa-heart', route: { name: 'dating' } },
     { key: 'reels', label: 'Reels', icon: 'fa-clapperboard', route: { name: 'reels' } },
     { key: 'marketplace', label: 'Marketplace', icon: 'fa-store', route: { name: 'marketplace' } },
     { key: 'games', label: 'Games', icon: 'fa-gamepad', route: { name: 'games' } },
@@ -3072,6 +3174,7 @@ const MENU_TILES = [
 const MENU_TILE_COLORS = {
     dashboard: 'bg-blue-100 text-blue-600', messages: 'bg-fuchsia-100 text-fuchsia-600',
     groups: 'bg-sky-100 text-sky-600', friends: 'bg-emerald-100 text-emerald-600',
+    dating: 'bg-rose-100 text-rose-600',
     reels: 'bg-pink-100 text-pink-600', marketplace: 'bg-teal-100 text-teal-600',
     games: 'bg-violet-100 text-violet-600', pages: 'bg-orange-100 text-orange-600',
     saved: 'bg-purple-100 text-purple-600', memories: 'bg-blue-100 text-blue-600',
@@ -4665,11 +4768,15 @@ const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your p
     withdrawal_approved: 'Your withdrawal request was approved', withdrawal_rejected: 'Your withdrawal request was rejected',
     withdrawal_paid: 'Your withdrawal payment was completed',
     page_name_change_submitted: 'Your Page name change request was submitted for review', page_name_change_approved: 'Your Page name change was approved',
-    page_name_change_rejected: 'Your Page name change request was rejected' };
+    page_name_change_rejected: 'Your Page name change request was rejected',
+    dating_kyc_approved: 'Your Dating identity verification was approved', dating_kyc_rejected: 'Your Dating identity verification was rejected',
+    dating_match: 'matched with you on Dating' };
+const DATING_NOTIF_TYPES = ['dating_kyc_approved', 'dating_kyc_rejected'];
 const SYSTEM_NOTIF_TYPES = ['listing_approved', 'listing_removed', 'ad_approved', 'ad_declined', 'group_request_approved', 'group_request_rejected',
     'kyc_approved', 'kyc_rejected', 'followers_milestone', 'monetization_eligible', 'monetization_approved', 'monetization_rejected', 'monetization_suspended',
     'earnings_updated', 'withdrawal_approved', 'withdrawal_rejected', 'withdrawal_paid',
-    'page_name_change_submitted', 'page_name_change_approved', 'page_name_change_rejected'];
+    'page_name_change_submitted', 'page_name_change_approved', 'page_name_change_rejected',
+    'dating_kyc_approved', 'dating_kyc_rejected'];
 const PAGE_NAME_CHANGE_NOTIF_TYPES = ['page_name_change_submitted', 'page_name_change_approved', 'page_name_change_rejected'];
 const MONETIZATION_NOTIF_TYPES = ['kyc_approved', 'kyc_rejected', 'followers_milestone', 'monetization_eligible', 'monetization_approved', 'monetization_rejected', 'monetization_suspended', 'earnings_updated'];
 const WITHDRAWAL_NOTIF_TYPES = ['withdrawal_approved', 'withdrawal_rejected', 'withdrawal_paid'];
@@ -4718,10 +4825,12 @@ function NotifRow({ n, go }) {
             return go({ name: 'monetization', id: n.pageId });
         if (PAGE_NAME_CHANGE_NOTIF_TYPES.includes(n.type) && n.pageId)
             return go({ name: 'pageForm', id: n.pageId });
+        if (DATING_NOTIF_TYPES.includes(n.type))
+            return go({ name: 'dating' });
         go({ name: 'profile', uid: n.fromUserId });
     };
     return (React.createElement("div", { onClick: openNotif, className: "flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700 cursor-pointer" },
-        isSystem ? React.createElement("div", { className: "w-9 h-9 rounded-full bg-brand-50 dark:bg-brand-900/30 flex items-center justify-center text-brand-600 dark:text-brand-400 shrink-0" }, React.createElement("i", { className: "fa-solid " + (n.groupId ? 'fa-people-group' : PAGE_NAME_CHANGE_NOTIF_TYPES.includes(n.type) ? 'fa-signature' : (MONETIZATION_NOTIF_TYPES.includes(n.type) || WITHDRAWAL_NOTIF_TYPES.includes(n.type)) ? 'fa-sack-dollar' : 'fa-store') })) : React.createElement(Avatar, { user: from, size: 9 }),
+        isSystem ? React.createElement("div", { className: "w-9 h-9 rounded-full bg-brand-50 dark:bg-brand-900/30 flex items-center justify-center text-brand-600 dark:text-brand-400 shrink-0" }, React.createElement("i", { className: "fa-solid " + (n.groupId ? 'fa-people-group' : DATING_NOTIF_TYPES.includes(n.type) ? 'fa-heart' : PAGE_NAME_CHANGE_NOTIF_TYPES.includes(n.type) ? 'fa-signature' : (MONETIZATION_NOTIF_TYPES.includes(n.type) || WITHDRAWAL_NOTIF_TYPES.includes(n.type)) ? 'fa-sack-dollar' : 'fa-store') })) : React.createElement(Avatar, { user: from, size: 9 }),
         React.createElement("p", { className: "text-sm" },
             !isSystem && React.createElement("span", { className: "font-semibold" }, from.displayName),
             !isSystem && " ",
@@ -5892,6 +6001,298 @@ function WithdrawalsScreen({ id, go }) {
             React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, timeAgo(w.requestedAt)),
             w.status === 'rejected' && w.rejectionReason && React.createElement("p", { className: "text-xs text-red-500 mt-1" }, "Reason: ", w.rejectionReason))))));
 }
+/* ============================== DATING ==============================
+ * Access gate, in order: signed in (guaranteed by MainApp already) → gender on file → KYC
+ * verified (government ID + selfie, admin-reviewed) → female: free / male: one-time paid fee
+ * (amount admin-configurable in settings/site.datingFeeNaira). Once through the gate, users can
+ * browse verified members of the opposite gender, like/pass, and message mutual matches through
+ * the existing chat system (ChatWindow / chatIdFor) — no separate messaging stack needed.
+ */
+const DATING_INTERESTS = ['Music', 'Movies', 'Travel', 'Fitness', 'Food', 'Gaming', 'Faith', 'Books', 'Tech', 'Art', 'Fashion', 'Nature', 'Sports', 'Comedy'];
+const DATING_LOOKING_FOR = [['relationship', 'Relationship'], ['marriage', 'Marriage'], ['friendship', 'Friendship'], ['casual', 'Casual']];
+// Set this to a real Paystack public key (pk_live_… / pk_test_…) to enable the live checkout
+// popup in DatingPaymentPanel below, and add <script src="https://js.paystack.co/v1/inline.js">
+// to <head>. Left blank by default so the app still runs out of the box via the clearly-labeled
+// "Simulate payment" fallback. See confirmDatingPayment's doc comment above for why a real
+// integration must verify the transaction server-side (Cloud Function) before trusting it.
+const PAYSTACK_PUBLIC_KEY = '';
+async function likeDatingProfile(fromUid, toUid) {
+    await db.collection('datingLikes').doc(fromUid + '_' + toUid).set({ from: fromUid, to: toUid, createdAt: FieldValue.serverTimestamp() });
+    const reverseSnap = await db.collection('datingLikes').doc(toUid + '_' + fromUid).get();
+    if (reverseSnap.exists) {
+        const matchId = [fromUid, toUid].sort().join('_');
+        await db.collection('datingMatches').doc(matchId).set({ uids: [fromUid, toUid].sort(), createdAt: FieldValue.serverTimestamp() }, { merge: true });
+        notifyUser(fromUid, 'dating_match', { fromUserId: toUid });
+        notifyUser(toUid, 'dating_match', { fromUserId: fromUid });
+        return true;
+    }
+    return false;
+}
+async function passDatingProfile(fromUid, toUid) {
+    await db.collection('datingPasses').doc(fromUid + '_' + toUid).set({ from: fromUid, to: toUid, createdAt: FieldValue.serverTimestamp() });
+}
+function DatingScreen({ go }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const settings = useSiteSettings();
+    const kyc = useDatingKyc(profile.id);
+    const registration = useDatingRegistration(profile.id);
+    const [genderDraft, setGenderDraft] = useState(profile.gender || '');
+    const [savingGender, setSavingGender] = useState(false);
+    // Auto-grant free access to female users the instant their KYC clears — no extra tap needed.
+    // registerDatingFree is idempotent so this is safe even if it fires more than once.
+    useEffect(() => {
+        if (profile.gender === 'female' && kyc && kyc.status === 'verified' && (!registration || registration.status !== 'active')) {
+            registerDatingFree(profile.id).catch(() => { });
+        }
+    }, [profile.gender, kyc, registration, profile.id]);
+    if (!settings.datingEnabled) {
+        return React.createElement("div", { className: "text-center py-20 px-4" },
+            React.createElement("i", { className: "fa-solid fa-heart-crack text-4xl text-slate-300 mb-3" }),
+            React.createElement("p", { className: "font-semibold" }, "Dating is temporarily unavailable"),
+            React.createElement("p", { className: "text-sm text-slate-400 mt-1" }, "Please check back later."));
+    }
+    const saveGender = async (e) => {
+        e.preventDefault();
+        if (!genderDraft) return;
+        setSavingGender(true);
+        try { await db.collection('users').doc(profile.id).update({ gender: genderDraft }); }
+        catch (err) { toast(err.message, 'error'); }
+        finally { setSavingGender(false); }
+    };
+    if (!profile.gender) {
+        return React.createElement("div", { className: "max-w-sm mx-auto text-center py-12 px-4" },
+            React.createElement("i", { className: "fa-solid fa-heart text-4xl text-rose-500 mb-3" }),
+            React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, "Welcome to Dating"),
+            React.createElement("p", { className: "text-sm text-slate-400 mb-6" }, "Tell us your gender to continue — this determines your registration path. Female members register free; male members pay a one-time ", formatNaira(settings.datingFeeNaira), " fee."),
+            React.createElement("form", { onSubmit: saveGender, className: "space-y-3" },
+                React.createElement("div", { className: "grid grid-cols-2 gap-2" },
+                    ['female', 'male'].map(g => React.createElement("button", { key: g, type: "button", onClick: () => setGenderDraft(g), className: "py-3 rounded-xl border text-sm font-semibold capitalize " + (genderDraft === g ? "border-rose-500 bg-rose-50 text-rose-600 dark:bg-rose-900/20" : "border-slate-200 dark:border-ink-700") }, g))),
+                React.createElement("button", { disabled: !genderDraft || savingGender, type: "submit", className: "w-full bg-rose-500 hover:bg-rose-600 disabled:opacity-50 text-white rounded-xl py-3 font-semibold text-sm" }, savingGender ? 'Saving…' : 'Continue')));
+    }
+    if (kyc === undefined || registration === undefined) {
+        return React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "Loading…");
+    }
+    if (!kyc || kyc.status !== 'verified') {
+        return React.createElement(DatingKycPanel, { kyc: kyc });
+    }
+    const needsPayment = profile.gender === 'male' && !(registration && registration.status === 'active');
+    if (needsPayment) {
+        return React.createElement(DatingPaymentPanel, { profile: profile, settings: settings });
+    }
+    return React.createElement(DatingHomeFeed, { go: go, profile: profile });
+}
+function DatingKycPanel({ kyc }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const [fullName, setFullName] = useState((kyc && kyc.fullName) || '');
+    const [dob, setDob] = useState((kyc && kyc.dob) || '');
+    const [idType, setIdType] = useState((kyc && kyc.idType) || KYC_ID_TYPES[0]);
+    const [govIdFile, setGovIdFile] = useState(null);
+    const [selfieFile, setSelfieFile] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const inputCls = "w-full mt-1 px-3 py-2.5 sm:py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm";
+    if (kyc && kyc.status === 'pending') {
+        return React.createElement("div", { className: "max-w-sm mx-auto text-center py-14 px-4" },
+            React.createElement("i", { className: "fa-solid fa-hourglass-half text-4xl text-amber-500 mb-3" }),
+            React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, "Verification in review"),
+            React.createElement("p", { className: "text-sm text-slate-400" }, "We're reviewing your ID and selfie. This usually takes less than 24 hours — you'll get a notification the moment it's decided."));
+    }
+    const submit = async (e) => {
+        e.preventDefault();
+        if (!fullName.trim() || !dob) { toast('Please fill in your full name and date of birth', 'error'); return; }
+        if ((!govIdFile && !(kyc && kyc.govIdURL)) || (!selfieFile && !(kyc && kyc.selfieURL))) { toast('Please upload a government-issued ID and a selfie', 'error'); return; }
+        setBusy(true);
+        try {
+            await submitDatingKyc(profile.id, { fullName, dob, idType }, {
+                govId: govIdFile || (await (await fetch(kyc.govIdURL)).blob()),
+                selfie: selfieFile || (await (await fetch(kyc.selfieURL)).blob()),
+            });
+            toast('Verification submitted for review', 'success');
+        }
+        catch (err) { toast(err.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    return React.createElement("div", { className: "max-w-md mx-auto px-1 sm:px-0" },
+        React.createElement("div", { className: "text-center mb-5" },
+            React.createElement("i", { className: "fa-solid fa-heart text-3xl text-rose-500 mb-2" }),
+            React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, "Verify your identity"),
+            React.createElement("p", { className: "text-sm text-slate-400" }, "Required once before you can access Dating. Only visible to you and platform admins.")),
+        kyc && kyc.status === 'rejected' && React.createElement("div", { className: "bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-300 rounded-xl p-3 mb-4 text-sm" },
+            React.createElement("p", { className: "font-semibold mb-0.5" }, "Your previous submission was rejected"),
+            kyc.rejectionReason && React.createElement("p", null, kyc.rejectionReason)),
+        React.createElement("form", { onSubmit: submit, className: "space-y-4" },
+            React.createElement(PageFormField, { label: "Full legal name" },
+                React.createElement("input", { value: fullName, onChange: e => setFullName(e.target.value), required: true, className: inputCls, placeholder: "As shown on your ID" })),
+            React.createElement(DobPicker, { value: dob, onChange: setDob }),
+            React.createElement(PageFormField, { label: "Government-issued ID type" },
+                React.createElement("select", { value: idType, onChange: e => setIdType(e.target.value), className: inputCls },
+                    KYC_ID_TYPES.map(t => React.createElement("option", { key: t, value: t }, t)))),
+            React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-4" },
+                React.createElement(PageFormField, { label: "Upload ID document" },
+                    React.createElement("input", { type: "file", accept: "image/*", onChange: e => setGovIdFile(e.target.files[0]), className: inputCls + " file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-rose-50 file:text-rose-600" }),
+                    kyc && kyc.govIdURL && !govIdFile && React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, "Previously uploaded ID on file — upload a new one to replace it.")),
+                React.createElement(PageFormField, { label: "Selfie / live photo verification" },
+                    React.createElement("input", { type: "file", accept: "image/*", capture: "user", onChange: e => setSelfieFile(e.target.files[0]), className: inputCls + " file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-rose-50 file:text-rose-600" }),
+                    kyc && kyc.selfieURL && !selfieFile && React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, "Previously uploaded selfie on file — upload a new one to replace it."))),
+            React.createElement("button", { disabled: busy, type: "submit", className: "w-full bg-rose-500 hover:bg-rose-600 disabled:opacity-50 text-white rounded-xl py-3 sm:py-2.5 font-semibold text-sm" }, busy ? 'Submitting…' : (kyc && kyc.status === 'rejected' ? 'Resubmit for review' : 'Submit for review'))));
+}
+function DatingPaymentPanel({ profile, settings }) {
+    const toast = useToast();
+    const [busy, setBusy] = useState(false);
+    const fee = settings.datingFeeNaira || 0;
+    const payWithPaystack = () => {
+        if (typeof PaystackPop === 'undefined' || !PAYSTACK_PUBLIC_KEY) {
+            toast('Paystack isn\u2019t configured yet — use "Simulate payment" below for now.', 'error');
+            return;
+        }
+        const handler = PaystackPop.setup({
+            key: PAYSTACK_PUBLIC_KEY, email: profile.email, amount: fee * 100, currency: 'NGN',
+            ref: 'DATING-' + profile.id + '-' + Date.now(),
+            callback: (response) => {
+                confirmDatingPayment(profile.id, fee, response.reference, 'paystack')
+                    .then(() => toast('Payment confirmed — welcome to Dating!', 'success'))
+                    .catch(err => toast(err.message, 'error'));
+            },
+            onClose: () => { },
+        });
+        handler.openIframe();
+    };
+    const simulatePayment = async () => {
+        setBusy(true);
+        try {
+            await confirmDatingPayment(profile.id, fee, null, 'simulated');
+            toast('Payment confirmed (demo) — welcome to Dating!', 'success');
+        }
+        catch (err) { toast(err.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    return React.createElement("div", { className: "max-w-sm mx-auto text-center py-10 px-4" },
+        React.createElement("i", { className: "fa-solid fa-heart text-4xl text-rose-500 mb-3" }),
+        React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, "One-time registration fee"),
+        React.createElement("p", { className: "text-sm text-slate-400 mb-1" }, "Your identity is verified. Male members pay a one-time fee to unlock Dating."),
+        React.createElement("p", { className: "font-display text-3xl font-extrabold my-4" }, formatNaira(fee)),
+        React.createElement("button", { onClick: payWithPaystack, className: "w-full bg-rose-500 hover:bg-rose-600 text-white rounded-xl py-3 font-semibold text-sm mb-2" }, "Pay ", formatNaira(fee)),
+        React.createElement("button", { disabled: busy, onClick: simulatePayment, className: "w-full border border-slate-200 dark:border-ink-700 rounded-xl py-3 font-semibold text-sm text-slate-500" }, busy ? 'Processing…' : 'Simulate payment (demo)'),
+        React.createElement("p", { className: "text-[11px] text-slate-400 mt-3" }, "The fee is set by the platform admin and can change. This is a one-time payment — you won't be charged again."));
+}
+function DatingHomeFeed({ go, profile }) {
+    const toast = useToast();
+    const [tab, setTab] = useState('browse');
+    const [candidates, setCandidates] = useState(null);
+    const [passedIds, setPassedIds] = useState(new Set());
+    const [matches, setMatches] = useState(null);
+    const [index, setIndex] = useState(0);
+    const opposite = profile.gender === 'male' ? 'female' : 'male';
+    useEffect(() => {
+        if (tab !== 'browse') return;
+        db.collection('users').where('gender', '==', opposite).where('datingActive', '==', true).limit(40).get()
+            .then(snap => setCandidates(snap.docs.map(d => Object.assign({ id: d.id }, d.data())).filter(u => u.id !== profile.id)))
+            .catch(() => setCandidates([]));
+    }, [tab, opposite, profile.id]);
+    useEffect(() => {
+        if (tab !== 'matches') return;
+        const unsub = db.collection('datingMatches').where('uids', 'array-contains', profile.id).onSnapshot(async (snap) => {
+            const rows = snap.docs.map(d => Object.assign({ id: d.id }, d.data()));
+            const others = await Promise.all(rows.map(async (r) => {
+                const otherUid = r.uids.find(u => u !== profile.id);
+                const s = await db.collection('users').doc(otherUid).get();
+                return s.exists ? Object.assign({ id: s.id }, s.data()) : null;
+            }));
+            setMatches(others.filter(Boolean));
+        }, () => setMatches([]));
+        return unsub;
+    }, [tab, profile.id]);
+    const current = (candidates || []).filter(c => !passedIds.has(c.id))[index];
+    const like = async () => {
+        if (!current) return;
+        try {
+            const matched = await likeDatingProfile(profile.id, current.id);
+            toast(matched ? 'It’s a match! ❤️' : 'Liked', 'success');
+        }
+        catch (err) { toast(err.message, 'error'); }
+        setIndex(i => i + 1);
+    };
+    const pass = async () => {
+        if (!current) return;
+        try { await passDatingProfile(profile.id, current.id); } catch (e) { }
+        setPassedIds(s => new Set(s).add(current.id));
+        setIndex(i => i + 1);
+    };
+    return React.createElement("div", { className: "max-w-md mx-auto" },
+        React.createElement("div", { className: "flex items-center gap-2 mb-4" },
+            React.createElement("i", { className: "fa-solid fa-heart text-rose-500 text-xl" }),
+            React.createElement("h2", { className: "font-display text-xl font-bold" }, "Dating")),
+        React.createElement("div", { className: "flex gap-2 mb-4" },
+            [['browse', 'Browse'], ['matches', 'Matches'], ['profile', 'My Profile']].map(([k, l]) => React.createElement("button", { key: k, onClick: () => setTab(k), className: "px-3 py-1.5 rounded-full text-xs font-semibold " + (tab === k ? "bg-rose-500 text-white" : "bg-slate-100 dark:bg-ink-700") }, l))),
+        tab === 'browse' && (candidates === null ? React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "Loading…") :
+            !current ? React.createElement("div", { className: "text-center py-16" },
+                React.createElement("i", { className: "fa-solid fa-heart-crack text-3xl text-slate-300 mb-2" }),
+                React.createElement("p", { className: "text-sm text-slate-400" }, "No more profiles right now — check back later.")) :
+            React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 overflow-hidden" },
+                React.createElement("div", { className: "aspect-[4/5] bg-slate-100 dark:bg-ink-700" },
+                    current.photoURL && React.createElement("img", { src: current.photoURL, className: "w-full h-full object-cover" })),
+                React.createElement("div", { className: "p-4" },
+                    React.createElement("p", { className: "font-display text-lg font-bold" }, current.displayName || current.username),
+                    current.datingLookingFor && React.createElement("p", { className: "text-xs text-rose-500 font-semibold mb-1" }, "Looking for: ", (DATING_LOOKING_FOR.find(([k]) => k === current.datingLookingFor) || [null, current.datingLookingFor])[1]),
+                    current.datingBio && React.createElement("p", { className: "text-sm text-slate-500 mb-2" }, current.datingBio),
+                    !!(current.datingInterests || []).length && React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-2" }, current.datingInterests.map(t => React.createElement("span", { key: t, className: "text-[11px] px-2 py-0.5 rounded-full bg-rose-50 text-rose-600 dark:bg-rose-900/20 font-semibold" }, t))),
+                    React.createElement("div", { className: "flex gap-3 mt-3" },
+                        React.createElement("button", { onClick: pass, className: "flex-1 py-3 rounded-xl border border-slate-200 dark:border-ink-700 font-semibold text-slate-500" }, React.createElement("i", { className: "fa-solid fa-xmark mr-1.5" }), "Pass"),
+                        React.createElement("button", { onClick: like, className: "flex-1 py-3 rounded-xl bg-rose-500 hover:bg-rose-600 text-white font-semibold" }, React.createElement("i", { className: "fa-solid fa-heart mr-1.5" }), "Like"))))),
+        tab === 'matches' && (matches === null ? React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "Loading…") :
+            matches.length === 0 ? React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "No matches yet — keep browsing!") :
+                React.createElement("div", { className: "space-y-2" }, matches.map(m => React.createElement("div", { key: m.id, className: "flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
+                    React.createElement(Avatar, { user: m, size: 11 }),
+                    React.createElement("div", { className: "flex-1 min-w-0" },
+                        React.createElement("p", { className: "font-semibold text-sm truncate" }, m.displayName || m.username)),
+                    React.createElement("button", { onClick: () => go({ name: 'chat', chatId: chatIdFor(profile.id, m.id), otherUid: m.id }), className: "px-3 py-1.5 rounded-full bg-rose-500 text-white text-xs font-semibold" }, "Message"))))),
+        tab === 'profile' && React.createElement(DatingProfileEditor, { profile: profile }));
+}
+function DatingProfileEditor({ profile }) {
+    const toast = useToast();
+    const [bio, setBio] = useState(profile.datingBio || '');
+    const [lookingFor, setLookingFor] = useState(profile.datingLookingFor || 'relationship');
+    const [interests, setInterests] = useState(profile.datingInterests || []);
+    const [busy, setBusy] = useState(false);
+    const toggleInterest = (t) => setInterests(list => list.includes(t) ? list.filter(x => x !== t) : [...list, t]);
+    const save = async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        try {
+            await db.collection('users').doc(profile.id).update({ datingBio: bio.trim(), datingLookingFor: lookingFor, datingInterests: interests });
+            toast('Dating profile saved', 'success');
+        }
+        catch (err) { toast(err.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    return React.createElement("form", { onSubmit: save, className: "space-y-4" },
+        React.createElement(PageFormField, { label: "About you" },
+            React.createElement("textarea", { value: bio, onChange: e => setBio(e.target.value), rows: 3, maxLength: 300, className: "w-full mt-1 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm", placeholder: "Tell people a bit about yourself…" })),
+        React.createElement(PageFormField, { label: "Looking for" },
+            React.createElement("select", { value: lookingFor, onChange: e => setLookingFor(e.target.value), className: "w-full mt-1 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" },
+                DATING_LOOKING_FOR.map(([k, l]) => React.createElement("option", { key: k, value: k }, l)))),
+        React.createElement(PageFormField, { label: "Interests" },
+            React.createElement("div", { className: "flex flex-wrap gap-1.5 mt-1" }, DATING_INTERESTS.map(t => React.createElement("button", { key: t, type: "button", onClick: () => toggleInterest(t), className: "text-xs px-2.5 py-1 rounded-full font-semibold " + (interests.includes(t) ? "bg-rose-500 text-white" : "bg-slate-100 dark:bg-ink-700 text-slate-500") }, t)))),
+        React.createElement("p", { className: "text-[11px] text-slate-400" }, "Your Dating profile uses your existing profile photo and name from Blueface."),
+        React.createElement("button", { disabled: busy, type: "submit", className: "w-full bg-rose-500 hover:bg-rose-600 disabled:opacity-50 text-white rounded-xl py-2.5 font-semibold text-sm" }, busy ? 'Saving…' : 'Save profile'));
+}
+function DatingProfileScreen({ uid, go }) {
+    const [user, setUser] = useState(undefined);
+    useEffect(() => {
+        const unsub = db.collection('users').doc(uid).onSnapshot(s => setUser(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setUser(null));
+        return unsub;
+    }, [uid]);
+    if (user === undefined) return React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "Loading…");
+    if (!user) return React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "Profile not found.");
+    return React.createElement("div", { className: "max-w-md mx-auto" },
+        React.createElement("button", { onClick: () => go({ name: 'dating' }), className: "text-sm text-slate-400 mb-3" }, React.createElement("i", { className: "fa-solid fa-arrow-left mr-1.5" }), "Back to Dating"),
+        React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 overflow-hidden" },
+            React.createElement("div", { className: "aspect-[4/5] bg-slate-100 dark:bg-ink-700" }, user.photoURL && React.createElement("img", { src: user.photoURL, className: "w-full h-full object-cover" })),
+            React.createElement("div", { className: "p-4" },
+                React.createElement("p", { className: "font-display text-lg font-bold" }, user.displayName || user.username),
+                user.datingBio && React.createElement("p", { className: "text-sm text-slate-500 mt-1" }, user.datingBio))));
+}
 /* ============================== ADMIN ============================== */
 function SuperAdminApp({ theme, setTheme }) {
     const { profile, firebaseUser } = useAuth();
@@ -5904,6 +6305,7 @@ function SuperAdminApp({ theme, setTheme }) {
         { key: 'pages', label: 'Pages', icon: 'fa-flag' },
         { key: 'pageNameRequests', label: 'Name Change Requests' + (pendingNameChangeCount ? ' (' + pendingNameChangeCount + ')' : ''), icon: 'fa-signature' },
         { key: 'monetization', label: 'Monetization', icon: 'fa-sack-dollar' },
+        { key: 'dating', label: 'Dating', icon: 'fa-heart' },
         { key: 'marketplace', label: 'Marketplace', icon: 'fa-store' },
         { key: 'reports', label: 'Reports', icon: 'fa-flag' },
         { key: 'announcements', label: 'Announcements', icon: 'fa-bullhorn' },
@@ -5966,6 +6368,11 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
     const [genericReports, setGenericReports] = useState([]);
     const [auditLog, setAuditLog] = useState([]);
     const [settingsForm, setSettingsForm] = useState(null);
+    const [datingSubtab, setDatingSubtab] = useState('overview');
+    const [datingKycApps, setDatingKycApps] = useState([]);
+    const [datingKycFilter, setDatingKycFilter] = useState('pending');
+    const [datingRegistrations, setDatingRegistrations] = useState([]);
+    const [datingSettingsForm, setDatingSettingsForm] = useState(null);
     const toast = useToast();
     useEffect(() => {
         if (tab !== 'dashboard') return;
@@ -6051,6 +6458,20 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
     useEffect(() => {
         if (tab !== 'monetization') return;
         db.collection('settings').doc('site').get().then(s => setMonetizationSettingsForm(Object.assign({}, DEFAULT_SITE_SETTINGS, s.exists ? s.data() : {}))).catch(() => setMonetizationSettingsForm(DEFAULT_SITE_SETTINGS));
+    }, [tab]);
+    useEffect(() => {
+        if (tab !== 'dating') return;
+        const unsub = db.collection('datingKyc').limit(300).onSnapshot(snap => setDatingKycApps(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setDatingKycApps([]));
+        return unsub;
+    }, [tab]);
+    useEffect(() => {
+        if (tab !== 'dating') return;
+        const unsub = db.collection('datingRegistrations').limit(500).onSnapshot(snap => setDatingRegistrations(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setDatingRegistrations([]));
+        return unsub;
+    }, [tab]);
+    useEffect(() => {
+        if (tab !== 'dating') return;
+        db.collection('settings').doc('site').get().then(s => setDatingSettingsForm(Object.assign({}, DEFAULT_SITE_SETTINGS, s.exists ? s.data() : {}))).catch(() => setDatingSettingsForm(DEFAULT_SITE_SETTINGS));
     }, [tab]);
     useEffect(() => {
         if (tab !== 'marketplace') return;
@@ -6204,6 +6625,35 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
                 React.createElement("div", { className: "flex gap-2 mb-3 overflow-x-auto", style: { scrollbarWidth: 'none' } }, [['pending', 'Pending Review'], ['approved', 'Approved'], ['rejected', 'Rejected'], ['suspended', 'Suspended'], ['all', 'All']].map(([k, l]) => (React.createElement("button", { key: k, onClick: () => setMonetizationFilter(k), className: "shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold " + (monetizationFilter === k ? "bg-brand-600 text-white" : "bg-white dark:bg-ink-800 border border-slate-200 dark:border-ink-700") }, l)))),
                 filteredApps.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No ", monetizationFilter === 'all' ? '' : (MONETIZATION_STATUS_LABELS[monetizationFilter] || monetizationFilter), " applications."),
                 React.createElement("div", { className: "space-y-2" }, filteredApps.map(a => React.createElement(AdminMonetizationAppRow, { key: a.id, a: a, adminUid: adminUid, adminEmail: adminEmail })))));
+    }
+    if (tab === 'dating') {
+        const filteredDatingKyc = datingKycApps.filter(k => datingKycFilter === 'all' || k.status === datingKycFilter);
+        const activeRegs = datingRegistrations.filter(r => r.status === 'active');
+        const paidRegs = activeRegs.filter(r => r.method !== 'free');
+        const freeRegs = activeRegs.filter(r => r.method === 'free');
+        const totalCollected = paidRegs.reduce((s, r) => s + (r.amountNaira || 0), 0);
+        const SubtabBtn = (key, label) => React.createElement("button", { key: key, onClick: () => setDatingSubtab(key), className: "px-3 py-1.5 rounded-full text-xs font-semibold " + (datingSubtab === key ? "bg-rose-500 text-white" : "bg-white dark:bg-ink-800 border border-slate-200 dark:border-ink-700") }, label);
+        return React.createElement("div", null,
+            React.createElement("h2", { className: "font-display text-lg font-bold mb-1" }, "Dating"),
+            React.createElement("p", { className: "text-xs text-slate-400 mb-3" }, "Users need Verified KYC to access Dating. Female users register free; male users pay the one-time fee configured below."),
+            React.createElement("div", { className: "flex gap-2 mb-4 overflow-x-auto", style: { scrollbarWidth: 'none' } }, SubtabBtn('overview', 'Overview'), SubtabBtn('kyc', 'KYC Submissions' + (datingKycApps.filter(k => k.status === 'pending').length ? ' (' + datingKycApps.filter(k => k.status === 'pending').length + ')' : '')), SubtabBtn('registrations', 'Registrations'), SubtabBtn('settings', 'Settings')),
+            datingSubtab === 'overview' && React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" }, Object.entries({
+                'Verified members': activeRegs.length, 'Paid registrations': paidRegs.length,
+                'Free (female) registrations': freeRegs.length, 'Total fees collected': formatNaira(totalCollected),
+            }).map(([label, val]) => (React.createElement("div", { key: label, className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-4" },
+                React.createElement("p", { className: "text-2xl font-display font-bold" }, val),
+                React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, label))))),
+            datingSubtab === 'kyc' && React.createElement("div", null,
+                React.createElement("div", { className: "flex gap-2 mb-3 overflow-x-auto", style: { scrollbarWidth: 'none' } }, [['pending', 'Pending'], ['verified', 'Verified'], ['rejected', 'Rejected'], ['all', 'All']].map(([k, l]) => (React.createElement("button", { key: k, onClick: () => setDatingKycFilter(k), className: "shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold " + (datingKycFilter === k ? "bg-rose-500 text-white" : "bg-white dark:bg-ink-800 border border-slate-200 dark:border-ink-700") }, l)))),
+                filteredDatingKyc.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No ", datingKycFilter === 'all' ? '' : (KYC_STATUS_LABELS[datingKycFilter] || datingKycFilter), " submissions."),
+                React.createElement("div", { className: "space-y-2" }, filteredDatingKyc.map(k => React.createElement(AdminDatingKycRow, { key: k.id, k: k, adminUid: adminUid, adminEmail: adminEmail })))),
+            datingSubtab === 'registrations' && React.createElement("div", null,
+                React.createElement("button", { onClick: () => exportToCsv('dating-registrations.csv', datingRegistrations.map(r => ({ uid: r.uid, gender: r.gender, method: r.method, amountNaira: r.amountNaira || 0, status: r.status, reference: r.reference || '' }))), className: "text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-100 dark:bg-ink-700 mb-3" }, React.createElement("i", { className: "fa-solid fa-file-arrow-down mr-1.5" }), "Export CSV"),
+                datingRegistrations.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No registrations yet."),
+                React.createElement("div", { className: "space-y-1.5" }, datingRegistrations.map(r => React.createElement("div", { key: r.id, className: "flex items-center justify-between bg-white dark:bg-ink-800 rounded-lg px-3 py-2.5 border border-slate-100 dark:border-ink-700 text-xs" },
+                    React.createElement("span", { className: "truncate" }, React.createElement(AdminUserLabel, { uid: r.uid }), " · ", r.gender, " · ", r.method),
+                    React.createElement("span", { className: "font-semibold shrink-0 ml-2" }, r.amountNaira ? formatNaira(r.amountNaira) : 'Free'))))),
+            datingSubtab === 'settings' && React.createElement(AdminDatingSettingsForm, { form: datingSettingsForm, adminUid: adminUid, adminEmail: adminEmail }));
     }
     if (tab === 'marketplace') {
         return React.createElement("div", null,
@@ -6555,6 +7005,85 @@ function AdminKycRow({ k, adminUid, adminEmail }) {
             React.createElement("div", { className: "flex flex-wrap gap-1.5 pt-1" },
                 k.status !== 'verified' && React.createElement("button", { disabled: busy, onClick: approve, className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-500 text-white" }, "Approve"),
                 k.status !== 'rejected' && React.createElement("button", { disabled: busy, onClick: reject, className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Reject"))));
+}
+function AdminDatingKycRow({ k, adminUid, adminEmail }) {
+    const toast = useToast();
+    const [busy, setBusy] = useState(false);
+    const [open, setOpen] = useState(false);
+    const [reason, setReason] = useState('');
+    const STATUS_BADGE = {
+        pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+        verified: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+        rejected: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400',
+    };
+    const approve = async () => {
+        setBusy(true);
+        try {
+            await adminApproveDatingKyc(k, adminUid);
+            logAdminAction(adminUid, adminEmail, 'approve_dating_kyc', 'user', k.uid, k.fullName);
+            toast('Dating KYC verified', 'success');
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    const reject = async () => {
+        setBusy(true);
+        try {
+            await adminRejectDatingKyc(k, adminUid, reason.trim());
+            logAdminAction(adminUid, adminEmail, 'reject_dating_kyc', 'user', k.uid, k.fullName);
+            toast('Dating KYC rejected', 'success');
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
+        React.createElement("div", { className: "flex items-center justify-between" },
+            React.createElement("div", { className: "min-w-0 cursor-pointer", onClick: () => setOpen(v => !v) },
+                React.createElement("p", { className: "text-sm font-semibold truncate" }, k.fullName || k.uid, " ",
+                    React.createElement("span", { className: "px-2 py-0.5 rounded-full text-[10px] font-semibold ml-1 " + (STATUS_BADGE[k.status] || '') }, KYC_STATUS_LABELS[k.status] || k.status)),
+                React.createElement("p", { className: "text-xs text-slate-400 truncate" }, "User: ", React.createElement(AdminUserLabel, { uid: k.uid }), " · DOB: ", k.dob, " · ", k.idType)),
+            React.createElement("button", { onClick: () => setOpen(v => !v), className: "text-slate-300 shrink-0" }, React.createElement("i", { className: "fa-solid " + (open ? 'fa-chevron-up' : 'fa-chevron-down') }))),
+        open && React.createElement("div", { className: "mt-3 pt-3 border-t border-slate-100 dark:border-ink-700 space-y-2 text-xs text-slate-500 dark:text-slate-400" },
+            React.createElement("p", null, React.createElement("b", { className: "text-slate-700 dark:text-slate-200" }, "Full name: "), k.fullName),
+            React.createElement("p", null, React.createElement("b", { className: "text-slate-700 dark:text-slate-200" }, "Date of birth: "), k.dob),
+            React.createElement("p", null, React.createElement("b", { className: "text-slate-700 dark:text-slate-200" }, "ID type: "), k.idType),
+            React.createElement("div", { className: "flex gap-3" },
+                k.govIdURL && React.createElement("a", { href: k.govIdURL, target: "_blank", rel: "noopener noreferrer", className: "text-rose-500 font-semibold hover:underline" }, "View ID \u2197"),
+                k.selfieURL && React.createElement("a", { href: k.selfieURL, target: "_blank", rel: "noopener noreferrer", className: "text-rose-500 font-semibold hover:underline" }, "View selfie \u2197")),
+            k.status === 'rejected' && k.rejectionReason && React.createElement("p", { className: "text-red-500" }, React.createElement("b", null, "Rejection reason: "), k.rejectionReason),
+            k.status !== 'verified' && React.createElement("input", { value: reason, onChange: e => setReason(e.target.value), placeholder: "Rejection reason (optional, shown to the user)", className: "w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-xs" }),
+            React.createElement("div", { className: "flex flex-wrap gap-1.5 pt-1" },
+                k.status !== 'verified' && React.createElement("button", { disabled: busy, onClick: approve, className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-500 text-white" }, "Approve"),
+                k.status !== 'rejected' && React.createElement("button", { disabled: busy, onClick: reject, className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Reject"))));
+}
+function AdminDatingSettingsForm({ form, adminUid, adminEmail }) {
+    const [local, setLocal] = useState(form || DEFAULT_SITE_SETTINGS);
+    const [busy, setBusy] = useState(false);
+    const toast = useToast();
+    useEffect(() => { setLocal(form || DEFAULT_SITE_SETTINGS); }, [form]);
+    const save = async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        try {
+            await saveSiteSettings({ datingFeeNaira: Number(local.datingFeeNaira) || 0, datingEnabled: !!local.datingEnabled });
+            logAdminAction(adminUid, adminEmail, 'update_dating_settings', 'settings', 'site', null);
+            toast('Dating settings saved', 'success');
+        }
+        catch (e2) { toast(e2.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    if (!form) return React.createElement("p", { className: "text-sm text-slate-400" }, "Loading…");
+    return React.createElement("div", null,
+        React.createElement("h3", { className: "font-display text-base font-bold mb-1" }, "Dating Settings"),
+        React.createElement("p", { className: "text-xs text-slate-400 mb-4" }, "Stored in Firestore at settings/site. Applies platform-wide, immediately — the payment screen reads this value live."),
+        React.createElement("form", { onSubmit: save, className: "bg-white dark:bg-ink-800 rounded-xl p-4 border border-slate-100 dark:border-ink-700 max-w-lg space-y-3" },
+            React.createElement("div", null,
+                React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Male one-time registration fee (\u20A6)"),
+                React.createElement("input", { type: "number", min: "0", value: local.datingFeeNaira, onChange: e => setLocal(l => (Object.assign({}, l, { datingFeeNaira: e.target.value }))), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-700 bg-transparent text-sm" }),
+                React.createElement("p", { className: "text-[11px] text-slate-400 mt-1" }, "Female users always register free, regardless of this value.")),
+            React.createElement("label", { className: "flex items-center gap-2 text-sm" },
+                React.createElement("input", { type: "checkbox", checked: !!local.datingEnabled, onChange: e => setLocal(l => (Object.assign({}, l, { datingEnabled: e.target.checked }))) }), "Dating enabled platform-wide"),
+            React.createElement("button", { disabled: busy, type: "submit", className: "px-4 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-600 disabled:opacity-40 text-white text-sm font-semibold" }, busy ? 'Saving…' : 'Save Settings')));
 }
 /* ============================== SUPER ADMIN: MONETIZATION APPLICATION ROW ============================== */
 function AdminMonetizationAppRow({ a, adminUid, adminEmail }) {
