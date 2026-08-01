@@ -1785,8 +1785,13 @@ async function submitDatingKyc(uid, fields, files) {
         uploadDatingKycImage(uid, files.govId, 'govId'),
         uploadDatingKycImage(uid, files.selfie, 'selfie'),
     ]);
+    // gender is denormalized here (in addition to users/{uid}.gender) so the admin dashboard can
+    // show an accurate male/female breakdown even for users who are verified but haven't finished
+    // registering yet (free females mid-write, or males who haven't paid) — see admin Dating
+    // overview stats, which previously only counted gender off datingRegistrations and therefore
+    // showed 0/0 for anyone stuck before that final step.
     await db.collection('datingKyc').doc(uid).set({
-        uid, fullName: fields.fullName.trim(), dob: fields.dob, idType: fields.idType,
+        uid, fullName: fields.fullName.trim(), dob: fields.dob, idType: fields.idType, gender: fields.gender || null,
         govIdURL, selfieURL, status: 'pending', rejectionReason: FieldValue.delete(),
         submittedAt: FieldValue.serverTimestamp(), reviewedAt: null, reviewedBy: null,
     }, { merge: true });
@@ -6169,7 +6174,16 @@ function DatingScreen({ go, route }) {
     // registerDatingFree is idempotent so this is safe even if it fires more than once.
     useEffect(() => {
         if (profile.gender === 'female' && kyc && kyc.status === 'verified' && (!registration || registration.status !== 'active')) {
-            registerDatingFree(profile.id).catch(() => { });
+            // Previously this error was silently swallowed, which meant a Firestore permission
+            // error here (e.g. security rules blocking the write) left the user stuck forever
+            // with no registration record, no visible error, and no way to know why — they'd
+            // still get into the Dating app (needsPayment only gates males) but would never show
+            // up as "registered" for admin, and their profile would never appear in Discover for
+            // anyone else. Surfacing it lets the user (and you, via the console) see what happened.
+            registerDatingFree(profile.id).catch(err => {
+                console.error('registerDatingFree failed:', err);
+                toast('Could not activate your free Dating access (' + err.message + '). Please refresh or contact support.', 'error');
+            });
         }
     }, [profile.gender, kyc, registration, profile.id]);
     if (!settings.datingEnabled) {
@@ -6230,7 +6244,7 @@ function DatingKycPanel({ kyc }) {
         if ((!govIdFile && !(kyc && kyc.govIdURL)) || (!selfieFile && !(kyc && kyc.selfieURL))) { toast('Please upload a government-issued ID and a selfie', 'error'); return; }
         setBusy(true);
         try {
-            await submitDatingKyc(profile.id, { fullName, dob, idType }, {
+            await submitDatingKyc(profile.id, { fullName, dob, idType, gender: profile.gender }, {
                 govId: govIdFile || (await (await fetch(kyc.govIdURL)).blob()),
                 selfie: selfieFile || (await (await fetch(kyc.selfieURL)).blob()),
             });
@@ -6360,7 +6374,13 @@ function DatingProfileSetup({ profile, datingProfile, onDone, embedded }) {
     const [uploadingSlot, setUploadingSlot] = useState(null);
     const [bio, setBio] = useState((datingProfile && datingProfile.bio) || '');
     const [age, setAge] = useState((datingProfile && datingProfile.age) || '');
-    const [gender, setGender] = useState((datingProfile && datingProfile.gender) || profile.gender || '');
+    // Gender here is locked to profile.gender (set once, earlier, at the Dating entry gate) —
+    // it used to be a second, independently-editable field on this form that defaulted to
+    // datingProfile.gender first. That let this select render on "Select…" even for a user who
+    // had already chosen a gender to get this far, and — worse — let someone save a Dating
+    // profile with a gender that didn't match the one used for payment/registration and admin
+    // stats, silently splitting one person's gender across two different values.
+    const [gender] = useState(profile.gender || '');
     const [interestedIn, setInterestedIn] = useState((datingProfile && datingProfile.interestedIn) || 'everyone');
     const [location, setLocation] = useState((datingProfile && datingProfile.location) || '');
     const [interests, setInterests] = useState((datingProfile && datingProfile.interests) || []);
@@ -6425,11 +6445,8 @@ function DatingProfileSetup({ profile, datingProfile, onDone, embedded }) {
             React.createElement(PageFormField, { label: "Age" },
                 React.createElement("input", { type: "number", min: 18, max: 100, value: age, onChange: e => setAge(e.target.value), required: true, className: inputCls })),
             React.createElement(PageFormField, { label: "Gender" },
-                React.createElement("select", { value: gender, onChange: e => setGender(e.target.value), className: inputCls },
-                    React.createElement("option", { value: "" }, "Select…"),
-                    React.createElement("option", { value: "male" }, "Male"),
-                    React.createElement("option", { value: "female" }, "Female"),
-                    React.createElement("option", { value: "other" }, "Other")))),
+                React.createElement("input", { value: gender ? gender.charAt(0).toUpperCase() + gender.slice(1) : '—', disabled: true, className: inputCls + " opacity-70 cursor-not-allowed capitalize" }),
+                React.createElement("p", { className: "text-[11px] text-slate-400 mt-1" }, "Set when you joined Dating and can't be changed here."))),
         React.createElement(PageFormField, { label: "Interested in" },
             React.createElement("div", { className: "grid grid-cols-3 gap-2 mt-1" }, DATING_INTERESTED_IN.map(([k, l]) => React.createElement("button", { key: k, type: "button", onClick: () => setInterestedIn(k), className: "py-2 rounded-lg border text-xs font-semibold " + (interestedIn === k ? "border-rose-500 bg-rose-50 text-rose-600 dark:bg-rose-900/20" : "border-slate-200 dark:border-ink-700") }, l)))),
         React.createElement(PageFormField, { label: "Location" },
@@ -6468,7 +6485,17 @@ function DatingDiscoverScreen({ profile, datingProfile, go }) {
             rows = rows.filter(u => !u.interestedIn || u.interestedIn === 'everyone' || u.interestedIn === datingProfile.gender);
             setCandidates(rows);
         })
-            .catch(() => setCandidates([]));
+            .catch(err => {
+            // Was previously a bare `.catch(() => setCandidates([]))`, which made a real problem
+            // (most commonly Firestore security rules blocking this cross-user query) look
+            // identical to "nobody else has finished setting up a profile yet" — the exact
+            // confusing situation described in the bug report. Now the failure is visible.
+            console.error('Dating discover query failed:', err);
+            if (!cancelled) {
+                toast('Could not load Dating profiles (' + err.message + '). This is usually a Firestore permissions issue — check your security rules for the datingProfiles collection.', 'error');
+                setCandidates([]);
+            }
+        });
         return () => { cancelled = true; };
     }, [profile.id, datingProfile.blockedUsers, datingProfile.interestedIn, datingProfile.gender]);
     const filtered = (candidates || []).filter(c => {
@@ -7277,8 +7304,6 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
         const monthlyRegs = datingRegistrations.filter(r => regMillis(r) > monthAgo).length;
         const dailyPayments = paidRegs.filter(r => regMillis(r) > dayAgo);
         const monthlyPayments = paidRegs.filter(r => regMillis(r) > monthAgo);
-        const maleUsers = datingRegistrations.filter(r => r.gender === 'male').length;
-        const femaleUsers = datingRegistrations.filter(r => r.gender === 'female').length;
         const pendingKycCount = datingKycApps.filter(k => k.status === 'pending').length;
         const datingUserIdSet = new Set([].concat(datingKycApps.map(k => k.uid || k.id), datingRegistrations.map(r => r.uid || r.id)));
         const totalDatingUsers = datingUserIdSet.size;
@@ -7286,17 +7311,27 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
         const totalChats = datingMatches.filter(m => m.lastMessage).length;
         const openDatingReports = datingReports.filter(r => r.status === 'open').length;
         const filteredDatingReports = datingReports.filter(r => datingReportFilter === 'all' || r.status === datingReportFilter);
+        // Gender used to be read only off datingRegistrations, so anyone who was KYC-verified but
+        // hadn't finished registering yet (every unpaid male, and any free female whose auto-
+        // registration write hadn't landed) counted toward "Total Dating users" but toward neither
+        // "Male users" nor "Female users" — exactly the 2-total/0-male/0-female mismatch reported.
+        // Registration gender is still the source of truth when present (a user's chosen gender
+        // can't change after KYC, but this keeps the older data path authoritative); KYC gender is
+        // the fallback for everyone still short of a completed registration.
         const datingUserRows = Array.from(datingUserIdSet).map(uid => {
             const reg = datingRegistrations.find(r => (r.uid || r.id) === uid) || null;
             const kyc = datingKycApps.find(k => (k.uid || k.id) === uid) || null;
-            return { uid, reg, kyc };
+            const gender = (reg && reg.gender) || (kyc && kyc.gender) || null;
+            return { uid, reg, kyc, gender };
         }).filter(row => {
-            if (datingUserFilter === 'male' && (!row.reg || row.reg.gender !== 'male')) return false;
-            if (datingUserFilter === 'female' && (!row.reg || row.reg.gender !== 'female')) return false;
+            if (datingUserFilter === 'male' && row.gender !== 'male') return false;
+            if (datingUserFilter === 'female' && row.gender !== 'female') return false;
             if (datingUserFilter === 'pendingKyc' && (!row.kyc || row.kyc.status !== 'pending')) return false;
             if (datingUserFilter === 'unpaidMale' && !(row.kyc && row.kyc.status === 'verified' && (!row.reg || row.reg.status !== 'active'))) return false;
             return true;
         });
+        const maleUsers = datingUserRows.filter(row => row.gender === 'male').length;
+        const femaleUsers = datingUserRows.filter(row => row.gender === 'female').length;
         const SubtabBtn = (key, label) => React.createElement("button", { key: key, onClick: () => setDatingSubtab(key), className: "px-3 py-1.5 rounded-full text-xs font-semibold " + (datingSubtab === key ? "bg-rose-500 text-white" : "bg-white dark:bg-ink-800 border border-slate-200 dark:border-ink-700") }, label);
         return React.createElement("div", null,
             React.createElement("h2", { className: "font-display text-lg font-bold mb-1" }, "Dating"),
