@@ -3298,7 +3298,7 @@ function ProgressBar({ value, max, colorClass = 'bg-brand-600' }) {
         React.createElement("div", { className: colorClass + " h-full rounded-full transition-all", style: { width: pct + '%' } }));
 }
 function Avatar({ user, size = 10, onClick }) {
-    const src = (user === null || user === void 0 ? void 0 : user.photoURL) || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent((user === null || user === void 0 ? void 0 : user.displayName) || (user === null || user === void 0 ? void 0 : user.username) || '?')}`;
+    const src = (user === null || user === void 0 ? void 0 : user.photoURL) || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent((user === null || user === void 0 ? void 0 : user.displayName) || (user === null || user === void 0 ? void 0 : user.username) || '?')}&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`;
     return React.createElement("img", { onClick: onClick, src: src, className: `w-${size} h-${size} rounded-lg object-cover shrink-0 ${onClick ? 'cursor-pointer' : ''}`, style: { width: size * 4, height: size * 4 } });
 }
 /* ============================== FRIEND ACTION BUTTON ============================== */
@@ -4464,10 +4464,7 @@ function initialsOf(name) {
 function PeopleYouMayKnowCard({ u, go, meId, myFriendIds, onDismiss }) {
     const mutualCount = useMutualFriendsCount(myFriendIds, u.id);
     const displayName = u.displayName || u.username || 'Blueface user';
-    const photo = u.photoURL
-        ? React.createElement("img", { src: u.photoURL, className: "w-full h-full object-cover" })
-        : React.createElement("div", { className: "w-full h-full flex items-center justify-center bg-brand-600" },
-            React.createElement("span", { className: "text-white font-display font-extrabold text-3xl" }, initialsOf(displayName)));
+    const photo = React.createElement("img", { src: u.photoURL || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(displayName)}&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`, className: "w-full h-full object-cover" });
     return React.createElement("div", { className: "relative rounded-lg overflow-hidden border border-slate-200 dark:border-ink-700 bg-white dark:bg-ink-800 fade-in" },
         React.createElement("button", { onClick: () => onDismiss(u.id), title: "Remove", className: "absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-full bg-black/40 hover:bg-black/60 text-white flex items-center justify-center text-xs" },
             React.createElement("i", { className: "fa-solid fa-xmark" })),
@@ -4924,7 +4921,7 @@ function ProfileScreen({ uid, go }) {
             React.createElement("div", { className: "px-5 pb-5" },
                 React.createElement("div", { className: "flex justify-between items-end -mt-16 mb-3" },
                     React.createElement("div", { className: "relative" },
-                        React.createElement("img", { src: user.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${user.displayName}`, onClick: () => openLightbox(user.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${user.displayName}`), className: "w-32 h-32 rounded-xl border-4 border-white dark:border-ink-800 object-cover bg-white dark:bg-ink-800 cursor-zoom-in" }),
+                        React.createElement("img", { src: user.photoURL || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(user.displayName || '?')}&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`, onClick: () => openLightbox(user.photoURL || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(user.displayName || '?')}&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`), className: "w-32 h-32 rounded-xl border-4 border-white dark:border-ink-800 object-cover bg-white dark:bg-ink-800 cursor-zoom-in" }),
                         isMe && (React.createElement("button", { onClick: () => avatarInputRef.current.click(), disabled: uploadingAvatar, className: "absolute bottom-0 right-0 bg-brand-600 hover:bg-brand-700 text-white rounded-full w-8 h-8 flex items-center justify-center border-2 border-white dark:border-ink-800" },
                             React.createElement("i", { className: "fa-solid " + (uploadingAvatar ? "fa-spinner fa-spin" : "fa-camera") + " text-xs" }))),
                         React.createElement("input", { ref: avatarInputRef, type: "file", accept: "image/*", hidden: true, onChange: e => quickUpload(e.target.files[0], 'avatars') }))),
@@ -8295,7 +8292,7 @@ function ReelsStrip({ go }) {
             React.createElement("button", { onClick: () => go({ name: 'reels' }), className: "text-xs font-semibold text-brand-600 dark:text-brand-400" }, "See all")),
         React.createElement("div", { className: "flex gap-2.5 overflow-x-auto pb-1 -mx-1 px-1", style: { scrollbarWidth: 'none' } },
             React.createElement("div", { onClick: () => go({ name: 'reelUpload' }), className: TILE },
-                React.createElement("img", { src: profile.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(profile.displayName || profile.username || '?')}`, className: "w-full h-full object-cover" }),
+                React.createElement("img", { src: profile.photoURL || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(profile.displayName || profile.username || '?')}&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`, className: "w-full h-full object-cover" }),
                 React.createElement("div", { className: "absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/80 to-transparent" }),
                 React.createElement("span", { className: "absolute left-1/2 -translate-x-1/2 bottom-8 w-11 h-11 rounded-full bg-brand-600 text-white flex items-center justify-center text-lg ring-[3px] ring-white dark:ring-ink-900" }, React.createElement("i", { className: "fa-solid fa-plus" })),
                 React.createElement("p", { className: "absolute bottom-2 inset-x-0 text-center text-white text-xs font-semibold px-2" }, "Create a reel")),
