@@ -9405,7 +9405,7 @@ async function uploadDatingKycImage(uid, file, kind) {
 async function submitDatingKyc(uid, fields) {
     await db.collection('datingKyc').doc(uid).set(Object.assign({ uid }, fields, {
         status: 'pending', submittedAt: FieldValue.serverTimestamp(), rejectionReason: FieldValue.delete()
-    }));
+    }), { merge: true });
     await db.collection('datingProfiles').doc(uid).set({ kycStatus: 'pending' }, { merge: true });
 }
 async function adminApproveDatingKyc(k, adminUid, adminEmail) {
