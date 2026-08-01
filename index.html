@@ -1625,21 +1625,21 @@ async function adminForceRenamePage(page, newName, adminUid) {
         throw new Error("That's already this Page's current name.");
     await db.runTransaction(async (tx) => {
         const newNameRef = db.collection('pageNames').doc(newKey);
+        const pageRef = db.collection('fanPages').doc(page.id);
+        const oldKey = normalizePageNameKey(page.displayName);
+        const oldNameRef = (oldKey && oldKey !== newKey) ? db.collection('pageNames').doc(oldKey) : null;
+        // --- all reads first (Firestore transactions require every get() before any write) ---
         const newNameSnap = await tx.get(newNameRef);
         if (newNameSnap.exists && newNameSnap.data().pageId !== page.id)
             throw new Error('That Page name is already in use by another Page.');
-        const pageRef = db.collection('fanPages').doc(page.id);
-        const oldKey = normalizePageNameKey(page.displayName);
+        const oldNameSnap = oldNameRef ? await tx.get(oldNameRef) : null;
+        // --- then all writes ---
         tx.set(newNameRef, { pageId: page.id });
-        if (oldKey && oldKey !== newKey) {
-            const oldNameRef = db.collection('pageNames').doc(oldKey);
-            const oldNameSnap = await tx.get(oldNameRef);
-            // Only delete the old reservation if it actually still points at this Page — a
-            // duplicate that predates the reservation system may not own it (or another Page may
-            // legitimately hold it), so blindly deleting could free up someone else's name.
-            if (oldNameSnap.exists && oldNameSnap.data().pageId === page.id)
-                tx.delete(oldNameRef);
-        }
+        // Only delete the old reservation if it actually still points at this Page — a
+        // duplicate that predates the reservation system may not own it (or another Page may
+        // legitimately hold it), so blindly deleting could free up someone else's name.
+        if (oldNameRef && oldNameSnap && oldNameSnap.exists && oldNameSnap.data().pageId === page.id)
+            tx.delete(oldNameRef);
         tx.update(pageRef, { displayName: trimmedName });
     });
     notifyPageOwner(page.ownerId, page.id, 'page_name_change_approved', { requestedName: trimmedName });
@@ -3423,7 +3423,8 @@ function ProgressBar({ value, max, colorClass = 'bg-brand-600' }) {
         React.createElement("div", { className: colorClass + " h-full rounded-full transition-all", style: { width: pct + '%' } }));
 }
 function Avatar({ user, size = 10, onClick }) {
-    const src = (user === null || user === void 0 ? void 0 : user.photoURL) || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent((user === null || user === void 0 ? void 0 : user.displayName) || (user === null || user === void 0 ? void 0 : user.username) || '?')}`;
+    const seed = (user === null || user === void 0 ? void 0 : user.id) || (user === null || user === void 0 ? void 0 : user.uid) || (user === null || user === void 0 ? void 0 : user.username) || (user === null || user === void 0 ? void 0 : user.displayName) || 'guest';
+    const src = (user === null || user === void 0 ? void 0 : user.photoURL) || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(seed)}&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`;
     return React.createElement("img", { onClick: onClick, src: src, className: `w-${size} h-${size} rounded-lg object-cover shrink-0 ${onClick ? 'cursor-pointer' : ''}`, style: { width: size * 4, height: size * 4 } });
 }
 /* ============================== FRIEND ACTION BUTTON ============================== */
@@ -4589,10 +4590,7 @@ function initialsOf(name) {
 function PeopleYouMayKnowCard({ u, go, meId, myFriendIds, onDismiss }) {
     const mutualCount = useMutualFriendsCount(myFriendIds, u.id);
     const displayName = u.displayName || u.username || 'Blueface user';
-    const photo = u.photoURL
-        ? React.createElement("img", { src: u.photoURL, className: "w-full h-full object-cover" })
-        : React.createElement("div", { className: "w-full h-full flex items-center justify-center bg-brand-600" },
-            React.createElement("span", { className: "text-white font-display font-extrabold text-3xl" }, initialsOf(displayName)));
+    const photo = React.createElement("img", { src: u.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(u.id || u.username || displayName)}&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`, className: "w-full h-full object-cover" });
     return React.createElement("div", { className: "relative rounded-lg overflow-hidden border border-slate-200 dark:border-ink-700 bg-white dark:bg-ink-800 fade-in" },
         React.createElement("button", { onClick: () => onDismiss(u.id), title: "Remove", className: "absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-full bg-black/40 hover:bg-black/60 text-white flex items-center justify-center text-xs" },
             React.createElement("i", { className: "fa-solid fa-xmark" })),
@@ -6991,6 +6989,12 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
     const [datingKycFilter, setDatingKycFilter] = useState('pending');
     const [datingRegistrations, setDatingRegistrations] = useState([]);
     const [datingSettingsForm, setDatingSettingsForm] = useState(null);
+    const [datingMatches, setDatingMatches] = useState([]);
+    const [datingReports, setDatingReports] = useState([]);
+    const [datingReportFilter, setDatingReportFilter] = useState('open');
+    const [datingUserSearch, setDatingUserSearch] = useState('');
+    const [datingUserFilter, setDatingUserFilter] = useState('all');
+    const [paymentSearch, setPaymentSearch] = useState('');
     const toast = useToast();
     useEffect(() => {
         if (tab !== 'dashboard') return;
@@ -7090,6 +7094,21 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
     useEffect(() => {
         if (tab !== 'dating') return;
         db.collection('settings').doc('site').get().then(s => setDatingSettingsForm(Object.assign({}, DEFAULT_SITE_SETTINGS, s.exists ? s.data() : {}))).catch(() => setDatingSettingsForm(DEFAULT_SITE_SETTINGS));
+    }, [tab]);
+    useEffect(() => {
+        if (tab !== 'dating') return;
+        const unsub = db.collection('datingMatches').limit(2000).onSnapshot(snap => setDatingMatches(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setDatingMatches([]));
+        return unsub;
+    }, [tab]);
+    useEffect(() => {
+        if (tab !== 'dating') return;
+        const unsub = db.collection('reports').where('targetType', '==', 'dating profile').limit(300)
+            .onSnapshot(snap => {
+                const list = snap.docs.map(d => (Object.assign({ id: d.id }, d.data())));
+                list.sort((a, b) => { var _a, _b; return (((_a = b.createdAt) === null || _a === void 0 ? void 0 : _a.toMillis) ? b.createdAt.toMillis() : 0) - (((_b = a.createdAt) === null || _b === void 0 ? void 0 : _b.toMillis) ? a.createdAt.toMillis() : 0); });
+                setDatingReports(list);
+            }, () => setDatingReports([]));
+        return unsub;
     }, [tab]);
     useEffect(() => {
         if (tab !== 'marketplace') return;
@@ -7250,27 +7269,112 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
         const paidRegs = activeRegs.filter(r => r.method !== 'free');
         const freeRegs = activeRegs.filter(r => r.method === 'free');
         const totalCollected = paidRegs.reduce((s, r) => s + (r.amountNaira || 0), 0);
+        const regMillis = r => { var _a; return (r && r.registeredAt && r.registeredAt.toMillis) ? r.registeredAt.toMillis() : 0; };
+        const now = Date.now();
+        const dayAgo = now - 86400000;
+        const monthAgo = now - 30 * 86400000;
+        const dailyRegs = datingRegistrations.filter(r => regMillis(r) > dayAgo).length;
+        const monthlyRegs = datingRegistrations.filter(r => regMillis(r) > monthAgo).length;
+        const dailyPayments = paidRegs.filter(r => regMillis(r) > dayAgo);
+        const monthlyPayments = paidRegs.filter(r => regMillis(r) > monthAgo);
+        const maleUsers = datingRegistrations.filter(r => r.gender === 'male').length;
+        const femaleUsers = datingRegistrations.filter(r => r.gender === 'female').length;
+        const pendingKycCount = datingKycApps.filter(k => k.status === 'pending').length;
+        const datingUserIdSet = new Set([].concat(datingKycApps.map(k => k.uid || k.id), datingRegistrations.map(r => r.uid || r.id)));
+        const totalDatingUsers = datingUserIdSet.size;
+        const totalMatches = datingMatches.length;
+        const totalChats = datingMatches.filter(m => m.lastMessage).length;
+        const openDatingReports = datingReports.filter(r => r.status === 'open').length;
+        const filteredDatingReports = datingReports.filter(r => datingReportFilter === 'all' || r.status === datingReportFilter);
+        const datingUserRows = Array.from(datingUserIdSet).map(uid => {
+            const reg = datingRegistrations.find(r => (r.uid || r.id) === uid) || null;
+            const kyc = datingKycApps.find(k => (k.uid || k.id) === uid) || null;
+            return { uid, reg, kyc };
+        }).filter(row => {
+            if (datingUserFilter === 'male' && (!row.reg || row.reg.gender !== 'male')) return false;
+            if (datingUserFilter === 'female' && (!row.reg || row.reg.gender !== 'female')) return false;
+            if (datingUserFilter === 'pendingKyc' && (!row.kyc || row.kyc.status !== 'pending')) return false;
+            if (datingUserFilter === 'unpaidMale' && !(row.kyc && row.kyc.status === 'verified' && (!row.reg || row.reg.status !== 'active'))) return false;
+            return true;
+        });
         const SubtabBtn = (key, label) => React.createElement("button", { key: key, onClick: () => setDatingSubtab(key), className: "px-3 py-1.5 rounded-full text-xs font-semibold " + (datingSubtab === key ? "bg-rose-500 text-white" : "bg-white dark:bg-ink-800 border border-slate-200 dark:border-ink-700") }, label);
         return React.createElement("div", null,
             React.createElement("h2", { className: "font-display text-lg font-bold mb-1" }, "Dating"),
             React.createElement("p", { className: "text-xs text-slate-400 mb-3" }, "Users need Verified KYC to access Dating. Female users register free; male users pay the one-time fee configured below."),
-            React.createElement("div", { className: "flex gap-2 mb-4 overflow-x-auto", style: { scrollbarWidth: 'none' } }, SubtabBtn('overview', 'Overview'), SubtabBtn('kyc', 'KYC Submissions' + (datingKycApps.filter(k => k.status === 'pending').length ? ' (' + datingKycApps.filter(k => k.status === 'pending').length + ')' : '')), SubtabBtn('registrations', 'Registrations'), SubtabBtn('settings', 'Settings')),
-            datingSubtab === 'overview' && React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" }, Object.entries({
-                'Verified members': activeRegs.length, 'Paid registrations': paidRegs.length,
-                'Free (female) registrations': freeRegs.length, 'Total fees collected': formatNaira(totalCollected),
-            }).map(([label, val]) => (React.createElement("div", { key: label, className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-4" },
-                React.createElement("p", { className: "text-2xl font-display font-bold" }, val),
-                React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, label))))),
+            React.createElement("div", { className: "flex gap-2 mb-4 overflow-x-auto", style: { scrollbarWidth: 'none' } },
+                SubtabBtn('overview', 'Overview'),
+                SubtabBtn('kyc', 'KYC Submissions' + (pendingKycCount ? ' (' + pendingKycCount + ')' : '')),
+                SubtabBtn('users', 'Users'),
+                SubtabBtn('payments', 'Payments'),
+                SubtabBtn('registrations', 'Registrations'),
+                SubtabBtn('reports', 'Reports' + (openDatingReports ? ' (' + openDatingReports + ')' : '')),
+                SubtabBtn('settings', 'Settings')),
+            datingSubtab === 'overview' && React.createElement("div", null,
+                React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3 mb-4" }, Object.entries({
+                    'Total Dating users': totalDatingUsers, 'Male users': maleUsers, 'Female users': femaleUsers,
+                    'Verified / active members': activeRegs.length, 'Pending KYC': pendingKycCount,
+                    'Total matches': totalMatches, 'Total chats': totalChats,
+                    'Daily registrations (24h)': dailyRegs, 'Monthly registrations (30d)': monthlyRegs,
+                    'Paid registrations': paidRegs.length, 'Free (female) registrations': freeRegs.length,
+                    'Total revenue': formatNaira(totalCollected),
+                }).map(([label, val]) => (React.createElement("div", { key: label, className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-4" },
+                    React.createElement("p", { className: "text-2xl font-display font-bold" }, val),
+                    React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, label))))),
+                React.createElement("div", { className: "grid md:grid-cols-2 gap-3" },
+                    React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-4" },
+                        React.createElement("p", { className: "text-sm font-semibold mb-1" }, "Revenue, last 24 hours"),
+                        React.createElement("p", { className: "text-xl font-display font-bold" }, formatNaira(dailyPayments.reduce((s, r) => s + (r.amountNaira || 0), 0))),
+                        React.createElement("p", { className: "text-xs text-slate-400" }, dailyPayments.length, " payment", dailyPayments.length === 1 ? '' : 's')),
+                    React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-4" },
+                        React.createElement("p", { className: "text-sm font-semibold mb-1" }, "Revenue, last 30 days"),
+                        React.createElement("p", { className: "text-xl font-display font-bold" }, formatNaira(monthlyPayments.reduce((s, r) => s + (r.amountNaira || 0), 0))),
+                        React.createElement("p", { className: "text-xs text-slate-400" }, monthlyPayments.length, " payment", monthlyPayments.length === 1 ? '' : 's')))),
             datingSubtab === 'kyc' && React.createElement("div", null,
                 React.createElement("div", { className: "flex gap-2 mb-3 overflow-x-auto", style: { scrollbarWidth: 'none' } }, [['pending', 'Pending'], ['verified', 'Verified'], ['rejected', 'Rejected'], ['all', 'All']].map(([k, l]) => (React.createElement("button", { key: k, onClick: () => setDatingKycFilter(k), className: "shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold " + (datingKycFilter === k ? "bg-rose-500 text-white" : "bg-white dark:bg-ink-800 border border-slate-200 dark:border-ink-700") }, l)))),
                 filteredDatingKyc.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No ", datingKycFilter === 'all' ? '' : (KYC_STATUS_LABELS[datingKycFilter] || datingKycFilter), " submissions."),
                 React.createElement("div", { className: "space-y-2" }, filteredDatingKyc.map(k => React.createElement(AdminDatingKycRow, { key: k.id, k: k, adminUid: adminUid, adminEmail: adminEmail })))),
+            datingSubtab === 'users' && React.createElement("div", null,
+                React.createElement("p", { className: "text-xs text-slate-400 mb-3" }, "Everyone who has started Dating onboarding (submitted KYC and/or registered). Suspend or ban blocks their whole account; \"Remove from Dating\" only removes their dating profile and matches."),
+                React.createElement("div", { className: "flex flex-col sm:flex-row gap-2 mb-3" },
+                    React.createElement("input", { value: datingUserSearch, onChange: e => setDatingUserSearch(e.target.value), placeholder: "Search by user ID\u2026", className: "flex-1 px-4 py-2 rounded-xl border border-slate-200 dark:border-ink-700 bg-white dark:bg-ink-800 text-sm" }),
+                    React.createElement("select", { value: datingUserFilter, onChange: e => setDatingUserFilter(e.target.value), className: "px-3 py-2 rounded-xl border border-slate-200 dark:border-ink-700 bg-white dark:bg-ink-800 text-sm" },
+                        React.createElement("option", { value: "all" }, "All Dating users"),
+                        React.createElement("option", { value: "male" }, "Male"),
+                        React.createElement("option", { value: "female" }, "Female"),
+                        React.createElement("option", { value: "pendingKyc" }, "Pending KYC"),
+                        React.createElement("option", { value: "unpaidMale" }, "Verified, not yet registered"))),
+                datingUserRows.filter(row => !datingUserSearch || row.uid.toLowerCase().includes(datingUserSearch.toLowerCase())).length === 0 &&
+                    React.createElement("p", { className: "text-sm text-slate-400" }, "No matching Dating users."),
+                React.createElement("div", { className: "space-y-2" }, datingUserRows.filter(row => !datingUserSearch || row.uid.toLowerCase().includes(datingUserSearch.toLowerCase())).map(row => React.createElement(AdminDatingUserRow, { key: row.uid, uid: row.uid, reg: row.reg, kyc: row.kyc, adminUid: adminUid, adminEmail: adminEmail })))),
+            datingSubtab === 'payments' && React.createElement("div", null,
+                React.createElement("div", { className: "flex items-center justify-between mb-3 gap-3" },
+                    React.createElement("h3", { className: "font-display text-base font-bold" }, "Male registration payments"),
+                    React.createElement("button", { onClick: () => exportToCsv('dating-payments.csv', paidRegs.map(r => ({ uid: r.uid, amountNaira: r.amountNaira || 0, method: r.method, reference: r.reference || '', status: r.status, registeredAt: regMillis(r) ? new Date(regMillis(r)).toISOString() : '' }))), className: "text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-100 dark:bg-ink-700" }, React.createElement("i", { className: "fa-solid fa-file-arrow-down mr-1.5" }), "Export CSV")),
+                React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-3 mb-4" }, Object.entries({
+                    'Total revenue': formatNaira(totalCollected), 'Total payments': paidRegs.length,
+                    'Current fee': formatNaira((datingSettingsForm && datingSettingsForm.datingFeeNaira) || 0),
+                }).map(([label, val]) => (React.createElement("div", { key: label, className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-4" },
+                    React.createElement("p", { className: "text-2xl font-display font-bold" }, val),
+                    React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, label))))),
+                React.createElement("input", { value: paymentSearch, onChange: e => setPaymentSearch(e.target.value), placeholder: "Search by user ID or reference\u2026", className: "w-full mb-3 px-4 py-2 rounded-xl border border-slate-200 dark:border-ink-700 bg-white dark:bg-ink-800 text-sm" }),
+                paidRegs.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No payments recorded yet."),
+                React.createElement("div", { className: "space-y-1.5" }, paidRegs
+                    .filter(r => !paymentSearch || r.uid.toLowerCase().includes(paymentSearch.toLowerCase()) || (r.reference || '').toLowerCase().includes(paymentSearch.toLowerCase()))
+                    .sort((a, b) => regMillis(b) - regMillis(a))
+                    .map(r => React.createElement("div", { key: r.id, className: "flex items-center justify-between bg-white dark:bg-ink-800 rounded-lg px-3 py-2.5 border border-slate-100 dark:border-ink-700 text-xs gap-2" },
+                        React.createElement("span", { className: "truncate" }, React.createElement(AdminUserLabel, { uid: r.uid }), " \u00B7 ", r.method, " \u00B7 ", r.reference || '\u2014', regMillis(r) ? ' \u00B7 ' + timeAgo(r.registeredAt) : ''),
+                        React.createElement("span", { className: "font-semibold shrink-0 ml-2 text-emerald-600" }, formatNaira(r.amountNaira || 0)))))),
             datingSubtab === 'registrations' && React.createElement("div", null,
                 React.createElement("button", { onClick: () => exportToCsv('dating-registrations.csv', datingRegistrations.map(r => ({ uid: r.uid, gender: r.gender, method: r.method, amountNaira: r.amountNaira || 0, status: r.status, reference: r.reference || '' }))), className: "text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-100 dark:bg-ink-700 mb-3" }, React.createElement("i", { className: "fa-solid fa-file-arrow-down mr-1.5" }), "Export CSV"),
                 datingRegistrations.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No registrations yet."),
                 React.createElement("div", { className: "space-y-1.5" }, datingRegistrations.map(r => React.createElement("div", { key: r.id, className: "flex items-center justify-between bg-white dark:bg-ink-800 rounded-lg px-3 py-2.5 border border-slate-100 dark:border-ink-700 text-xs" },
                     React.createElement("span", { className: "truncate" }, React.createElement(AdminUserLabel, { uid: r.uid }), " · ", r.gender, " · ", r.method),
                     React.createElement("span", { className: "font-semibold shrink-0 ml-2" }, r.amountNaira ? formatNaira(r.amountNaira) : 'Free'))))),
+            datingSubtab === 'reports' && React.createElement("div", null,
+                React.createElement("p", { className: "text-xs text-slate-400 mb-3" }, "Reports filed against Dating profiles from the Dating screen or Dating chat."),
+                React.createElement("div", { className: "flex gap-2 mb-3 overflow-x-auto", style: { scrollbarWidth: 'none' } }, [['open', 'Open'], ['resolved', 'Resolved'], ['all', 'All']].map(([k, l]) => (React.createElement("button", { key: k, onClick: () => setDatingReportFilter(k), className: "shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold " + (datingReportFilter === k ? "bg-rose-500 text-white" : "bg-white dark:bg-ink-800 border border-slate-200 dark:border-ink-700") }, l)))),
+                filteredDatingReports.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No ", datingReportFilter === 'all' ? '' : datingReportFilter, " Dating reports."),
+                React.createElement("div", { className: "space-y-2" }, filteredDatingReports.map(r => React.createElement(AdminDatingReportRow, { key: r.id, report: r, adminUid: adminUid, adminEmail: adminEmail })))),
             datingSubtab === 'settings' && React.createElement(AdminDatingSettingsForm, { form: datingSettingsForm, adminUid: adminUid, adminEmail: adminEmail }));
     }
     if (tab === 'marketplace') {
@@ -7673,6 +7777,84 @@ function AdminDatingKycRow({ k, adminUid, adminEmail }) {
             React.createElement("div", { className: "flex flex-wrap gap-1.5 pt-1" },
                 k.status !== 'verified' && React.createElement("button", { disabled: busy, onClick: approve, className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-500 text-white" }, "Approve"),
                 k.status !== 'rejected' && React.createElement("button", { disabled: busy, onClick: reject, className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Reject"))));
+}
+/* ============================== SUPER ADMIN: DATING USER ROW ============================== */
+function AdminDatingUserRow({ uid, reg, kyc, adminUid, adminEmail }) {
+    const toast = useToast();
+    const [busy, setBusy] = useState(false);
+    const [open, setOpen] = useState(false);
+    const [u, setU] = useState(null);
+    useEffect(() => { const unsub = db.collection('users').doc(uid).onSnapshot(s => setU(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setU(null)); return unsub; }, [uid]);
+    const STATUS_BADGE = {
+        pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+        verified: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+        rejected: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400',
+    };
+    const run = async (fn, action) => {
+        setBusy(true);
+        try {
+            await fn();
+            logAdminAction(adminUid, adminEmail, action, 'user', uid, (u && (u.username || u.email)) || uid);
+            toast('Done', 'success');
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    const toggleSuspend = () => run(() => db.collection('users').doc(uid).update({ suspended: !(u && u.suspended) }), (u && u.suspended) ? 'reactivate_user' : 'suspend_user');
+    const ban = () => run(() => adminBanUser({ id: uid }), 'ban_user');
+    const unban = () => run(() => adminUnbanUser({ id: uid }), 'unban_user');
+    const removeFromDating = () => run(() => deleteDatingProfileCascade(uid).then(() => db.collection('users').doc(uid).update({ datingActive: false })), 'remove_from_dating');
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
+        React.createElement("div", { className: "flex items-center justify-between" },
+            React.createElement("div", { className: "flex items-center gap-3 cursor-pointer min-w-0", onClick: () => setOpen(v => !v) },
+                u && React.createElement(Avatar, { user: u, size: 9 }),
+                React.createElement("div", { className: "min-w-0" },
+                    React.createElement("p", { className: "text-sm font-semibold truncate" },
+                        (u && (u.displayName || u.username)) || uid, " ",
+                        u && u.suspended && React.createElement("span", { className: "text-amber-500 text-xs ml-1" }, "(suspended)"),
+                        u && u.banned && React.createElement("span", { className: "text-red-500 text-xs ml-1" }, "(banned)")),
+                    React.createElement("p", { className: "text-xs text-slate-400 truncate" },
+                        reg ? (reg.gender + ' \u00B7 ' + (reg.status === 'active' ? (reg.amountNaira ? 'Paid' : 'Free') + ' \u00B7 registered' : reg.status) + ' ') : 'Not registered ',
+                        "\u00B7 KYC: ",
+                        React.createElement("span", { className: "px-1.5 py-0.5 rounded-full text-[10px] font-semibold " + (STATUS_BADGE[kyc ? kyc.status : 'none'] || '') }, KYC_STATUS_LABELS[kyc ? kyc.status : 'none'] || 'Not started')))),
+            React.createElement("button", { onClick: () => setOpen(v => !v), className: "text-slate-300 shrink-0" }, React.createElement("i", { className: "fa-solid " + (open ? 'fa-chevron-up' : 'fa-chevron-down') }))),
+        open && React.createElement("div", { className: "mt-3 pt-3 border-t border-slate-100 dark:border-ink-700" },
+            React.createElement("div", { className: "flex flex-wrap gap-1.5" },
+                React.createElement("button", { disabled: busy || !u, onClick: toggleSuspend, className: "text-[11px] font-semibold px-2 py-1 rounded-lg " + (u && u.suspended ? "bg-emerald-500 text-white" : "bg-amber-500 text-white") }, u && u.suspended ? 'Reactivate' : 'Suspend'),
+                !(u && u.banned) ? React.createElement("button", { disabled: busy || !u, onClick: () => confirm('Ban this user? They will be signed out and blocked from the platform.') && ban(), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-500 text-white" }, "Ban") :
+                    React.createElement("button", { disabled: busy, onClick: unban, className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-500 text-white" }, "Unban"),
+                React.createElement("button", { disabled: busy, onClick: () => confirm('Remove this user\'s Dating profile, matches, likes and passes? Their main account is unaffected.') && removeFromDating(), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Remove from Dating"))));
+}
+/* ============================== SUPER ADMIN: DATING REPORT ROW ============================== */
+function AdminDatingReportRow({ report, adminUid, adminEmail }) {
+    const toast = useToast();
+    const [busy, setBusy] = useState(false);
+    const resolve = async () => {
+        setBusy(true);
+        try {
+            await resolveReport('reports', report.id);
+            logAdminAction(adminUid, adminEmail, 'resolve_dating_report', 'dating profile', report.targetId, report.reason);
+            toast('Marked resolved', 'success');
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    const suspendProfile = async () => {
+        setBusy(true);
+        try {
+            await setDatingPaused(report.targetId, true);
+            logAdminAction(adminUid, adminEmail, 'suspend_dating_profile', 'dating profile', report.targetId, report.reason);
+            toast('Dating profile hidden', 'success');
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
+        React.createElement("p", { className: "text-sm font-semibold" }, "Dating profile: ", React.createElement(AdminUserLabel, { uid: report.targetId }), report.status === 'resolved' && React.createElement("span", { className: "text-emerald-500 text-xs ml-2" }, "(resolved)")),
+        React.createElement("p", { className: "text-xs text-slate-400 mb-2" }, "Reported by ", React.createElement(AdminUserLabel, { uid: report.reporterId }), ": ", report.reason),
+        React.createElement("div", { className: "flex flex-wrap gap-1.5" },
+            report.status !== 'resolved' && React.createElement("button", { disabled: busy, onClick: resolve, className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-500 text-white" }, "Mark Resolved"),
+            React.createElement("button", { disabled: busy, onClick: suspendProfile, className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-amber-500 text-white" }, "Hide Dating Profile")));
 }
 function AdminDatingSettingsForm({ form, adminUid, adminEmail }) {
     const [local, setLocal] = useState(form || DEFAULT_SITE_SETTINGS);
