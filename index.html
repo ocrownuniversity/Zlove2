@@ -9308,9 +9308,13 @@ function GroupScreen({ id, go }) {
  *   datingProfiles/{uid}            master doc: gating flags + the dating-only profile
  *                                    { uid, gender, paid, paymentReference, kycStatus,
  *                                      profileComplete, active, banned, verified,
- *                                      displayName, dob, age, bio, photos[], interests[],
+ *                                      displayName, fullName, dob, age, bio, photos[], interests[],
  *                                      interestedIn[], relationshipGoal, location,
- *                                      privacy:{hideOnline, hideDistance}, blockedUids[] }
+ *                                      occupation, education, religion, heightCm, languages[],
+ *                                      lifestyle:{smoking, drinking, children},
+ *                                      phone, whatsapp, email, phoneVerified, emailVerified,
+ *                                      privacy:{hideOnline, hideDistance, hidePhone, hideWhatsapp},
+ *                                      blockedUids[], createdAt }
  *   datingKyc/{uid}                 one KYC application per user (mirrors pageKyc pattern)
  *                                    { uid, fullName, dob, idType, idFrontURL, selfieURL,
  *                                      status:'pending'|'verified'|'rejected', rejectionReason }
@@ -9328,14 +9332,35 @@ function GroupScreen({ id, go }) {
  * Paystack's /transaction/verify endpoint with your SECRET key) before flipping `paid: true`,
  * so a tampered client can't grant itself free access. The public key configured below is
  * safe to expose client-side; your secret key never belongs in this file.
+ *
+ * IMPORTANT — phone/email verification note: this file has no backend, so there's no SMS/OTP
+ * gateway to actually verify a phone number. `emailVerified` piggybacks on Firebase Auth's
+ * built-in (free) email verification link, checked against the account's login email.
+ * `phoneVerified` is a manual flag an admin sets after confirming the number some other way
+ * (e.g. during KYC review) — see DatingAdminPanel. For real SMS OTP, wire in Firebase Phone
+ * Auth or a provider like Twilio.
+ *
+ * IMPORTANT — contact-info privacy: phone/WhatsApp are hidden by default (privacy.hidePhone /
+ * hidePhoneWhatsapp default true, treated as true unless explicitly set to false) and only
+ * ever revealed to (a) the profile owner themselves, (b) a mutual match, or (c) everyone, if
+ * the owner explicitly flips the "Hide phone number" / "Hide WhatsApp" toggle off. See
+ * canViewDatingContact() below — every place that renders a phone/WhatsApp number must route
+ * through it rather than reading dp.phone / dp.whatsapp directly.
  */
 const DATING_ID_TYPES = KYC_ID_TYPES;
 const DATING_KYC_STATUS_LABELS = KYC_STATUS_LABELS;
 const DATING_INTERESTS = ['Music', 'Movies', 'Travel', 'Fitness', 'Foodie', 'Gaming', 'Reading', 'Fashion',
     'Photography', 'Dancing', 'Sports', 'Art', 'Tech', 'Nature', 'Pets', 'Cooking', 'Faith', 'Comedy'];
-const DATING_GOALS = ['Casual dating', 'Serious relationship', 'Friendship', 'Not sure yet'];
+const DATING_GOALS = ['Marriage', 'Serious relationship', 'Casual dating', 'Friendship', 'Not sure yet'];
 const DATING_GENDERS = ['Male', 'Female'];
 const DATING_INTERESTED_IN = ['Men', 'Women', 'Everyone'];
+const DATING_LANGUAGES = ['English', 'French', 'Spanish', 'Portuguese', 'Arabic', 'Hausa', 'Yoruba', 'Igbo',
+    'Swahili', 'German', 'Chinese', 'Pidgin'];
+const DATING_EDUCATION_LEVELS = ['Secondary school', 'Diploma/OND', "Bachelor's degree", "Master's degree", 'Doctorate', 'Other'];
+const DATING_RELIGIONS = ['Christianity', 'Islam', 'Traditional', 'Other', 'Prefer not to say'];
+const DATING_SMOKING_OPTIONS = ['Non-smoker', 'Occasionally', 'Regularly'];
+const DATING_DRINKING_OPTIONS = ['Never', 'Socially', 'Regularly'];
+const DATING_CHILDREN_OPTIONS = ["Don't have children", 'Have children', 'Want children someday', "Don't want children"];
 
 /* ---- config (fee + Paystack public key), admin-editable ---- */
 function useDatingConfig() {
@@ -9446,6 +9471,62 @@ async function saveDatingProfile(uid, fields) {
 }
 async function setDatingActive(uid, active) {
     await db.collection('datingProfiles').doc(uid).update({ active });
+}
+
+/* ---- profile completion % (self-facing only — not shown to other users) ---- */
+function datingProfileCompletion(dp) {
+    if (!dp) return 0;
+    const checks = [
+        (dp.photos || []).length > 0, !!(dp.fullName || dp.displayName), !!dp.dob, !!dp.bio,
+        !!dp.gender, !!dp.relationshipGoal, (dp.interests || []).length > 0,
+        !!dp.phone, !!dp.occupation, !!dp.education, !!dp.heightCm,
+        (dp.languages || []).length > 0, !!(dp.lifestyle && dp.lifestyle.smoking),
+        !!(dp.lifestyle && dp.lifestyle.drinking), !!(dp.lifestyle && dp.lifestyle.children),
+    ];
+    return Math.round((checks.filter(Boolean).length / checks.length) * 100);
+}
+/* ---- contact-info privacy: route every phone/WhatsApp read through this ----
+ * Hidden by default (undefined/true both mean hidden); a match always unlocks it; the owner
+ * can also make it public to everyone by explicitly turning the "Hide ___" toggle off. */
+function canViewDatingContact(target, isMatched, key) {
+    if (!target) return false;
+    const hidden = (target.privacy || {})[key] !== false;
+    if (!hidden) return true;
+    return !!isMatched;
+}
+function useDatingMatchStatus(meId, targetId) {
+    const [isMatched, setIsMatched] = useState(false);
+    useEffect(() => {
+        if (!meId || !targetId || meId === targetId) { setIsMatched(false); return; }
+        const unsub = db.collection('datingMatches').doc(datingMatchId(meId, targetId)).onSnapshot(s => setIsMatched(s.exists), () => setIsMatched(false));
+        return unsub;
+    }, [meId, targetId]);
+    return isMatched;
+}
+/* Dating profiles share their uid with the main social account, so online/last-seen presence
+ * (already tracked on users/{uid} by setPresence()) can be reused instead of duplicating it. */
+function useDatingPresence(uid) {
+    const [user, setUser] = useState(null);
+    useEffect(() => {
+        if (!uid) return;
+        const unsub = db.collection('users').doc(uid).onSnapshot(s => setUser(s.exists ? s.data() : null), () => setUser(null));
+        return unsub;
+    }, [uid]);
+    return user;
+}
+function datingMemberSinceLabel(createdAt) {
+    if (!createdAt) return '';
+    const d = createdAt.toDate ? createdAt.toDate() : new Date(createdAt);
+    return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
+async function sendDatingEmailVerification() {
+    if (!auth.currentUser) throw new Error('You must be signed in.');
+    await auth.currentUser.sendEmailVerification();
+}
+/* Admin-only manual verification (see schema note above — no SMS/OTP backend is wired in). */
+async function adminSetDatingVerification(uid, field, value, adminUid, adminEmail) {
+    await db.collection('datingProfiles').doc(uid).update({ [field]: value });
+    logAdminAction(adminUid, adminEmail, value ? `verify_dating_${field}` : `unverify_dating_${field}`, 'datingProfile', uid, '');
 }
 
 /* ---- discover / likes / matches ---- */
@@ -9697,11 +9778,24 @@ function DatingKycStep({ dp }) {
 
 function DatingProfileSetupStep({ dp }) {
     const { profile } = useAuth();
+    const kyc = useDatingKyc(profile.id);
     const toast = useToast();
     const [busy, setBusy] = useState(false);
     const [displayName, setDisplayName] = useState(dp.displayName || profile.displayName || '');
+    const [fullName, setFullName] = useState(dp.fullName || (kyc && kyc.fullName) || '');
     const [dob, setDob] = useState(dp.dob || '');
     const [bio, setBio] = useState(dp.bio || '');
+    const [phone, setPhone] = useState(dp.phone || '');
+    const [whatsapp, setWhatsapp] = useState(dp.whatsapp || '');
+    const [email, setEmail] = useState(dp.email || '');
+    const [occupation, setOccupation] = useState(dp.occupation || '');
+    const [education, setEducation] = useState(dp.education || '');
+    const [religion, setReligion] = useState(dp.religion || '');
+    const [heightCm, setHeightCm] = useState(dp.heightCm || '');
+    const [languages, setLanguages] = useState(dp.languages || []);
+    const [smoking, setSmoking] = useState((dp.lifestyle || {}).smoking || '');
+    const [drinking, setDrinking] = useState((dp.lifestyle || {}).drinking || '');
+    const [children, setChildren] = useState((dp.lifestyle || {}).children || '');
     const [interests, setInterests] = useState(dp.interests || []);
     const [interestedIn, setInterestedIn] = useState(dp.interestedIn || 'Everyone');
     const [relationshipGoal, setRelationshipGoal] = useState(dp.relationshipGoal || DATING_GOALS[0]);
@@ -9709,6 +9803,7 @@ function DatingProfileSetupStep({ dp }) {
     const [photos, setPhotos] = useState(dp.photos || []);
     const [uploadingSlot, setUploadingSlot] = useState(null);
     const toggleInterest = (i) => setInterests(v => v.includes(i) ? v.filter(x => x !== i) : v.length < 8 ? [...v, i] : v);
+    const toggleLanguage = (l) => setLanguages(v => v.includes(l) ? v.filter(x => x !== l) : [...v, l]);
     const uploadSlot = async (slot, file) => {
         if (!file) return;
         setUploadingSlot(slot);
@@ -9725,15 +9820,22 @@ function DatingProfileSetupStep({ dp }) {
         if (!bio.trim()) { toast('Add a short bio', 'error'); return; }
         setBusy(true);
         try {
+            // phone/whatsapp default to hidden — only flip privacy on explicit user action in DatingMeTab,
+            // never here, so a fresh profile never accidentally starts out public.
+            const privacy = Object.assign({ hideOnline: false, hideDistance: false, hidePhone: true, hideWhatsapp: true }, dp.privacy || {});
             await saveDatingProfile(profile.id, {
-                displayName: displayName.trim(), dob, age: datingAge(dob), bio: bio.trim(),
+                displayName: displayName.trim(), fullName: fullName.trim(), dob, age: datingAge(dob), bio: bio.trim(),
                 interests, interestedIn, relationshipGoal, location: location.trim(),
-                photos: photos.filter(Boolean), privacy: dp.privacy || { hideOnline: false, hideDistance: false }
+                phone: phone.trim(), whatsapp: whatsapp.trim(), email: email.trim(),
+                occupation: occupation.trim(), education, religion, heightCm: heightCm ? Number(heightCm) : null,
+                languages, lifestyle: { smoking, drinking, children },
+                photos: photos.filter(Boolean), privacy
             });
-            toast('Dating profile created!', 'success');
+            toast('Dating profile saved!', 'success');
         } catch (e) { toast(e.message, 'error'); }
         finally { setBusy(false); }
     };
+    const selectClass = "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm";
     return React.createElement("div", { className: "max-w-md mx-auto py-6" },
         React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, "Create your Dating profile"),
         React.createElement("p", { className: "text-sm text-slate-500 dark:text-slate-400 mb-5" }, "This is completely separate from your regular social profile."),
@@ -9743,21 +9845,61 @@ function DatingProfileSetupStep({ dp }) {
             React.createElement("input", { type: "file", accept: "image/*", hidden: true, onChange: e => uploadSlot(slot, e.target.files[0]) })))),
         React.createElement("div", { className: "space-y-3" },
             React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Display name"),
-                React.createElement("input", { value: displayName, onChange: e => setDisplayName(e.target.value), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" })),
+                React.createElement("input", { value: displayName, onChange: e => setDisplayName(e.target.value), className: selectClass })),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Full name"),
+                React.createElement("input", { value: fullName, onChange: e => setFullName(e.target.value), placeholder: "As on your ID", className: selectClass })),
             React.createElement(DobPicker, { value: dob, onChange: setDob }),
             React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Bio"),
-                React.createElement("textarea", { value: bio, onChange: e => setBio(e.target.value), rows: 3, maxLength: 300, className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" })),
+                React.createElement("textarea", { value: bio, onChange: e => setBio(e.target.value), rows: 3, maxLength: 300, className: selectClass })),
             React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Location"),
-                React.createElement("input", { value: location, onChange: e => setLocation(e.target.value), placeholder: "City, state", className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" })),
+                React.createElement("input", { value: location, onChange: e => setLocation(e.target.value), placeholder: "City, state", className: selectClass })),
+
+            React.createElement("div", { className: "pt-2 border-t border-slate-100 dark:border-ink-700" },
+                React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 mt-3" }, "Contact")),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Phone number"),
+                React.createElement("input", { type: "tel", value: phone, onChange: e => setPhone(e.target.value), placeholder: "+234\u2026", className: selectClass }),
+                React.createElement("p", { className: "text-[11px] text-slate-400 mt-1" }, "Hidden by default \u2014 only shown after a match, unless you make it public below.")),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "WhatsApp (optional)"),
+                React.createElement("input", { type: "tel", value: whatsapp, onChange: e => setWhatsapp(e.target.value), placeholder: "+234\u2026", className: selectClass })),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Email (optional)"),
+                React.createElement("input", { type: "email", value: email, onChange: e => setEmail(e.target.value), className: selectClass })),
+
+            React.createElement("div", { className: "pt-2 border-t border-slate-100 dark:border-ink-700" },
+                React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 mt-3" }, "About you")),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Occupation"),
+                React.createElement("input", { value: occupation, onChange: e => setOccupation(e.target.value), className: selectClass })),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Education"),
+                React.createElement("select", { value: education, onChange: e => setEducation(e.target.value), className: selectClass },
+                    React.createElement("option", { value: "" }, "Select\u2026"), DATING_EDUCATION_LEVELS.map(g => React.createElement("option", { key: g, value: g }, g)))),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Religion (optional)"),
+                React.createElement("select", { value: religion, onChange: e => setReligion(e.target.value), className: selectClass },
+                    React.createElement("option", { value: "" }, "Select\u2026"), DATING_RELIGIONS.map(g => React.createElement("option", { key: g, value: g }, g)))),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Height (cm)"),
+                React.createElement("input", { type: "number", min: 100, max: 250, value: heightCm, onChange: e => setHeightCm(e.target.value), className: selectClass })),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500 mb-1.5 block" }, "Languages spoken"),
+                React.createElement("div", { className: "flex flex-wrap gap-1.5" }, DATING_LANGUAGES.map(l => React.createElement("button", { key: l, type: "button", onClick: () => toggleLanguage(l), className: "px-3 py-1.5 rounded-full text-xs font-semibold border " + (languages.includes(l) ? "bg-brand-600 border-brand-600 text-white" : "border-slate-200 dark:border-ink-600 text-slate-500") }, l)))),
             React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Interested in"),
-                React.createElement("select", { value: interestedIn, onChange: e => setInterestedIn(e.target.value), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" },
+                React.createElement("select", { value: interestedIn, onChange: e => setInterestedIn(e.target.value), className: selectClass },
                     DATING_INTERESTED_IN.map(g => React.createElement("option", { key: g, value: g }, g)))),
             React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Relationship goal"),
-                React.createElement("select", { value: relationshipGoal, onChange: e => setRelationshipGoal(e.target.value), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" },
+                React.createElement("select", { value: relationshipGoal, onChange: e => setRelationshipGoal(e.target.value), className: selectClass },
                     DATING_GOALS.map(g => React.createElement("option", { key: g, value: g }, g)))),
-            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500 mb-1.5 block" }, "Interests"),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500 mb-1.5 block" }, "Hobbies & interests"),
                 React.createElement("div", { className: "flex flex-wrap gap-1.5" }, DATING_INTERESTS.map(i => React.createElement("button", { key: i, type: "button", onClick: () => toggleInterest(i), className: "px-3 py-1.5 rounded-full text-xs font-semibold border " + (interests.includes(i) ? "bg-brand-600 border-brand-600 text-white" : "border-slate-200 dark:border-ink-600 text-slate-500") }, i)))),
-            React.createElement("button", { disabled: busy, onClick: submit, className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl py-2.5 text-sm font-semibold mt-2" }, busy ? 'Saving\u2026' : 'Start dating')));
+
+            React.createElement("div", { className: "pt-2 border-t border-slate-100 dark:border-ink-700" },
+                React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 mt-3" }, "Lifestyle")),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Smoking"),
+                React.createElement("select", { value: smoking, onChange: e => setSmoking(e.target.value), className: selectClass },
+                    React.createElement("option", { value: "" }, "Select\u2026"), DATING_SMOKING_OPTIONS.map(g => React.createElement("option", { key: g, value: g }, g)))),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Drinking"),
+                React.createElement("select", { value: drinking, onChange: e => setDrinking(e.target.value), className: selectClass },
+                    React.createElement("option", { value: "" }, "Select\u2026"), DATING_DRINKING_OPTIONS.map(g => React.createElement("option", { key: g, value: g }, g)))),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Children"),
+                React.createElement("select", { value: children, onChange: e => setChildren(e.target.value), className: selectClass },
+                    React.createElement("option", { value: "" }, "Select\u2026"), DATING_CHILDREN_OPTIONS.map(g => React.createElement("option", { key: g, value: g }, g)))),
+
+            React.createElement("button", { disabled: busy, onClick: submit, className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl py-2.5 text-sm font-semibold mt-2" }, busy ? 'Saving\u2026' : 'Save profile')));
 }
 
 /* ================= main feature: Discover / Likes / Matches / Me ================= */
@@ -9800,8 +9942,19 @@ function DatingFiltersSheet({ filters, onApply, onClose }) {
             React.createElement("button", { onClick: () => { onApply(local); onClose(); }, className: "w-full bg-brand-600 hover:bg-brand-700 text-white rounded-xl py-2.5 text-sm font-semibold" }, "Apply filters")));
 }
 
-function DatingProfileDetailSheet({ person, onClose, onLike, onPass }) {
+function DatingProfileDetailSheet({ person, onClose, onLike, onPass, isMatched }) {
     const [reportOpen, setReportOpen] = useState(false);
+    const presenceUser = useDatingPresence(person.id);
+    const showOnline = !(person.privacy || {}).hideOnline;
+    const canPhone = canViewDatingContact(person, isMatched, 'hidePhone');
+    const canWhatsapp = canViewDatingContact(person, isMatched, 'hideWhatsapp');
+    const lifestyle = person.lifestyle || {};
+    const facts = [
+        person.occupation && ['fa-briefcase', person.occupation],
+        person.education && ['fa-graduation-cap', person.education],
+        person.religion && ['fa-hands-praying', person.religion],
+        person.heightCm && ['fa-ruler-vertical', person.heightCm + ' cm'],
+    ].filter(Boolean);
     return React.createElement("div", { className: "fixed inset-0 z-[90] flex items-end sm:items-center sm:justify-center", onClick: onClose },
         React.createElement("div", { className: "absolute inset-0 bg-black/60" }),
         React.createElement("div", { onClick: e => e.stopPropagation(), className: "relative w-full sm:max-w-sm bg-white dark:bg-ink-800 rounded-t-2xl sm:rounded-2xl max-h-[85vh] overflow-y-auto" },
@@ -9809,11 +9962,25 @@ function DatingProfileDetailSheet({ person, onClose, onLike, onPass }) {
             (person.photos || []).length > 0 ? React.createElement("div", { className: "flex overflow-x-auto snap-x" }, person.photos.map((p, i) => React.createElement("img", { key: i, src: p, onClick: () => openLightbox(person.photos, i), className: "w-full shrink-0 snap-start aspect-[3/4] object-cover cursor-zoom-in" }))) :
                 React.createElement("div", { className: "w-full aspect-[3/4] bg-slate-100 dark:bg-ink-700 flex items-center justify-center text-slate-300" }, React.createElement("i", { className: "fa-solid fa-user text-5xl" })),
             React.createElement("div", { className: "p-4" },
-                React.createElement("p", { className: "font-display text-lg font-bold flex items-center" }, person.displayName, person.age ? ', ' + person.age : '', person.verified && React.createElement(DatingVerifiedBadge, null)),
+                React.createElement("div", { className: "flex items-center justify-between" },
+                    React.createElement("p", { className: "font-display text-lg font-bold flex items-center" }, person.displayName, person.age ? ', ' + person.age : '', person.verified && React.createElement(DatingVerifiedBadge, null)),
+                    showOnline && React.createElement("span", { className: "text-xs " + (isUserOnline(presenceUser) ? "text-emerald-500" : "text-slate-400") },
+                        isUserOnline(presenceUser) && React.createElement("span", { className: "inline-block w-2 h-2 rounded-full bg-emerald-500 mr-1" }), lastSeenLabel(presenceUser) || 'Offline')),
                 person.location && React.createElement("p", { className: "text-sm text-slate-400 mb-2" }, React.createElement("i", { className: "fa-solid fa-location-dot mr-1" }), person.location),
                 person.bio && React.createElement("p", { className: "text-sm mb-3" }, person.bio),
                 person.relationshipGoal && React.createElement("p", { className: "text-xs text-slate-400 mb-2" }, React.createElement("i", { className: "fa-solid fa-heart mr-1" }), "Looking for: ", person.relationshipGoal),
-                (person.interests || []).length > 0 && React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-4" }, person.interests.map(i => React.createElement("span", { key: i, className: "px-2.5 py-1 rounded-full text-xs bg-slate-100 dark:bg-ink-700" }, i))),
+                facts.length > 0 && React.createElement("div", { className: "grid grid-cols-2 gap-2 mb-3" }, facts.map(([icon, text], i) => React.createElement("p", { key: i, className: "text-xs text-slate-500 dark:text-slate-400" }, React.createElement("i", { className: "fa-solid " + icon + " mr-1.5 w-3.5 text-center" }), text))),
+                (person.languages || []).length > 0 && React.createElement("p", { className: "text-xs text-slate-400 mb-2" }, React.createElement("i", { className: "fa-solid fa-language mr-1.5" }), person.languages.join(', ')),
+                (lifestyle.smoking || lifestyle.drinking || lifestyle.children) && React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-3" },
+                    lifestyle.smoking && React.createElement("span", { className: "px-2.5 py-1 rounded-full text-[11px] bg-slate-100 dark:bg-ink-700" }, React.createElement("i", { className: "fa-solid fa-smoking mr-1" }), lifestyle.smoking),
+                    lifestyle.drinking && React.createElement("span", { className: "px-2.5 py-1 rounded-full text-[11px] bg-slate-100 dark:bg-ink-700" }, React.createElement("i", { className: "fa-solid fa-martini-glass mr-1" }), lifestyle.drinking),
+                    lifestyle.children && React.createElement("span", { className: "px-2.5 py-1 rounded-full text-[11px] bg-slate-100 dark:bg-ink-700" }, React.createElement("i", { className: "fa-solid fa-child mr-1" }), lifestyle.children)),
+                (person.interests || []).length > 0 && React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-3" }, person.interests.map(i => React.createElement("span", { key: i, className: "px-2.5 py-1 rounded-full text-xs bg-slate-100 dark:bg-ink-700" }, i))),
+                (canPhone || canWhatsapp) && React.createElement("div", { className: "bg-slate-50 dark:bg-ink-700/50 rounded-xl p-3 mb-3 space-y-1.5" },
+                    canPhone && person.phone && React.createElement("a", { href: "tel:" + person.phone.replace(/[^+\d]/g, ''), className: "flex items-center text-sm text-brand-600 font-semibold" }, React.createElement("i", { className: "fa-solid fa-phone mr-2 w-4" }), person.phone),
+                    canWhatsapp && person.whatsapp && React.createElement("a", { href: "https://wa.me/" + person.whatsapp.replace(/[^\d]/g, ''), target: "_blank", rel: "noopener", className: "flex items-center text-sm text-emerald-600 font-semibold" }, React.createElement("i", { className: "fa-brands fa-whatsapp mr-2 w-4" }), person.whatsapp)),
+                !isMatched && (person.phone || person.whatsapp) && !canPhone && !canWhatsapp && React.createElement("p", { className: "text-xs text-slate-400 mb-3" }, React.createElement("i", { className: "fa-solid fa-lock mr-1.5" }), "Contact info unlocks after you match."),
+                person.createdAt && React.createElement("p", { className: "text-[11px] text-slate-400 mb-3" }, "Member since ", datingMemberSinceLabel(person.createdAt)),
                 (onLike || onPass) && React.createElement("div", { className: "flex gap-3 mb-2" },
                     onPass && React.createElement("button", { onClick: () => { onPass(); onClose(); }, className: "flex-1 bg-slate-100 dark:bg-ink-700 rounded-xl py-3 font-semibold" }, React.createElement("i", { className: "fa-solid fa-xmark mr-2" }), "Pass"),
                     onLike && React.createElement("button", { onClick: () => { onLike(); onClose(); }, className: "flex-1 bg-rose-500 hover:bg-rose-600 text-white rounded-xl py-3 font-semibold" }, React.createElement("i", { className: "fa-solid fa-heart mr-2" }), "Like")),
@@ -9909,6 +10076,7 @@ function DatingMeTab({ dp }) {
     const toast = useToast();
     const [editing, setEditing] = useState(false);
     const [blockedProfiles, setBlockedProfiles] = useState([]);
+    const [sendingVerify, setSendingVerify] = useState(false);
     useEffect(() => {
         (async () => {
             const ids = dp.blockedUids || [];
@@ -9917,24 +10085,60 @@ function DatingMeTab({ dp }) {
             setBlockedProfiles(results);
         })();
     }, [JSON.stringify(dp.blockedUids || [])]);
-    const togglePrivacy = async (key) => {
-        const privacy = Object.assign({}, dp.privacy || {}, { [key]: !((dp.privacy || {})[key]) });
+    const togglePrivacy = async (key, currentOn) => {
+        const privacy = Object.assign({}, dp.privacy || {}, { [key]: !currentOn });
         await db.collection('datingProfiles').doc(profile.id).update({ privacy });
     };
     const deactivate = async () => { if (confirm('Deactivate your Dating profile? You can reactivate any time.')) { await setDatingActive(profile.id, false); toast('Dating profile deactivated', 'success'); } };
     const unblock = async (uid) => { await unblockDatingUser(profile.id, uid); toast('Unblocked', 'success'); };
+    const resendVerification = async () => {
+        setSendingVerify(true);
+        try { await sendDatingEmailVerification(); toast('Verification email sent — check your inbox', 'success'); }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setSendingVerify(false); }
+    };
     if (editing) return React.createElement(DatingProfileSetupStep, { dp: dp });
+    const completion = datingProfileCompletion(dp);
+    const emailVerified = !!(auth.currentUser && auth.currentUser.emailVerified && auth.currentUser.email === profile.email);
+    const Toggle = ({ label, hint, on, onClick }) => React.createElement("div", { className: "flex items-center justify-between p-3" },
+        React.createElement("div", null, React.createElement("span", { className: "text-sm font-semibold" }, label), hint && React.createElement("p", { className: "text-[11px] text-slate-400 mt-0.5" }, hint)),
+        React.createElement("button", { onClick: onClick, className: "w-11 h-6 rounded-full relative transition shrink-0 ml-2 " + (on ? "bg-brand-600" : "bg-slate-200 dark:bg-ink-600") }, React.createElement("span", { className: "absolute top-0.5 w-5 h-5 bg-white rounded-full transition " + (on ? "left-[22px]" : "left-0.5") })));
+    const VerifyRow = ({ label, verified, note }) => React.createElement("div", { className: "flex items-center justify-between p-3" },
+        React.createElement("span", { className: "text-sm font-semibold" }, label),
+        verified ? React.createElement("span", { className: "text-xs font-semibold text-emerald-600" }, React.createElement("i", { className: "fa-solid fa-circle-check mr-1" }), "Verified") :
+            React.createElement("span", { className: "text-xs font-semibold text-slate-400" }, note || 'Not verified'));
     return React.createElement("div", { className: "max-w-md mx-auto" },
         React.createElement("div", { className: "flex overflow-x-auto gap-2 mb-3" }, (dp.photos || []).map((p, i) => React.createElement("img", { key: i, src: p, onClick: () => openLightbox(dp.photos, i), className: "w-20 h-20 rounded-xl object-cover shrink-0 cursor-zoom-in" }))),
         React.createElement("p", { className: "font-display text-lg font-bold flex items-center" }, dp.displayName, dp.age ? ', ' + dp.age : '', dp.verified && React.createElement(DatingVerifiedBadge, null)),
         dp.location && React.createElement("p", { className: "text-sm text-slate-400" }, dp.location),
         dp.bio && React.createElement("p", { className: "text-sm mt-2" }, dp.bio),
+        dp.createdAt && React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, "Member since ", datingMemberSinceLabel(dp.createdAt)),
+
+        React.createElement("div", { className: "mt-4" },
+            React.createElement("div", { className: "flex items-center justify-between mb-1" },
+                React.createElement("span", { className: "text-xs font-semibold text-slate-500" }, "Profile completion"),
+                React.createElement("span", { className: "text-xs font-bold text-brand-600" }, completion + "%")),
+            React.createElement("div", { className: "w-full h-2 rounded-full bg-slate-100 dark:bg-ink-700 overflow-hidden" },
+                React.createElement("div", { className: "h-full bg-brand-600 rounded-full transition-all", style: { width: completion + '%' } }))),
+
         React.createElement("button", { onClick: () => setEditing(true), className: "w-full mt-4 bg-brand-600 hover:bg-brand-700 text-white rounded-xl py-2.5 text-sm font-semibold" }, "Edit profile"),
-        React.createElement("div", { className: "mt-6 bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl divide-y divide-slate-100 dark:divide-ink-700" },
-            React.createElement("div", { className: "flex items-center justify-between p-3" }, React.createElement("span", { className: "text-sm font-semibold" }, "Hide online status"),
-                React.createElement("button", { onClick: () => togglePrivacy('hideOnline'), className: "w-11 h-6 rounded-full relative transition " + ((dp.privacy || {}).hideOnline ? "bg-brand-600" : "bg-slate-200 dark:bg-ink-600") }, React.createElement("span", { className: "absolute top-0.5 w-5 h-5 bg-white rounded-full transition " + ((dp.privacy || {}).hideOnline ? "left-[22px]" : "left-0.5") }))),
-            React.createElement("div", { className: "flex items-center justify-between p-3" }, React.createElement("span", { className: "text-sm font-semibold" }, "Hide exact distance"),
-                React.createElement("button", { onClick: () => togglePrivacy('hideDistance'), className: "w-11 h-6 rounded-full relative transition " + ((dp.privacy || {}).hideDistance ? "bg-brand-600" : "bg-slate-200 dark:bg-ink-600") }, React.createElement("span", { className: "absolute top-0.5 w-5 h-5 bg-white rounded-full transition " + ((dp.privacy || {}).hideDistance ? "left-[22px]" : "left-0.5") })))),
+
+        React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mt-6 mb-2" }, "Verification"),
+        React.createElement("div", { className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl divide-y divide-slate-100 dark:divide-ink-700" },
+            React.createElement(VerifyRow, { label: "Identity (KYC)", verified: dp.kycStatus === 'verified', note: dp.kycStatus === 'pending' ? 'Under review' : dp.kycStatus === 'rejected' ? 'Rejected' : 'Not verified' }),
+            React.createElement(VerifyRow, { label: "Phone number", verified: !!dp.phoneVerified, note: "Pending admin review" }),
+            React.createElement("div", { className: "flex items-center justify-between p-3" },
+                React.createElement("span", { className: "text-sm font-semibold" }, "Email"),
+                emailVerified ? React.createElement("span", { className: "text-xs font-semibold text-emerald-600" }, React.createElement("i", { className: "fa-solid fa-circle-check mr-1" }), "Verified") :
+                    React.createElement("button", { disabled: sendingVerify, onClick: resendVerification, className: "text-xs font-semibold text-brand-600 disabled:opacity-50" }, sendingVerify ? 'Sending\u2026' : 'Verify now'))),
+
+        React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mt-6 mb-2" }, "Privacy"),
+        React.createElement("div", { className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl divide-y divide-slate-100 dark:divide-ink-700" },
+            React.createElement(Toggle, { label: "Hide phone number", hint: "Only matches (or everyone, if off) can see it", on: (dp.privacy || {}).hidePhone !== false, onClick: () => togglePrivacy('hidePhone', (dp.privacy || {}).hidePhone !== false) }),
+            React.createElement(Toggle, { label: "Hide WhatsApp", hint: "Only matches (or everyone, if off) can see it", on: (dp.privacy || {}).hideWhatsapp !== false, onClick: () => togglePrivacy('hideWhatsapp', (dp.privacy || {}).hideWhatsapp !== false) }),
+            React.createElement(Toggle, { label: "Hide online status", on: !!(dp.privacy || {}).hideOnline, onClick: () => togglePrivacy('hideOnline', !!(dp.privacy || {}).hideOnline) }),
+            React.createElement(Toggle, { label: "Hide exact distance", on: !!(dp.privacy || {}).hideDistance, onClick: () => togglePrivacy('hideDistance', !!(dp.privacy || {}).hideDistance) })),
+
         blockedProfiles.length > 0 && React.createElement("div", { className: "mt-6" },
             React.createElement("p", { className: "text-xs font-semibold text-slate-500 mb-2" }, "Blocked users"),
             blockedProfiles.map(b => React.createElement("div", { key: b.id, className: "flex items-center justify-between py-1.5" },
@@ -9949,10 +10153,11 @@ function DatingProfileViewScreen({ uid, go }) {
     const [person, setPerson] = useState(undefined);
     useEffect(() => { const unsub = db.collection('datingProfiles').doc(uid).onSnapshot(s => setPerson(s.exists ? Object.assign({ id: s.id }, s.data()) : null)); return unsub; }, [uid]);
     const toast = useToast();
+    const isMatched = useDatingMatchStatus(profile.id, uid);
     if (person === undefined) return React.createElement("div", { className: "py-16 flex justify-center" }, React.createElement("div", { className: "w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" }));
     if (!person) return React.createElement("p", { className: "text-center text-slate-400 py-16" }, "This Dating profile no longer exists.");
     const like = async () => { try { const r = await likeDatingProfile(profile.id, uid); toast(r === 'matched' ? "It's a match! \uD83D\uDC95" : 'Liked', 'success'); } catch (e) { toast(e.message, 'error'); } };
-    return React.createElement(DatingProfileDetailSheet, { person: person, onClose: () => go({ name: 'dating' }), onLike: like });
+    return React.createElement(DatingProfileDetailSheet, { person: person, onClose: () => go({ name: 'dating' }), onLike: isMatched ? undefined : like, isMatched: isMatched });
 }
 
 /* ================= Dating chat (matched users only) ================= */
@@ -9963,6 +10168,7 @@ function DatingChatScreen({ matchId, go }) {
     const [text, setText] = useState('');
     const [menuOpen, setMenuOpen] = useState(false);
     const [reportOpen, setReportOpen] = useState(false);
+    const [profileOpen, setProfileOpen] = useState(false);
     const msgs = useDatingMessages(matchId);
     const toast = useToast();
     const bottomRef = useRef(null);
@@ -9980,11 +10186,13 @@ function DatingChatScreen({ matchId, go }) {
     return React.createElement("div", { className: "flex flex-col h-[calc(100vh-56px)] md:h-[80vh]" },
         React.createElement("div", { className: "flex items-center gap-3 px-3 py-2.5 border-b border-slate-100 dark:border-ink-700" },
             React.createElement("button", { onClick: () => go({ name: 'dating' }) }, React.createElement("i", { className: "fa-solid fa-arrow-left" })),
-            React.createElement("img", { src: (other.photos || [])[0], className: "w-9 h-9 rounded-full object-cover bg-slate-100" }),
-            React.createElement("p", { className: "font-semibold text-sm flex-1 flex items-center" }, other.displayName, other.verified && React.createElement(DatingVerifiedBadge, null)),
+            React.createElement("button", { onClick: () => setProfileOpen(true), className: "flex items-center gap-3 flex-1 min-w-0 text-left" },
+                React.createElement("img", { src: (other.photos || [])[0], className: "w-9 h-9 rounded-full object-cover bg-slate-100 shrink-0" }),
+                React.createElement("p", { className: "font-semibold text-sm flex-1 flex items-center truncate" }, other.displayName, other.verified && React.createElement(DatingVerifiedBadge, null))),
             React.createElement("div", { className: "relative" },
                 React.createElement("button", { onClick: () => setMenuOpen(v => !v) }, React.createElement("i", { className: "fa-solid fa-ellipsis" })),
                 menuOpen && React.createElement("div", { className: "absolute right-0 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-600 z-10 w-40" },
+                    React.createElement("button", { onClick: () => { setMenuOpen(false); setProfileOpen(true); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "View profile"),
                     React.createElement("button", { onClick: () => { setMenuOpen(false); setReportOpen(true); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Report"),
                     React.createElement("button", { onClick: () => { setMenuOpen(false); block(); }, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Block")))),
         React.createElement("div", { className: "flex-1 overflow-y-auto px-3 py-3 space-y-2" },
@@ -9995,7 +10203,8 @@ function DatingChatScreen({ matchId, go }) {
         React.createElement("div", { className: "flex items-center gap-2 p-2.5 border-t border-slate-100 dark:border-ink-700" },
             React.createElement("input", { value: text, onChange: e => setText(e.target.value), onKeyDown: e => e.key === 'Enter' && send(), placeholder: "Message\u2026", className: "flex-1 px-3 py-2 rounded-full bg-slate-100 dark:bg-ink-700 text-sm focus:outline-none" }),
             React.createElement("button", { onClick: send, className: "w-9 h-9 rounded-full bg-brand-600 text-white flex items-center justify-center shrink-0" }, React.createElement("i", { className: "fa-solid fa-paper-plane text-sm" }))),
-        reportOpen && React.createElement(ReportReasonSheet, { targetType: "datingProfile", targetId: other.id, targetOwnerId: other.id, onClose: () => setReportOpen(false) }));
+        reportOpen && React.createElement(ReportReasonSheet, { targetType: "datingProfile", targetId: other.id, targetOwnerId: other.id, onClose: () => setReportOpen(false) }),
+        profileOpen && React.createElement(DatingProfileDetailSheet, { person: other, onClose: () => setProfileOpen(false), isMatched: true }));
 }
 
 /* ================= Dating Admin Panel ================= */
@@ -10076,15 +10285,20 @@ function DatingAdminPanel({ adminUid, adminEmail }) {
 
         subtab === 'users' && React.createElement("div", null,
             React.createElement("input", { value: userSearch, onChange: e => setUserSearch(e.target.value), placeholder: "Search by name or uid\u2026", className: "w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm mb-3" }),
-            React.createElement("div", { className: "space-y-2" }, filteredUsers.map(p => React.createElement("div", { key: p.id, className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3 flex items-center gap-3" },
-                React.createElement("img", { src: (p.photos || [])[0], className: "w-11 h-11 rounded-full object-cover bg-slate-100 dark:bg-ink-700" }),
-                React.createElement("div", { className: "min-w-0 flex-1" },
-                    React.createElement("p", { className: "font-semibold text-sm truncate" }, p.displayName || '(no profile yet)', p.verified && React.createElement(DatingVerifiedBadge, null)),
-                    React.createElement("p", { className: "text-xs text-slate-400" }, p.gender || '\u2014', " \u00B7 ", p.kycStatus, " \u00B7 ", p.paid ? 'paid' : 'unpaid', " \u00B7 ", p.active ? 'active' : (p.banned ? 'banned' : 'deactivated'))),
-                React.createElement("div", { className: "flex gap-1.5 shrink-0" },
-                    p.active ? React.createElement("button", { onClick: () => adminSuspendDatingProfile(p.id, adminUid, adminEmail), className: "text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-ink-700" }, "Suspend") :
-                        React.createElement("button", { onClick: () => adminReactivateDatingProfile(p.id, adminUid, adminEmail), className: "text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-emerald-100 text-emerald-700" }, "Reactivate"),
-                    React.createElement("button", { onClick: () => { if (confirm('Ban this Dating account?')) adminBanDatingProfile(p.id, adminUid, adminEmail); }, className: "text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-red-100 text-red-600" }, "Ban")))))),
+            React.createElement("div", { className: "space-y-2" }, filteredUsers.map(p => React.createElement("div", { key: p.id, className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3" },
+                React.createElement("div", { className: "flex items-center gap-3" },
+                    React.createElement("img", { src: (p.photos || [])[0], className: "w-11 h-11 rounded-full object-cover bg-slate-100 dark:bg-ink-700" }),
+                    React.createElement("div", { className: "min-w-0 flex-1" },
+                        React.createElement("p", { className: "font-semibold text-sm truncate" }, p.displayName || '(no profile yet)', p.verified && React.createElement(DatingVerifiedBadge, null)),
+                        React.createElement("p", { className: "text-xs text-slate-400" }, p.gender || '\u2014', " \u00B7 ", p.kycStatus, " \u00B7 ", p.paid ? 'paid' : 'unpaid', " \u00B7 ", p.active ? 'active' : (p.banned ? 'banned' : 'deactivated')),
+                        p.phone && React.createElement("p", { className: "text-xs text-slate-400 truncate" }, p.phone, p.occupation ? ' \u00B7 ' + p.occupation : '')),
+                    React.createElement("div", { className: "flex gap-1.5 shrink-0" },
+                        p.active ? React.createElement("button", { onClick: () => adminSuspendDatingProfile(p.id, adminUid, adminEmail), className: "text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-ink-700" }, "Suspend") :
+                            React.createElement("button", { onClick: () => adminReactivateDatingProfile(p.id, adminUid, adminEmail), className: "text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-emerald-100 text-emerald-700" }, "Reactivate"),
+                        React.createElement("button", { onClick: () => { if (confirm('Ban this Dating account?')) adminBanDatingProfile(p.id, adminUid, adminEmail); }, className: "text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-red-100 text-red-600" }, "Ban"))),
+                p.phone && React.createElement("div", { className: "flex gap-1.5 mt-2 pt-2 border-t border-slate-100 dark:border-ink-700" },
+                    React.createElement("button", { onClick: () => adminSetDatingVerification(p.id, 'phoneVerified', !p.phoneVerified, adminUid, adminEmail), className: "text-xs font-semibold px-2.5 py-1 rounded-lg " + (p.phoneVerified ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 dark:bg-ink-700") }, p.phoneVerified ? '\u2713 Phone verified' : 'Mark phone verified'),
+                    React.createElement("button", { onClick: () => adminSetDatingVerification(p.id, 'emailVerified', !p.emailVerified, adminUid, adminEmail), className: "text-xs font-semibold px-2.5 py-1 rounded-lg " + (p.emailVerified ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 dark:bg-ink-700") }, p.emailVerified ? '\u2713 Email verified' : 'Mark email verified')))))),
 
         subtab === 'payments' && React.createElement("div", null,
             React.createElement("button", { onClick: () => exportToCsv('dating-payments.csv', payments.map(p => ({ uid: p.uid, amount: p.amount, reference: p.reference, status: p.status }))), className: "text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-100 dark:bg-ink-700 mb-3" }, React.createElement("i", { className: "fa-solid fa-file-arrow-down mr-1.5" }), "Export CSV"),
