@@ -1604,6 +1604,54 @@ async function adminRejectPageNameChangeRequest(request, adminUid, adminNotes) {
     });
     notifyPageOwner(request.ownerId, request.pageId, 'page_name_change_rejected', { requestedName: request.requestedName, adminNotes: notes });
 }
+// Admin-only instant rename — skips the owner request/approval flow entirely (an admin doing
+// this directly doesn't need to approve their own action). Used from the Pages admin panel to
+// resolve duplicate/legacy Page names that predate the pageNames uniqueness reservation system
+// (e.g. Pages created before that system existed, or restored from a backup) — the normal
+// createFanPage/adminApprovePageNameChangeRequest paths only ever prevent *new* collisions, they
+// don't retroactively fix Pages that already share a name. Still runs inside a transaction so the
+// pageNames reservation and the Page's displayName can never drift out of sync.
+async function adminForceRenamePage(page, newName, adminUid) {
+    const trimmedName = (newName || '').trim();
+    if (!trimmedName) throw new Error('Please enter a new Page name.');
+    const newKey = normalizePageNameKey(trimmedName);
+    if (newKey === normalizePageNameKey(page.displayName))
+        throw new Error("That's already this Page's current name.");
+    await db.runTransaction(async (tx) => {
+        const newNameRef = db.collection('pageNames').doc(newKey);
+        const newNameSnap = await tx.get(newNameRef);
+        if (newNameSnap.exists && newNameSnap.data().pageId !== page.id)
+            throw new Error('That Page name is already in use by another Page.');
+        const pageRef = db.collection('fanPages').doc(page.id);
+        const oldKey = normalizePageNameKey(page.displayName);
+        tx.set(newNameRef, { pageId: page.id });
+        if (oldKey && oldKey !== newKey) {
+            const oldNameRef = db.collection('pageNames').doc(oldKey);
+            const oldNameSnap = await tx.get(oldNameRef);
+            // Only delete the old reservation if it actually still points at this Page — a
+            // duplicate that predates the reservation system may not own it (or another Page may
+            // legitimately hold it), so blindly deleting could free up someone else's name.
+            if (oldNameSnap.exists && oldNameSnap.data().pageId === page.id)
+                tx.delete(oldNameRef);
+        }
+        tx.update(pageRef, { displayName: trimmedName });
+    });
+    notifyPageOwner(page.ownerId, page.id, 'page_name_change_approved', { requestedName: trimmedName });
+}
+// Groups a list of fanPages by normalized display-name key so the admin panel can flag Pages
+// that share a name — this covers legacy duplicates that predate the pageNames uniqueness
+// reservation (see adminForceRenamePage above), which the live create/rename flows can no longer
+// produce going forward but can't retroactively clean up on their own.
+function findDuplicatePageNameGroups(fanPages) {
+    const byKey = new Map();
+    for (const p of fanPages) {
+        const key = normalizePageNameKey(p.displayName);
+        if (!key) continue;
+        if (!byKey.has(key)) byKey.set(key, []);
+        byKey.get(key).push(p);
+    }
+    return Array.from(byKey.values()).filter(group => group.length > 1);
+}
 /* ============================== PAGE MONETIZATION & KYC ==============================
  * Collections used (see the Monetization security rules documented at the end of this
  * file for the recommended production rules):
@@ -3018,10 +3066,8 @@ const MENU_TILES = [
     { key: 'memories', label: 'Memories', icon: 'fa-clock-rotate-left', route: null },
     { key: 'birthdays', label: 'Birthdays', icon: 'fa-gift', route: null },
     { key: 'events', label: 'Events', icon: 'fa-calendar-days', route: null },
-    { key: 'metaVerified', label: 'Meta Verified', icon: 'fa-certificate', route: null },
     { key: 'adCentre', label: 'Ad Centre', icon: 'fa-bullhorn', route: null },
     { key: 'feeds', label: 'Feeds', icon: 'fa-table-cells-large', route: null },
-    { key: 'instagramLite', label: 'Instagram Lite', icon: 'fa-brands fa-instagram', route: null },
 ];
 const MENU_TILE_COLORS = {
     dashboard: 'bg-blue-100 text-blue-600', messages: 'bg-fuchsia-100 text-fuchsia-600',
@@ -3030,8 +3076,7 @@ const MENU_TILE_COLORS = {
     games: 'bg-violet-100 text-violet-600', pages: 'bg-orange-100 text-orange-600',
     saved: 'bg-purple-100 text-purple-600', memories: 'bg-blue-100 text-blue-600',
     birthdays: 'bg-red-100 text-red-500', events: 'bg-red-100 text-red-500',
-    metaVerified: 'bg-blue-100 text-blue-600', adCentre: 'bg-blue-100 text-blue-600',
-    feeds: 'bg-orange-100 text-orange-600', instagramLite: 'bg-pink-100 text-pink-600',
+    adCentre: 'bg-blue-100 text-blue-600', feeds: 'bg-orange-100 text-orange-600',
 };
 function MenuTile({ tile, onOpen }) {
     return React.createElement("button", { onClick: () => onOpen(tile), className: "flex items-center gap-3 bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3 text-left active:scale-[0.98] transition" },
@@ -6072,13 +6117,20 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
     }
     if (tab === 'pages') {
         const filteredPages = fanPages.filter(p => { var _a, _b; return !search || ((_a = p.displayName) === null || _a === void 0 ? void 0 : _a.toLowerCase().includes(search.toLowerCase())) || ((_b = p.username) === null || _b === void 0 ? void 0 : _b.toLowerCase().includes(search.toLowerCase())); });
+        const duplicateGroups = findDuplicatePageNameGroups(fanPages);
+        const duplicatePageIds = new Set(duplicateGroups.flat().map(p => p.id));
         return React.createElement("div", null,
             React.createElement("div", { className: "flex items-center justify-between mb-3 gap-3" },
                 React.createElement("h2", { className: "font-display text-lg font-bold" }, "Pages"),
                 React.createElement("button", { onClick: () => exportToCsv('pages.csv', fanPages.map(p => ({ id: p.id, name: p.displayName || '', username: p.username || '', category: p.category || '', ownerId: p.ownerId, verified: !!p.verified, suspended: !!p.suspended }))), className: "text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-100 dark:bg-ink-700" }, React.createElement("i", { className: "fa-solid fa-file-arrow-down mr-1.5" }), "Export CSV")),
+            duplicateGroups.length > 0 && React.createElement("div", { className: "mb-3 rounded-xl border border-amber-200 dark:border-amber-900/40 bg-amber-50 dark:bg-amber-900/10 p-3" },
+                React.createElement("p", { className: "text-sm font-semibold text-amber-700 dark:text-amber-400 mb-1" },
+                    React.createElement("i", { className: "fa-solid fa-triangle-exclamation mr-1.5" }),
+                    duplicateGroups.length, " Page name", duplicateGroups.length > 1 ? 's are' : ' is', " shared by more than one Page"),
+                React.createElement("p", { className: "text-xs text-amber-700/80 dark:text-amber-400/80" }, "These predate (or bypassed) the name-uniqueness check, so new Pages can no longer collide with them, but these existing ones weren't fixed automatically. Expand a flagged Page below and use \u201CRename\u201D to give it a unique name.")),
             React.createElement("input", { value: search, onChange: e => setSearch(e.target.value), placeholder: "Search by Page name or username\u2026", className: "w-full mb-3 px-4 py-2 rounded-xl border border-slate-200 dark:border-ink-700 bg-white dark:bg-ink-800 text-sm" }),
             filteredPages.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No Pages found."),
-            React.createElement("div", { className: "space-y-2" }, filteredPages.map(p => React.createElement(AdminPageRow, { key: p.id, page: p, adminUid: adminUid, adminEmail: adminEmail }))));
+            React.createElement("div", { className: "space-y-2" }, filteredPages.map(p => React.createElement(AdminPageRow, { key: p.id, page: p, adminUid: adminUid, adminEmail: adminEmail, duplicate: duplicatePageIds.has(p.id) }))));
     }
     if (tab === 'pageNameRequests') {
         const filteredNameRequests = pageNameChangeRequests.filter(r => pageNameRequestFilter === 'all' || r.status === pageNameRequestFilter);
@@ -6346,10 +6398,12 @@ function AdminUserRow({ u, adminUid, adminEmail, onToggleSuspend }) {
                 React.createElement("button", { disabled: busy, onClick: () => confirm('Permanently delete this user\'s account document? This cannot be undone.') && run(() => adminDeleteUserPermanently(u), 'delete_user'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Delete Permanently"))));
 }
 /* ============================== SUPER ADMIN: PAGE ROW ============================== */
-function AdminPageRow({ page, adminUid, adminEmail }) {
+function AdminPageRow({ page, adminUid, adminEmail, duplicate }) {
     const toast = useToast();
     const [busy, setBusy] = useState(false);
     const [open, setOpen] = useState(false);
+    const [renaming, setRenaming] = useState(false);
+    const [newName, setNewName] = useState('');
     const run = async (fn, action) => {
         setBusy(true);
         try {
@@ -6360,7 +6414,19 @@ function AdminPageRow({ page, adminUid, adminEmail }) {
         catch (e) { toast(e.message, 'error'); }
         finally { setBusy(false); }
     };
-    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
+    const submitRename = async () => {
+        setBusy(true);
+        try {
+            await adminForceRenamePage(page, newName, adminUid);
+            logAdminAction(adminUid, adminEmail, 'force_rename_page', 'page', page.id, newName.trim());
+            toast('Page renamed', 'success');
+            setRenaming(false);
+            setNewName('');
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border " + (duplicate ? "border-amber-300 dark:border-amber-700" : "border-slate-100 dark:border-ink-700") },
         React.createElement("div", { className: "flex items-center justify-between" },
             React.createElement("div", { className: "flex items-center gap-3 cursor-pointer min-w-0", onClick: () => setOpen(v => !v) },
                 React.createElement(Avatar, { user: page, size: 9 }),
@@ -6368,15 +6434,22 @@ function AdminPageRow({ page, adminUid, adminEmail }) {
                     React.createElement("p", { className: "text-sm font-semibold truncate" },
                         page.displayName, " ",
                         page.verified && React.createElement("i", { className: "fa-solid fa-badge-check text-brand-500 text-xs" }),
-                        page.suspended && React.createElement("span", { className: "text-amber-500 text-xs ml-1" }, "(suspended)")),
+                        page.suspended && React.createElement("span", { className: "text-amber-500 text-xs ml-1" }, "(suspended)"),
+                        duplicate && React.createElement("span", { className: "text-[10px] font-bold px-1.5 py-0.5 rounded ml-1.5 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" }, "DUPLICATE NAME")),
                     React.createElement("p", { className: "text-xs text-slate-400 truncate" }, "@", page.username, " \u00B7 ", page.category, " \u00B7 owner: ", React.createElement(AdminUserLabel, { uid: page.ownerId })))),
             React.createElement("button", { onClick: () => setOpen(v => !v), className: "text-slate-300 shrink-0" }, React.createElement("i", { className: "fa-solid " + (open ? 'fa-chevron-up' : 'fa-chevron-down') }))),
         open && React.createElement("div", { className: "mt-3 pt-3 border-t border-slate-100 dark:border-ink-700" },
             page.bio && React.createElement("p", { className: "text-xs text-slate-400 mb-3" }, page.bio),
-            React.createElement("div", { className: "flex flex-wrap gap-1.5" },
+            !renaming && React.createElement("div", { className: "flex flex-wrap gap-1.5" },
                 React.createElement("button", { disabled: busy, onClick: () => run(() => adminVerifyPage(page), 'toggle_verify_page'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-900/20" }, page.verified ? 'Unverify' : 'Verify'),
                 React.createElement("button", { disabled: busy, onClick: () => run(() => adminSuspendPage(page), 'toggle_suspend_page'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg " + (page.suspended ? "bg-emerald-500 text-white" : "bg-amber-500 text-white") }, page.suspended ? 'Reactivate' : 'Suspend'),
-                React.createElement("button", { disabled: busy, onClick: () => confirm('Permanently delete this Page? This cannot be undone.') && run(() => deleteFanPagePermanently(page), 'delete_page'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Delete Permanently"))));
+                React.createElement("button", { disabled: busy, onClick: () => { setNewName(page.displayName || ''); setRenaming(true); }, className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-sky-50 text-sky-600 dark:bg-sky-900/20" }, "Rename"),
+                React.createElement("button", { disabled: busy, onClick: () => confirm('Permanently delete this Page? This cannot be undone.') && run(() => deleteFanPagePermanently(page), 'delete_page'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Delete Permanently")),
+            renaming && React.createElement("div", { className: "flex flex-col gap-2" },
+                React.createElement("input", { value: newName, onChange: e => setNewName(e.target.value), autoFocus: true, className: "w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm", placeholder: "New Page name" }),
+                React.createElement("div", { className: "flex gap-1.5" },
+                    React.createElement("button", { disabled: busy || !newName.trim(), onClick: submitRename, className: "text-[11px] font-semibold px-3 py-1.5 rounded-lg bg-brand-600 text-white disabled:opacity-50" }, busy ? 'Saving\u2026' : 'Save new name'),
+                    React.createElement("button", { disabled: busy, onClick: () => { setRenaming(false); setNewName(''); }, className: "text-[11px] font-semibold px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-ink-700" }, "Cancel")))));
 }
 /* ============================== SUPER ADMIN: PAGE NAME CHANGE REQUEST ROW ============================== */
 function AdminPageNameChangeRow({ request, adminUid, adminEmail }) {
