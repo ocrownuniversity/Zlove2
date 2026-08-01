@@ -9701,9 +9701,26 @@ function useDatingMatches(uid) {
     }, [uid]);
     return matches;
 }
-async function sendDatingMessage(matchId, meId, text) {
-    await db.collection('datingMatches').doc(matchId).collection('messages').add({ senderId: meId, text, createdAt: FieldValue.serverTimestamp() });
-    await db.collection('datingMatches').doc(matchId).update({ lastMessage: text, lastMessageAt: FieldValue.serverTimestamp() });
+async function sendDatingMessage(matchId, meId, payload) {
+    // Back-compat: allow callers to still pass a plain string for a text message.
+    if (typeof payload === 'string')
+        payload = { type: 'text', text: payload };
+    const previewText = payload.type === 'text' ? payload.text : ('[' + payload.type + ']');
+    await db.collection('datingMatches').doc(matchId).collection('messages').add(Object.assign({ senderId: meId, createdAt: FieldValue.serverTimestamp() }, payload));
+    await db.collection('datingMatches').doc(matchId).update({ lastMessage: previewText, lastMessageAt: FieldValue.serverTimestamp() });
+}
+async function uploadDatingChatMedia(matchId, file, type, onProgress) {
+    let blob = file;
+    if (type === 'image')
+        blob = await compressImage(file, 1600, 0.85);
+    const ext = type === 'image' ? 'jpg' : (file.name ? file.name.split('.').pop() : 'webm');
+    const path = `dating-chat-media/${matchId}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+    const ref = storage.ref(path);
+    await new Promise((resolve, reject) => {
+        const task = ref.put(blob, { contentType: type === 'image' ? 'image/jpeg' : (file.type || 'application/octet-stream') });
+        task.on('state_changed', s => onProgress && onProgress(Math.round((s.bytesTransferred / s.totalBytes) * 100)), reject, resolve);
+    });
+    return await ref.getDownloadURL();
 }
 function useDatingMessages(matchId) {
     const [msgs, setMsgs] = useState([]);
@@ -10340,6 +10357,16 @@ function DatingChatScreen({ matchId, go }) {
     const [reportOpen, setReportOpen] = useState(false);
     const [profileOpen, setProfileOpen] = useState(false);
     const [callGateType, setCallGateType] = useState(null); // 'voice' | 'video' | null — drives the pay-to-unlock sheet
+    const [attachOpen, setAttachOpen] = useState(false);
+    const [uploading, setUploading] = useState(false);
+    const [progress, setProgress] = useState(0);
+    const [recording, setRecording] = useState(false);
+    const [recordSeconds, setRecordSeconds] = useState(0);
+    const imageInputRef = useRef();
+    const videoInputRef = useRef();
+    const recorderRef = useRef();
+    const chunksRef = useRef([]);
+    const recordTimerRef = useRef();
     const msgs = useDatingMessages(matchId);
     const toast = useToast();
     const bottomRef = useRef(null);
@@ -10350,7 +10377,48 @@ function DatingChatScreen({ matchId, go }) {
         db.collection('datingProfiles').doc(otherId).onSnapshot(s => setOther(s.exists ? Object.assign({ id: s.id }, s.data()) : null));
     }, [match]);
     useEffect(() => { var _a; (_a = bottomRef.current) === null || _a === void 0 ? void 0 : _a.scrollIntoView({ behavior: 'smooth' }); }, [msgs.length]);
-    const send = async () => { if (!text.trim()) return; const t = text.trim(); setText(''); try { await sendDatingMessage(matchId, profile.id, t); } catch (e) { toast(e.message, 'error'); } };
+    const send = async () => { if (!text.trim()) return; const t = text.trim(); setText(''); try { await sendDatingMessage(matchId, profile.id, { type: 'text', text: t }); } catch (e) { toast(e.message, 'error'); } };
+    const uploadAndSend = async (file, type) => {
+        const maxSizes = { image: 15 * 1024 * 1024, video: 100 * 1024 * 1024, audio: 20 * 1024 * 1024 };
+        if (file.size > maxSizes[type]) { toast('File exceeds the size limit for ' + type, 'error'); return; }
+        setUploading(true);
+        setProgress(0);
+        try {
+            const url = await uploadDatingChatMedia(matchId, file, type, setProgress);
+            await sendDatingMessage(matchId, profile.id, { type, mediaURL: url, mediaName: file.name || 'voice-note.webm', mediaSize: file.size });
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setUploading(false); setProgress(0); }
+    };
+    const startRecording = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const rec = new MediaRecorder(stream);
+            recorderRef.current = rec;
+            chunksRef.current = [];
+            rec.ondataavailable = e => chunksRef.current.push(e.data);
+            rec.onstop = async () => {
+                stream.getTracks().forEach(t => t.stop());
+                if (rec.__cancelled || chunksRef.current.length === 0) return;
+                const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+                const file = new File([blob], `voice-${Date.now()}.webm`, { type: 'audio/webm' });
+                await uploadAndSend(file, 'audio');
+            };
+            rec.start();
+            setRecording(true);
+            setRecordSeconds(0);
+            recordTimerRef.current = setInterval(() => setRecordSeconds(s => s + 1), 1000);
+        }
+        catch (e) { toast('Microphone access denied', 'error'); }
+    };
+    const stopRecording = (cancel) => {
+        clearInterval(recordTimerRef.current);
+        setRecording(false);
+        if (recorderRef.current) {
+            recorderRef.current.__cancelled = !!cancel;
+            recorderRef.current.stop();
+        }
+    };
     const block = async () => { if (!confirm('Block this person? You will no longer see each other.')) return; await blockDatingUser(profile.id, other.id); toast('Blocked', 'success'); go({ name: 'dating' }); };
     const startCall = (type) => {
         if (!canStartDatingCall(myDp)) { setCallGateType(type); return; }
@@ -10377,11 +10445,35 @@ function DatingChatScreen({ matchId, go }) {
         React.createElement("div", { className: "flex-1 overflow-y-auto px-3 py-3 space-y-2" },
             msgs.length === 0 && React.createElement("p", { className: "text-center text-xs text-slate-400 py-8" }, "You matched with ", other.displayName, "! Say hi \uD83D\uDC4B"),
             msgs.map(m => React.createElement("div", { key: m.id, className: "flex " + (m.senderId === profile.id ? "justify-end" : "justify-start") },
-                React.createElement("div", { className: "max-w-[75%] rounded-2xl px-3 py-2 text-sm " + (m.senderId === profile.id ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, m.text))),
+                React.createElement("div", { className: "max-w-[75%] rounded-2xl px-3 py-2 text-sm " + (m.senderId === profile.id ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") },
+                    (!m.type || m.type === 'text') && React.createElement("span", { className: "whitespace-pre-wrap break-words" }, m.text),
+                    m.type === 'image' && React.createElement("img", { src: m.mediaURL, onClick: () => openLightbox(m.mediaURL), loading: "lazy", className: "rounded-lg max-w-[220px] cursor-zoom-in" }),
+                    m.type === 'video' && React.createElement("video", { src: m.mediaURL, controls: true, className: "rounded-lg max-w-[220px]" }),
+                    m.type === 'audio' && React.createElement("audio", { src: m.mediaURL, controls: true, className: "w-52" })))),
             React.createElement("div", { ref: bottomRef })),
-        React.createElement("div", { className: "flex items-center gap-2 p-2.5 border-t border-slate-100 dark:border-ink-700" },
-            React.createElement("input", { value: text, onChange: e => setText(e.target.value), onKeyDown: e => e.key === 'Enter' && send(), placeholder: "Message\u2026", className: "flex-1 px-3 py-2 rounded-full bg-slate-100 dark:bg-ink-700 text-sm focus:outline-none" }),
-            React.createElement("button", { onClick: send, className: "w-9 h-9 rounded-full bg-brand-600 text-white flex items-center justify-center shrink-0" }, React.createElement("i", { className: "fa-solid fa-paper-plane text-sm" }))),
+        uploading && (React.createElement("div", { className: "px-3 pt-2 shrink-0" },
+            React.createElement("div", { className: "w-full h-1.5 bg-slate-100 dark:bg-ink-700 rounded-full overflow-hidden" },
+                React.createElement("div", { className: "h-full bg-brand-600 transition-all", style: { width: progress + '%' } })))),
+        React.createElement("div", { className: "p-2.5 border-t border-slate-100 dark:border-ink-700 relative" },
+            attachOpen && (React.createElement("div", { className: "absolute bottom-14 left-2.5 bg-white dark:bg-ink-700 border border-slate-100 dark:border-ink-600 rounded-xl shadow-lg p-2 flex gap-2 z-20" },
+                React.createElement("button", { onClick: () => { imageInputRef.current.click(); setAttachOpen(false); }, className: "flex flex-col items-center gap-1 px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-ink-600 rounded-lg" },
+                    React.createElement("i", { className: "fa-solid fa-image text-brand-600" }), "Photo"),
+                React.createElement("button", { onClick: () => { videoInputRef.current.click(); setAttachOpen(false); }, className: "flex flex-col items-center gap-1 px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-ink-600 rounded-lg" },
+                    React.createElement("i", { className: "fa-solid fa-video text-brand-600" }), "Video"))),
+            React.createElement("input", { ref: imageInputRef, type: "file", accept: "image/*", hidden: true, onChange: e => { if (e.target.files[0]) uploadAndSend(e.target.files[0], 'image'); e.target.value = ''; } }),
+            React.createElement("input", { ref: videoInputRef, type: "file", accept: "video/*", hidden: true, onChange: e => { if (e.target.files[0]) uploadAndSend(e.target.files[0], 'video'); e.target.value = ''; } }),
+            recording ? (React.createElement("div", { className: "flex items-center gap-3 bg-red-50 dark:bg-red-900/20 rounded-full px-4 py-2" },
+                React.createElement("span", { className: "w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" }),
+                React.createElement("span", { className: "text-sm text-red-500 flex-1" }, "Recording\u2026 ", Math.floor(recordSeconds / 60), ":", String(recordSeconds % 60).padStart(2, '0')),
+                React.createElement("button", { onClick: () => stopRecording(true), className: "text-slate-400 text-sm" }, "Cancel"),
+                React.createElement("button", { onClick: () => stopRecording(false), className: "bg-brand-600 text-white rounded-full w-8 h-8 flex items-center justify-center" },
+                    React.createElement("i", { className: "fa-solid fa-paper-plane text-xs" })))) : (
+            React.createElement("div", { className: "flex items-center gap-2" },
+                React.createElement("button", { onClick: () => setAttachOpen(a => !a), className: "text-brand-600 w-9 h-9 flex items-center justify-center shrink-0 text-lg" },
+                    React.createElement("i", { className: "fa-solid fa-circle-plus" })),
+                React.createElement("input", { value: text, onChange: e => setText(e.target.value), onKeyDown: e => e.key === 'Enter' && send(), placeholder: "Message\u2026", className: "flex-1 px-3 py-2 rounded-full bg-slate-100 dark:bg-ink-700 text-sm focus:outline-none" }),
+                text.trim() ? (React.createElement("button", { onClick: send, className: "w-9 h-9 rounded-full bg-brand-600 text-white flex items-center justify-center shrink-0" }, React.createElement("i", { className: "fa-solid fa-paper-plane text-sm" }))) :
+                    (React.createElement("button", { onClick: startRecording, className: "w-9 h-9 rounded-full bg-brand-600 text-white flex items-center justify-center shrink-0" }, React.createElement("i", { className: "fa-solid fa-microphone text-sm" })))))),
         reportOpen && React.createElement(ReportReasonSheet, { targetType: "datingProfile", targetId: other.id, targetOwnerId: other.id, onClose: () => setReportOpen(false) }),
         profileOpen && React.createElement(DatingProfileDetailSheet, { person: other, onClose: () => setProfileOpen(false), isMatched: true }),
         callGateType && React.createElement(DatingCallPaymentSheet, {
