@@ -9585,6 +9585,26 @@ function datingAge(dob) {
     return age;
 }
 function datingMatchId(a, b) { return ['dm', ...[a, b].sort()].join('_'); }
+/* Scores how good a match `p` is for `me`, 1-99. Used to automatically rank/suggest
+   matches in Discover and the Suggested tab — higher score surfaces first. */
+function computeDatingCompatibility(me, p) {
+    let score = 45;
+    if (me.age && p.age) {
+        const diff = Math.abs(me.age - p.age);
+        if (diff <= 2) score += 16;
+        else if (diff <= 5) score += 9;
+        else if (diff <= 10) score += 3;
+    }
+    if (me.location && p.location && me.location.trim().toLowerCase() === p.location.trim().toLowerCase()) score += 14;
+    const myInterests = new Set(me.interests || []);
+    const sharedInterests = (p.interests || []).filter(i => myInterests.has(i)).length;
+    score += Math.min(sharedInterests * 6, 24);
+    if (me.relationshipGoal && p.relationshipGoal && me.relationshipGoal === p.relationshipGoal) score += 10;
+    if (me.religion && p.religion && me.religion === p.religion) score += 5;
+    if (p.verified) score += 3;
+    if ((p.photos || []).length >= 2) score += 2;
+    return Math.max(1, Math.min(99, Math.round(score)));
+}
 function useDatingAllMembers(me) {
     const [list, setList] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -9634,6 +9654,8 @@ function useDatingCandidates(me, filters, refreshKey) {
                 if (filters.maxAge) candidates = candidates.filter(p => (p.age || 0) <= filters.maxAge);
                 if (filters.interest) candidates = candidates.filter(p => (p.interests || []).includes(filters.interest));
             }
+            candidates = candidates.map(p => Object.assign({ _matchScore: computeDatingCompatibility(me, p) }, p))
+                .sort((a, b) => b._matchScore - a._matchScore);
             if (!cancelled) { setList(candidates); setLoading(false); }
         })();
         return () => { cancelled = true; };
@@ -9705,10 +9727,11 @@ async function adminBanDatingProfile(uid, adminUid, adminEmail) { await db.colle
 function DatingVerifiedBadge() {
     return React.createElement("i", { className: "fa-solid fa-circle-check text-brand-500 ml-1", title: "KYC verified" });
 }
-function DatingCardPhoto({ url, name }) {
+function DatingCardPhoto({ url, name, matchScore }) {
     return React.createElement("div", { className: "relative w-full aspect-[3/4] bg-slate-100 dark:bg-ink-700 rounded-xl overflow-hidden" },
         url ? React.createElement("img", { src: url, className: "w-full h-full object-cover" }) :
             React.createElement("div", { className: "w-full h-full flex items-center justify-center text-slate-300" }, React.createElement("i", { className: "fa-solid fa-user text-4xl" })),
+        typeof matchScore === 'number' && React.createElement("span", { className: "absolute top-2 right-2 bg-brand-600 text-white text-[11px] font-bold px-2 py-1 rounded-full shadow-sm flex items-center gap-1" }, React.createElement("i", { className: "fa-solid fa-wand-magic-sparkles text-[10px]" }), matchScore + "% match"),
         React.createElement("div", { className: "absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-2.5" },
             React.createElement("p", { className: "text-white font-bold text-sm flex items-center" }, name)));
 }
@@ -9986,7 +10009,7 @@ function DatingHomeScreen({ dp, go }) {
     const [tab, setTab] = useState('discover');
     const likes = useDatingLikesReceived(profile.id);
     const matches = useDatingMatches(profile.id);
-    const TABS = [['discover', 'Discover', 'fa-compass'], ['members', 'Members', 'fa-users'], ['likes', 'Likes', 'fa-heart'], ['matches', 'Matches', 'fa-comments'], ['me', 'My profile', 'fa-user']];
+    const TABS = [['discover', 'Discover', 'fa-compass'], ['suggested', 'Suggested', 'fa-wand-magic-sparkles'], ['members', 'Members', 'fa-users'], ['likes', 'Likes', 'fa-heart'], ['matches', 'Matches', 'fa-comments'], ['me', 'My profile', 'fa-user']];
     return React.createElement("div", null,
         React.createElement("div", { className: "flex items-center justify-between mb-3" },
             React.createElement("h1", { className: "font-display text-xl font-bold flex items-center" }, "Dating", dp.verified && React.createElement(DatingVerifiedBadge, null)),
@@ -9997,6 +10020,7 @@ function DatingHomeScreen({ dp, go }) {
                 k === 'likes' && likes.length > 0 && React.createElement("span", { className: "bg-red-500 text-white text-[10px] font-bold rounded-full min-w-[16px] h-[16px] flex items-center justify-center px-1" }, likes.length),
                 k === 'matches' && matches.length > 0 && React.createElement("span", { className: "bg-red-500 text-white text-[10px] font-bold rounded-full min-w-[16px] h-[16px] flex items-center justify-center px-1" }, matches.length)))),
         tab === 'discover' && React.createElement(DatingDiscoverTab, { me: dp }),
+        tab === 'suggested' && React.createElement(DatingSuggestedTab, { me: dp }),
         tab === 'members' && React.createElement(DatingMembersTab, { me: dp }),
         tab === 'likes' && React.createElement(DatingLikesTab, { me: dp, likes: likes }),
         tab === 'matches' && React.createElement(DatingMatchesTab, { matches: matches, go: go }),
@@ -10097,13 +10121,45 @@ function DatingDiscoverTab({ me }) {
             React.createElement("button", { onClick: () => setRefreshKey(k => k + 1), className: "mt-3 text-brand-600 text-sm font-semibold" }, "Refresh")),
         current && React.createElement("div", { className: "max-w-sm mx-auto" },
             React.createElement("div", { onClick: () => setDetail(current), className: "cursor-pointer" },
-                React.createElement(DatingCardPhoto, { url: (current.photos || [])[0], name: current.displayName + (current.age ? ', ' + current.age : '') + (current.verified ? ' \u2713' : '') })),
+                React.createElement(DatingCardPhoto, { url: (current.photos || [])[0], name: current.displayName + (current.age ? ', ' + current.age : '') + (current.verified ? ' \u2713' : ''), matchScore: current._matchScore })),
             current.bio && React.createElement("p", { className: "text-sm text-slate-500 dark:text-slate-400 mt-2 line-clamp-2" }, current.bio),
             React.createElement("div", { className: "flex gap-3 mt-3" },
                 React.createElement("button", { onClick: () => act('pass'), className: "flex-1 bg-slate-100 dark:bg-ink-700 rounded-xl py-3.5 font-semibold" }, React.createElement("i", { className: "fa-solid fa-xmark mr-2" }), "Pass"),
                 React.createElement("button", { onClick: () => act('like'), className: "flex-1 bg-rose-500 hover:bg-rose-600 text-white rounded-xl py-3.5 font-semibold" }, React.createElement("i", { className: "fa-solid fa-heart mr-2" }), "Like"))),
         filtersOpen && React.createElement(DatingFiltersSheet, { filters: filters, onApply: setFilters, onClose: () => setFiltersOpen(false) }),
         detail && React.createElement(DatingProfileDetailSheet, { person: detail, onClose: () => setDetail(null), onLike: () => act('like'), onPass: () => act('pass') }));
+}
+
+function DatingSuggestedTab({ me }) {
+    const toast = useToast();
+    const [refreshKey, setRefreshKey] = useState(0);
+    const { list, loading } = useDatingCandidates(me, null, refreshKey);
+    const [detail, setDetail] = useState(null);
+    const top = list.slice(0, 20);
+    const act = async (kind, targetId) => {
+        try {
+            if (kind === 'like') { const r = await likeDatingProfile(me.id, targetId); toast(r === 'matched' ? "It's a match! \uD83D\uDC95" : 'Liked', 'success'); }
+            else { await passDatingProfile(me.id, targetId); toast('Passed', 'success'); }
+        } catch (e) { toast(e.message, 'error'); }
+        setRefreshKey(k => k + 1);
+    };
+    return React.createElement("div", null,
+        React.createElement("div", { className: "flex items-center justify-between mb-3" },
+            React.createElement("div", null,
+                React.createElement("h3", { className: "font-display font-bold text-sm flex items-center gap-1.5" }, React.createElement("i", { className: "fa-solid fa-wand-magic-sparkles text-brand-500" }), "Picked for you"),
+                React.createElement("p", { className: "text-xs text-slate-400" }, "Automatically ranked by shared interests, age, location and goals.")),
+            React.createElement("button", { onClick: () => setRefreshKey(k => k + 1), className: "text-xs font-semibold bg-slate-100 dark:bg-ink-700 px-3 py-1.5 rounded-full shrink-0" }, React.createElement("i", { className: "fa-solid fa-rotate mr-1.5" }), "Refresh")),
+        loading && React.createElement("div", { className: "py-16 flex justify-center" }, React.createElement("div", { className: "w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" })),
+        !loading && top.length === 0 && React.createElement("div", { className: "text-center py-16 text-slate-400" },
+            React.createElement("i", { className: "fa-solid fa-wand-magic-sparkles text-4xl mb-3" }),
+            React.createElement("p", null, "No suggestions right now \u2014 check back soon.")),
+        !loading && top.length > 0 && React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-3 gap-3" }, top.map(p => React.createElement("div", { key: p.id, className: "cursor-pointer" },
+            React.createElement("div", { onClick: () => setDetail(p) }, React.createElement(DatingCardPhoto, { url: (p.photos || [])[0], name: p.displayName + (p.age ? ', ' + p.age : ''), matchScore: p._matchScore })),
+            p.location && React.createElement("p", { className: "text-[11px] text-slate-400 mt-1 truncate" }, React.createElement("i", { className: "fa-solid fa-location-dot mr-1" }), p.location),
+            React.createElement("div", { className: "flex gap-1.5 mt-1.5" },
+                React.createElement("button", { onClick: () => act('pass', p.id), className: "flex-1 bg-slate-100 dark:bg-ink-700 rounded-lg py-1.5 text-xs font-semibold" }, React.createElement("i", { className: "fa-solid fa-xmark" })),
+                React.createElement("button", { onClick: () => act('like', p.id), className: "flex-1 bg-rose-500 hover:bg-rose-600 text-white rounded-lg py-1.5 text-xs font-semibold" }, React.createElement("i", { className: "fa-solid fa-heart" })))))),
+        detail && React.createElement(DatingProfileDetailSheet, { person: detail, onClose: () => setDetail(null), onLike: () => act('like', detail.id), onPass: () => act('pass', detail.id) }));
 }
 
 function DatingMembersTab({ me }) {
