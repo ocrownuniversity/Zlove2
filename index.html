@@ -922,7 +922,7 @@ const REACTION_MAP = REACTIONS.reduce((m, r) => (m[r.key] = r, m), {});
 // switching reactions overwrites it in place and removing one just deletes the doc — Firestore
 // itself guarantees "one reaction per user per post" this way, nothing extra to enforce.
 function reactionTypeOf(doc) { return (doc && doc.type) || 'like'; }
-async function setPostReaction(postId, uid, authorId, type) {
+async function setPostReaction(postId, uid, authorId, type, pageId) {
     const ref = db.collection('posts').doc(postId).collection('likes').doc(uid);
     const snap = await ref.get();
     const hadReaction = snap.exists;
@@ -932,6 +932,11 @@ async function setPostReaction(postId, uid, authorId, type) {
         // the count shown to users comes live from the likes subcollection itself (see PostCard),
         // so this can never block or delay a reaction from registering.
         db.collection('posts').doc(postId).update({ likesCount: FieldValue.increment(1) }).catch(() => { });
+        if (pageId) {
+            // One paid "like" per unique reactor per post, ever — switching reaction type later
+            // (love -> haha etc.) doesn't earn again, only the first-ever reaction does.
+            creditEngagementEarning({ pageId, source: 'like', ledgerId: 'like_' + postId + '_' + uid, actorId: uid }).catch(() => { });
+        }
         if (authorId && authorId !== uid) {
             db.collection('notifications').doc(authorId).collection('items').add({
                 type: 'like', reactionType: type, fromUserId: uid, postId, read: false, createdAt: FieldValue.serverTimestamp()
@@ -1055,9 +1060,26 @@ async function recordPageView(pageId, uid) {
 // follower requirement, earnings rate, minimum withdrawal amount, and monetization/withdrawal
 // kill-switches. Sensible defaults are used until the doc loads or if a field was never set.
 const DEFAULT_SITE_SETTINGS = {
-    minFollowersRequired: 1000, earningsRatePer1000Views: 0, minWithdrawalAmount: 5000,
+    minFollowersRequired: 1000, earningsRatePer1000Views: 0, minWithdrawalAmount: 5,
     monetizationEnabled: true, withdrawalsEnabled: true,
+    // Page-owner engagement payout rates — all in USD, applied per every 100 *valid* events
+    // (see creditEngagementEarning below). The defaults are the USD equivalent of ₦1,000 per
+    // 100 video streams / ₦20 per 100 likes / ₦50 per 100 comments at roughly ₦1,550 = $1.
+    // Adjust these from the admin Settings panel if the exchange rate moves — nothing else in
+    // the payout code needs to change, every credit reads the live rate from this doc.
+    earningsRatePerStreams100: 0.65,
+    earningsRatePerLikes100: 0.01,
+    earningsRatePerComments100: 0.03,
+    // Hours a freshly-credited earning sits in "pending" before it clears into the withdrawable
+    // balance (see matureEarnings) — a short anti-fraud hold so an obvious spam burst can be
+    // caught/suspended before it's actually cashable.
+    pendingClearanceHours: 24,
+    // Soft per-page-per-actor-per-day caps so one account can't farm a single Page's payouts.
+    dailyCapStreams: 500, dailyCapLikes: 500, dailyCapComments: 200,
 };
+function formatUSD(n) {
+    return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
 function useSiteSettings() {
     const [settings, setSettings] = useState(DEFAULT_SITE_SETTINGS);
     useEffect(() => {
@@ -1067,6 +1089,107 @@ function useSiteSettings() {
         return unsub;
     }, []);
     return settings;
+}
+// Same site settings doc, but kept as a plain module-level cache (not a hook) so the
+// engagement-earning functions below — which fire from plain event handlers, not React render —
+// can read the live payout rates without needing to be inside a component.
+let _liveSiteSettings = DEFAULT_SITE_SETTINGS;
+db.collection('settings').doc('site').onSnapshot(s => {
+    _liveSiteSettings = Object.assign({}, DEFAULT_SITE_SETTINGS, s.exists ? s.data() : {});
+}, () => { _liveSiteSettings = DEFAULT_SITE_SETTINGS; });
+function _todayKey() { const d = new Date(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); }
+/**
+ * Credits a Page for exactly one unit of "valid" engagement — one stream, one like, or one
+ * comment — on its own content. This is the single choke point every payout in the app runs
+ * through, which is what makes the checks below meaningful (skip this function and you skip
+ * all of them). Call sites are responsible for only calling this on genuinely new engagement
+ * (Firestore's own one-doc-per-user like/view subcollections already make that natural).
+ *
+ * Anti-fraud / anti-duplication, all inside one transaction so they can't race each other:
+ *  - `ledgerId` must be a deterministic id unique to the real-world event (e.g.
+ *    `like_<postId>_<uid>`, `comment_<commentId>`, `stream_<reelId>_<uid>`). If a ledger doc
+ *    already exists under that id we've already paid for this exact event, so we bail out —
+ *    this is what stops a duplicate like, a resubmitted comment, or a page reload/replay from
+ *    ever being credited twice.
+ *  - self-generated engagement (actorId === the Page's own owner) never earns anything.
+ *  - the Page must be KYC-verified AND have monetization currently approved — suspending or
+ *    rejecting a Page immediately stops any further accrual.
+ *  - a small per-day cap per (page, actor, source) blunts one account farming one Page.
+ * New earnings land in `pendingEarnings`, not the withdrawable balance — see matureEarnings().
+ *
+ * Caveat worth being upfront about: because this whole app is a static client with no backend
+ * (Cloud Functions, etc.), this transaction ultimately runs in the *browser* of whoever is
+ * liking/commenting/watching. Firestore security rules (see the bottom of this file) are what
+ * actually have to enforce these same limits server-side — this function's checks are the first
+ * line of defense and the right shape for the rules to mirror, not a substitute for them.
+ */
+async function creditEngagementEarning({ pageId, source, ledgerId, actorId }) {
+    if (!pageId || !actorId || !ledgerId)
+        return;
+    const rateField = source === 'stream' ? 'earningsRatePerStreams100' : source === 'like' ? 'earningsRatePerLikes100' : 'earningsRatePerComments100';
+    const capField = source === 'stream' ? 'dailyCapStreams' : source === 'like' ? 'dailyCapLikes' : 'dailyCapComments';
+    const countField = source === 'stream' ? 'totalValidStreams' : source === 'like' ? 'totalValidLikes' : 'totalValidComments';
+    const amountPer100 = _liveSiteSettings[rateField];
+    const dailyCap = _liveSiteSettings[capField] || 500;
+    if (!amountPer100 || amountPer100 <= 0)
+        return;
+    const amount = amountPer100 / 100;
+    const ledgerRef = db.collection('pageEarningsLedger').doc(ledgerId);
+    const pageRef = db.collection('fanPages').doc(pageId);
+    const capRef = db.collection('pageEarningsCaps').doc(pageId + '_' + actorId + '_' + source + '_' + _todayKey());
+    try {
+        await db.runTransaction(async (tx) => {
+            const [ledgerSnap, pageSnap, capSnap] = await Promise.all([tx.get(ledgerRef), tx.get(pageRef), tx.get(capRef)]);
+            if (ledgerSnap.exists || !pageSnap.exists)
+                return;
+            const page = pageSnap.data();
+            if (actorId === page.ownerId)
+                return;
+            if (page.kycStatus !== 'verified' || !page.monetizationEnabled || page.monetizationStatus !== 'approved')
+                return;
+            const capCount = capSnap.exists ? (capSnap.data().count || 0) : 0;
+            if (capCount >= dailyCap)
+                return;
+            tx.set(ledgerRef, { pageId, source, amount, actorId, status: 'pending', createdAt: FieldValue.serverTimestamp() });
+            tx.set(capRef, { count: capCount + 1, pageId, actorId, source }, { merge: true });
+            tx.update(pageRef, {
+                pendingEarnings: FieldValue.increment(amount),
+                lifetimeEarnings: FieldValue.increment(amount),
+                [countField]: FieldValue.increment(1),
+            });
+        });
+    }
+    catch (e) { /* earnings are always best-effort — never block the like/comment/view itself */ }
+}
+/**
+ * Sweeps pending earnings older than the configured clearance window into the Page's
+ * withdrawable balance. There's no server cron in a static app, so "near real time" here means:
+ * credited to pendingEarnings the instant the engagement happens, and swept into earningsBalance
+ * next time the owner opens their dashboard/withdraw panel after the clearance window has passed.
+ * NOTE: this compound query (pageId ==, status ==, createdAt <=) needs a Firestore composite
+ * index on pageEarningsLedger — Firestore will log a console error with a one-click link to
+ * create it the first time this runs against real data.
+ */
+async function matureEarnings(pageId) {
+    if (!pageId)
+        return;
+    const clearanceMs = (_liveSiteSettings.pendingClearanceHours || 24) * 3600 * 1000;
+    const cutoff = new Date(Date.now() - clearanceMs);
+    const snap = await db.collection('pageEarningsLedger')
+        .where('pageId', '==', pageId).where('status', '==', 'pending').where('createdAt', '<=', cutoff)
+        .limit(200).get().catch(() => null);
+    if (!snap || snap.empty)
+        return;
+    let total = 0;
+    const batch = db.batch();
+    snap.docs.forEach(d => { total += (d.data().amount || 0); batch.update(d.ref, { status: 'matured', maturedAt: FieldValue.serverTimestamp() }); });
+    if (total > 0) {
+        batch.update(db.collection('fanPages').doc(pageId), {
+            pendingEarnings: FieldValue.increment(-total),
+            earningsBalance: FieldValue.increment(total),
+        });
+    }
+    await batch.commit().catch(() => { });
 }
 // Live withdrawal request history for one Page (owner-facing).
 function usePageWithdrawals(pageId) {
@@ -1202,7 +1325,7 @@ async function togglePinReel(reel) {
     }
     await db.collection('reels').doc(reel.id).update({ pinned: willPin });
 }
-async function toggleLikeReel(reelId, uid, authorId) {
+async function toggleLikeReel(reelId, uid, authorId, pageId) {
     const ref = db.collection('reels').doc(reelId).collection('likes').doc(uid);
     const snap = await ref.get();
     if (snap.exists) {
@@ -1211,6 +1334,9 @@ async function toggleLikeReel(reelId, uid, authorId) {
     } else {
         await ref.set({ uid, createdAt: FieldValue.serverTimestamp() });
         db.collection('reels').doc(reelId).update({ likesCount: FieldValue.increment(1) }).catch(() => { });
+        if (pageId) {
+            creditEngagementEarning({ pageId, source: 'like', ledgerId: 'like_' + reelId + '_' + uid, actorId: uid }).catch(() => { });
+        }
         if (authorId && authorId !== uid) {
             db.collection('notifications').doc(authorId).collection('items').add({ type: 'reel_like', fromUserId: uid, reelId, read: false, createdAt: FieldValue.serverTimestamp() }).catch(() => { });
         }
@@ -1228,12 +1354,17 @@ async function toggleSaveReel(reelId, uid) {
     db.collection('reels').doc(reelId).update({ savesCount: FieldValue.increment(1) }).catch(() => { });
     return true;
 }
-async function recordReelView(reelId, uid) {
+async function recordReelView(reelId, uid, authorId, pageId) {
     const ref = db.collection('reels').doc(reelId).collection('views').doc(uid);
     const snap = await ref.get();
     if (snap.exists) return;
     await ref.set({ uid, createdAt: FieldValue.serverTimestamp() });
     db.collection('reels').doc(reelId).update({ viewsCount: FieldValue.increment(1) }).catch(() => { });
+    if (pageId && uid !== authorId) {
+        // "Valid stream" here = one distinct viewer, ever — the views subcollection above already
+        // guarantees a given uid can only trigger this once per reel for its entire lifetime.
+        creditEngagementEarning({ pageId, source: 'stream', ledgerId: 'stream_' + reelId + '_' + uid, actorId: uid }).catch(() => { });
+    }
 }
 async function uploadReelCommentImage(reelId, uid, file) {
     const compressed = await compressImage(file, 1200, 0.85);
@@ -1242,7 +1373,7 @@ async function uploadReelCommentImage(reelId, uid, file) {
     await ref.put(compressed, { contentType: 'image/jpeg' });
     return ref.getDownloadURL();
 }
-async function addReelComment(reelId, authorId, uid, text, imageFile, parentId) {
+async function addReelComment(reelId, authorId, uid, text, imageFile, parentId, pageId) {
     let image = null;
     if (imageFile) image = await uploadReelCommentImage(reelId, uid, imageFile);
     const ref = await db.collection('reels').doc(reelId).collection('comments').add({
@@ -1250,6 +1381,9 @@ async function addReelComment(reelId, authorId, uid, text, imageFile, parentId) 
         likesCount: 0, createdAt: FieldValue.serverTimestamp(),
     });
     db.collection('reels').doc(reelId).update({ commentsCount: FieldValue.increment(1) }).catch(() => { });
+    if (pageId && (text || '').trim().length >= 2) {
+        creditEngagementEarning({ pageId, source: 'comment', ledgerId: 'comment_' + ref.id, actorId: uid }).catch(() => { });
+    }
     if (authorId && authorId !== uid) {
         db.collection('notifications').doc(authorId).collection('items').add({ type: parentId ? 'reel_reply' : 'reel_comment', fromUserId: uid, reelId, read: false, createdAt: FieldValue.serverTimestamp() }).catch(() => { });
     }
@@ -3603,7 +3737,7 @@ function PostCard({ post, go, groupCtx, autoOpenComments }) {
     }, [post.id, profile.id]);
     const react = async (type) => {
         try {
-            await setPostReaction(post.id, profile.id, post.authorId, type);
+            await setPostReaction(post.id, profile.id, post.authorId, type, post.pageId);
         }
         catch (e) {
             toast('Could not update reaction', 'error');
@@ -3881,13 +4015,18 @@ function Comments({ postId, go }) {
         let image = null;
         if (imageFile)
             image = await uploadCommentImage(postId, profile.id, imageFile);
-        await db.collection('posts').doc(postId).collection('comments').add({
+        const commentRef = await db.collection('posts').doc(postId).collection('comments').add({
             authorId: profile.id, text, bold, taggedUsers: tagged || [], image,
             parentId: parentId || null, replyToDisplayName: (parentId && replyToUser) ? replyToUser.displayName : null,
             createdAt: FieldValue.serverTimestamp()
         });
         // Best-effort denormalized counter (see PostCard's live commentsCount for why).
         db.collection('posts').doc(postId).update({ commentsCount: FieldValue.increment(1) }).catch(() => { });
+        if (post.pageId && (text || '').trim().length >= 2) {
+            // Keyed to this exact comment doc, so it can only ever be paid once — deleting and
+            // re-adding a comment creates a new doc/id, which is fine, that's genuinely new engagement.
+            creditEngagementEarning({ pageId: post.pageId, source: 'comment', ledgerId: 'comment_' + commentRef.id, actorId: profile.id }).catch(() => { });
+        }
         const notifyUid = parentId && replyToUser ? replyToUser.id : post.authorId;
         if (notifyUid && notifyUid !== profile.id) {
             db.collection('notifications').doc(notifyUid).collection('items').add({
@@ -3999,14 +4138,14 @@ function TimelineReelCard({ reel, go }) {
         if (v.paused) {
             v.play().catch(() => { });
             setPlaying(true);
-            if (!viewedRef.current) { viewedRef.current = true; recordReelView(reel.id, profile.id).catch(() => { }); }
+            if (!viewedRef.current) { viewedRef.current = true; recordReelView(reel.id, profile.id, reel.authorId, reel.pageId).catch(() => { }); }
         } else {
             v.pause();
             setPlaying(false);
         }
     };
     const toggleMute = (e) => { e.stopPropagation(); setMuted(m => !m); };
-    const doLike = () => toggleLikeReel(reel.id, profile.id, reel.authorId).catch(() => toast('Could not update like', 'error'));
+    const doLike = () => toggleLikeReel(reel.id, profile.id, reel.authorId, reel.pageId).catch(() => toast('Could not update like', 'error'));
     const captionParts = (reel.caption || '').split(/(\s+)/);
     if (!author)
         return React.createElement(PostSkeleton, null);
@@ -4995,14 +5134,20 @@ function PageAnalyticsScreen({ id, go }) {
     const { profile: me } = useAuth();
     const [page, setPage] = useState(undefined);
     const [posts, setPosts] = useState([]);
+    const [reels, setReels] = useState([]);
     const [follows, setFollows] = useState([]);
     const [viewsCount, setViewsCount] = useState(0);
+    const [ledger, setLedger] = useState([]);
     useEffect(() => {
         const unsub = db.collection('fanPages').doc(id).onSnapshot(s => setPage(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setPage(null));
         return unsub;
     }, [id]);
     useEffect(() => {
-        const unsub = db.collection('posts').where('pageId', '==', id).onSnapshot(snap => setPosts(snap.docs.map(d => d.data())), () => setPosts([]));
+        const unsub = db.collection('posts').where('pageId', '==', id).onSnapshot(snap => setPosts(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setPosts([]));
+        return unsub;
+    }, [id]);
+    useEffect(() => {
+        const unsub = db.collection('reels').where('pageId', '==', id).onSnapshot(snap => setReels(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setReels([]));
         return unsub;
     }, [id]);
     useEffect(() => {
@@ -5011,6 +5156,16 @@ function PageAnalyticsScreen({ id, go }) {
     }, [id]);
     useEffect(() => {
         const unsub = db.collection('fanPages').doc(id).collection('views').onSnapshot(snap => setViewsCount(snap.size), () => { });
+        return unsub;
+    }, [id]);
+    // Most-recent 1000 earning events for this Page, used for the Today/Weekly/Monthly and
+    // per-source breakdowns below (Lifetime Earnings itself comes straight off the Page doc,
+    // so it's exact even for a Page with more history than this window covers).
+    // NOTE: this query (pageId ==, orderBy createdAt) needs a Firestore composite index on
+    // pageEarningsLedger — the console will log a one-click link to create it on first run.
+    useEffect(() => {
+        const unsub = db.collection('pageEarningsLedger').where('pageId', '==', id).orderBy('createdAt', 'desc').limit(1000)
+            .onSnapshot(snap => setLedger(snap.docs.map(d => d.data())), () => setLedger([]));
         return unsub;
     }, [id]);
     if (page === undefined)
@@ -5031,6 +5186,27 @@ function PageAnalyticsScreen({ id, go }) {
         ['Posts', posts.length, 'fa-note-sticky'], ['Total likes', totals.likes, 'fa-heart'],
         ['Total comments', totals.comments, 'fa-comment'], ['Total shares', totals.shares, 'fa-share'],
     ];
+    // Earnings breakdown, computed client-side from the ledger window fetched above.
+    const now = Date.now();
+    const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+    const startOfWeek = new Date(now - 7 * 86400000);
+    const startOfMonth = new Date(now - 30 * 86400000);
+    const msOf = (e) => { var _a; return ((_a = e.createdAt) === null || _a === void 0 ? void 0 : _a.toMillis) ? e.createdAt.toMillis() : 0; };
+    const sumSince = (cutoffMs) => ledger.filter(e => msOf(e) >= cutoffMs).reduce((s, e) => s + (e.amount || 0), 0);
+    const sumBySource = (source) => ledger.filter(e => e.source === source).reduce((s, e) => s + (e.amount || 0), 0);
+    const earningsCards = [
+        ["Today's Earnings", formatUSD(sumSince(startOfToday.getTime()))],
+        ['Weekly Earnings', formatUSD(sumSince(startOfWeek.getTime()))],
+        ['Monthly Earnings', formatUSD(sumSince(startOfMonth.getTime()))],
+        ['Lifetime Earnings', formatUSD(page.lifetimeEarnings || 0)],
+        ['Earnings from Video Streams', formatUSD(sumBySource('stream'))],
+        ['Earnings from Likes', formatUSD(sumBySource('like'))],
+        ['Earnings from Comments', formatUSD(sumBySource('comment'))],
+    ];
+    const topPosts = posts.slice()
+        .sort((a, b) => ((b.likesCount || 0) + (b.commentsCount || 0) + (b.sharesCount || 0)) - ((a.likesCount || 0) + (a.commentsCount || 0) + (a.sharesCount || 0)))
+        .slice(0, 5);
+    const topVideos = reels.slice().sort((a, b) => (b.viewsCount || 0) - (a.viewsCount || 0)).slice(0, 5);
     return (React.createElement("div", null,
         React.createElement("button", { onClick: () => go({ name: 'page', id }), className: "text-sm text-slate-400 mb-3" }, React.createElement("i", { className: "fa-solid fa-arrow-left mr-1.5" }), "Back to Page"),
         React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, page.displayName, " \u00B7 Insights"),
@@ -5039,6 +5215,24 @@ function PageAnalyticsScreen({ id, go }) {
             React.createElement("i", { className: "fa-solid " + icon + " text-brand-500 mb-2" }),
             React.createElement("p", { className: "text-2xl font-display font-bold" }, val),
             React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, label))))),
+        page.monetizationStatus === 'approved' && React.createElement(React.Fragment, null,
+            React.createElement("h3", { className: "font-display text-base font-bold mb-3" }, "Earnings (USD)"),
+            React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-3 mb-6" }, earningsCards.map(([label, val]) => (React.createElement("div", { key: label, className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-4" },
+                React.createElement("p", { className: "text-xl font-display font-bold" }, val),
+                React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, label))))),
+            React.createElement("div", { className: "grid sm:grid-cols-2 gap-3 mb-6" },
+                React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-4" },
+                    React.createElement("p", { className: "text-sm font-semibold mb-2" }, "Top Performing Posts"),
+                    topPosts.length === 0 && React.createElement("p", { className: "text-xs text-slate-400" }, "No posts yet."),
+                    React.createElement("div", { className: "space-y-1.5" }, topPosts.map(p => React.createElement("div", { key: p.id, className: "flex items-center justify-between text-xs" },
+                        React.createElement("span", { className: "truncate text-slate-500 dark:text-slate-400" }, (p.text || '(no caption)').slice(0, 40)),
+                        React.createElement("span", { className: "font-semibold shrink-0 ml-2" }, (p.likesCount || 0) + (p.commentsCount || 0) + (p.sharesCount || 0), " engagements"))))),
+                React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-4" },
+                    React.createElement("p", { className: "text-sm font-semibold mb-2" }, "Most Viewed Videos"),
+                    topVideos.length === 0 && React.createElement("p", { className: "text-xs text-slate-400" }, "No reels yet."),
+                    React.createElement("div", { className: "space-y-1.5" }, topVideos.map(r => React.createElement("div", { key: r.id, className: "flex items-center justify-between text-xs" },
+                        React.createElement("span", { className: "truncate text-slate-500 dark:text-slate-400" }, (r.caption || '(no caption)').slice(0, 40)),
+                        React.createElement("span", { className: "font-semibold shrink-0 ml-2" }, formatCount(r.viewsCount || 0), " views"))))))),
         React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-4" },
             React.createElement("p", { className: "text-sm font-semibold mb-3" }, "New followers \u2014 last 14 days"),
             React.createElement("div", { className: "flex items-end gap-1.5 h-24" }, dayCounts.map((c, i) => (React.createElement("div", { key: i, className: "flex-1 flex flex-col items-center justify-end h-full", title: days[i].toLocaleDateString() + ': ' + c },
@@ -5197,6 +5391,9 @@ function MonetizationScreen({ id, go }) {
         const unsub = db.collection('fanPages').doc(id).onSnapshot(s => setPage(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setPage(null));
         return unsub;
     }, [id]);
+    // Sweep any pending engagement earnings that have cleared the anti-fraud hold into the
+    // withdrawable balance every time the owner opens this dashboard — see matureEarnings().
+    useEffect(() => { matureEarnings(id).catch(() => { }); }, [id]);
     if (page === undefined || kyc === undefined || app === undefined)
         return React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026");
     if (page === null || page.ownerId !== profile.id)
@@ -5244,21 +5441,32 @@ function MonetizationScreen({ id, go }) {
     const StatRow = (label, value) => React.createElement("div", { className: "flex items-center justify-between py-2.5 border-b border-slate-100 dark:border-ink-700 last:border-0" },
         React.createElement("span", { className: "text-sm text-slate-500 dark:text-slate-400" }, label),
         React.createElement("span", { className: "text-sm font-semibold" }, value));
+    const availableBalance = page.earningsBalance || 0;
+    const pendingEarnings = page.pendingEarnings || 0;
+    const withdrawEligible = kycStatus === 'verified' && page.monetizationEnabled && page.monetizationStatus === 'approved' && settings.withdrawalsEnabled && availableBalance >= (settings.minWithdrawalAmount || 0);
+    const withdrawableBalance = withdrawEligible ? availableBalance : 0;
     return (React.createElement("div", { className: "max-w-lg mx-auto px-1 sm:px-0" },
         React.createElement("button", { onClick: () => go({ name: 'page', id }), className: "text-sm text-slate-400 mb-3" }, React.createElement("i", { className: "fa-solid fa-arrow-left mr-1.5" }), "Back to Page"),
         React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, "Monetization Settings"),
         React.createElement("p", { className: "text-sm text-slate-400 mb-5" }, page.displayName, " \u00B7 manage KYC verification and monetization eligibility."),
         React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-4 mb-4" },
             React.createElement("h3", { className: "font-display text-base font-bold mb-3" }, "Status"),
-            StatRow('KYC status', React.createElement("span", { className: "px-2 py-0.5 rounded-full text-xs font-semibold " + kycBadgeCls }, kycLabel)),
-            StatRow('Monetization status', React.createElement("span", { className: "px-2 py-0.5 rounded-full text-xs font-semibold " + monetizationBadgeCls }, monetizationLabel)),
-            StatRow('Current followers', followersCount.toLocaleString()),
+            StatRow('KYC Status', React.createElement("span", { className: "px-2 py-0.5 rounded-full text-xs font-semibold " + kycBadgeCls }, kycLabel)),
+            StatRow('Monetization Status', React.createElement("span", { className: "px-2 py-0.5 rounded-full text-xs font-semibold " + monetizationBadgeCls }, monetizationLabel)),
+            StatRow('Current Followers', followersCount.toLocaleString()),
             StatRow('Followers needed', followersMet ? '0 \u2014 requirement met' : followersNeeded.toLocaleString())),
         displayStatus === 'approved' && React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-4 mb-4" },
-            React.createElement("h3", { className: "font-display text-base font-bold mb-3" }, "Earnings"),
-            StatRow('Available balance', (page.earningsBalance || 0).toLocaleString()),
-            StatRow('Total earned', (page.lifetimeEarnings || 0).toLocaleString()),
-            StatRow('Total withdrawn', (page.lifetimeWithdrawn || 0).toLocaleString()),
+            React.createElement("h3", { className: "font-display text-base font-bold mb-3" }, "Earnings (USD)"),
+            StatRow('Estimated Earnings', formatUSD(pendingEarnings)),
+            StatRow('Available Balance', formatUSD(availableBalance)),
+            StatRow('Pending Earnings', formatUSD(pendingEarnings)),
+            StatRow('Withdrawable Balance', formatUSD(withdrawableBalance)),
+            StatRow('Lifetime Earnings', formatUSD(page.lifetimeEarnings || 0)),
+            StatRow('Total Withdrawals', formatUSD(page.lifetimeWithdrawn || 0)),
+            StatRow('Total Video Streams', (page.totalValidStreams || 0).toLocaleString()),
+            StatRow('Total Likes', (page.totalValidLikes || 0).toLocaleString()),
+            StatRow('Total Comments', (page.totalValidComments || 0).toLocaleString()),
+            React.createElement("p", { className: "text-[11px] text-slate-400 mt-2" }, "Pending earnings clear into your withdrawable balance ", settings.pendingClearanceHours || 24, "h after they're earned."),
             React.createElement("button", { onClick: () => go({ name: 'withdrawals', id }), className: "w-full mt-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl py-2.5 text-sm font-semibold" }, React.createElement("i", { className: "fa-solid fa-money-bill-transfer mr-2" }), "Withdraw funds")),
         React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-4 mb-4" },
             React.createElement("div", { className: "flex items-center justify-between mb-2" },
@@ -5335,20 +5543,20 @@ function WithdrawalsScreen({ id, go }) {
         React.createElement("p", { className: "text-sm text-slate-400 mb-5" }, page.displayName, " \u00B7 request a payout and track your withdrawal history."),
         React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-4 mb-4" },
             React.createElement("p", { className: "text-xs text-slate-400" }, "Available balance"),
-            React.createElement("p", { className: "font-display text-3xl font-extrabold mb-3" }, balance.toLocaleString()),
+            React.createElement("p", { className: "font-display text-3xl font-extrabold mb-3" }, formatUSD(balance)),
             !settings.withdrawalsEnabled && React.createElement("p", { className: "text-xs text-red-500 mb-2" }, React.createElement("i", { className: "fa-solid fa-circle-exclamation mr-1.5" }), "Withdrawals are temporarily disabled by the platform."),
             page.kycStatus !== 'verified' && React.createElement("p", { className: "text-xs text-red-500 mb-2" }, "KYC must be verified before you can withdraw."),
             (page.monetizationStatus !== 'approved' || !page.monetizationEnabled) && React.createElement("p", { className: "text-xs text-red-500 mb-2" }, "Monetization must be approved before you can withdraw."),
-            React.createElement("p", { className: "text-xs text-slate-400" }, "Minimum withdrawal: ", (settings.minWithdrawalAmount || 0).toLocaleString()),
+            React.createElement("p", { className: "text-xs text-slate-400" }, "Minimum withdrawal: ", formatUSD(settings.minWithdrawalAmount || 0)),
             eligible ? React.createElement("form", { onSubmit: submit, className: "mt-3 flex gap-2" },
-                React.createElement("input", { type: "number", min: settings.minWithdrawalAmount || 0, max: balance, step: "1", value: amount, onChange: e => setAmount(e.target.value), required: true, placeholder: "Amount", className: "flex-1 px-3 py-2.5 rounded-xl border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+                React.createElement("input", { type: "number", min: settings.minWithdrawalAmount || 0, max: balance, step: "0.01", value: amount, onChange: e => setAmount(e.target.value), required: true, placeholder: "Amount in USD", className: "flex-1 px-3 py-2.5 rounded-xl border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
                 React.createElement("button", { disabled: busy, type: "submit", className: "px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-sm font-semibold" }, busy ? 'Submitting…' : 'Request')) :
                 React.createElement("p", { className: "text-xs text-slate-400 mt-3" }, "You'll be able to request a withdrawal once the requirements above are met and your balance reaches the minimum.")),
         React.createElement("h3", { className: "font-display text-base font-bold mb-2" }, "History"),
         history.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No withdrawal requests yet."),
         React.createElement("div", { className: "space-y-2" }, history.map(w => React.createElement("div", { key: w.id, className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
             React.createElement("div", { className: "flex items-center justify-between" },
-                React.createElement("p", { className: "text-sm font-semibold" }, w.amount.toLocaleString()),
+                React.createElement("p", { className: "text-sm font-semibold" }, formatUSD(w.amount)),
                 React.createElement("span", { className: "px-2 py-0.5 rounded-full text-[10px] font-semibold " + (WITHDRAWAL_BADGE_CLS[w.status] || '') }, WITHDRAWAL_STATUS_LABELS[w.status] || w.status)),
             React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, timeAgo(w.requestedAt)),
             w.status === 'rejected' && w.rejectionReason && React.createElement("p", { className: "text-xs text-red-500 mt-1" }, "Reason: ", w.rejectionReason))))));
@@ -5594,7 +5802,7 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
                     React.createElement("div", null,
                         React.createElement("h4", { className: "font-display text-sm font-bold mb-2" }, "Top earning Pages"),
                         topEarning.length === 0 && React.createElement("p", { className: "text-xs text-slate-400" }, "No data yet."),
-                        React.createElement("div", { className: "space-y-1.5" }, topEarning.map(p => React.createElement("div", { key: p.id, className: "flex items-center justify-between bg-white dark:bg-ink-800 rounded-lg px-3 py-2 border border-slate-100 dark:border-ink-700 text-xs" }, React.createElement("span", { className: "truncate" }, p.displayName), React.createElement("span", { className: "font-semibold shrink-0 ml-2" }, (p.lifetimeEarnings || 0).toLocaleString()))))),
+                        React.createElement("div", { className: "space-y-1.5" }, topEarning.map(p => React.createElement("div", { key: p.id, className: "flex items-center justify-between bg-white dark:bg-ink-800 rounded-lg px-3 py-2 border border-slate-100 dark:border-ink-700 text-xs" }, React.createElement("span", { className: "truncate" }, p.displayName), React.createElement("span", { className: "font-semibold shrink-0 ml-2" }, formatUSD(p.lifetimeEarnings || 0)))))),
                     React.createElement("div", null,
                         React.createElement("h4", { className: "font-display text-sm font-bold mb-2" }, "Most viewed Pages"),
                         mostViewed.length === 0 && React.createElement("p", { className: "text-xs text-slate-400" }, "No data yet."),
@@ -5983,7 +6191,7 @@ function AdminMonetizedPageRow({ page, adminUid, adminEmail }) {
             React.createElement("div", { className: "min-w-0 cursor-pointer", onClick: () => setOpen(v => !v) },
                 React.createElement("p", { className: "text-sm font-semibold truncate" }, page.displayName || page.id, " ",
                     React.createElement("span", { className: "px-2 py-0.5 rounded-full text-[10px] font-semibold ml-1 " + (STATUS_BADGE[page.monetizationStatus] || '') }, MONETIZATION_STATUS_LABELS[page.monetizationStatus] || page.monetizationStatus)),
-                React.createElement("p", { className: "text-xs text-slate-400 truncate" }, "Balance: ", (page.earningsBalance || 0).toLocaleString(), " \u00B7 lifetime: ", (page.lifetimeEarnings || 0).toLocaleString(), " \u00B7 owner: ", React.createElement(AdminUserLabel, { uid: page.ownerId }))),
+                React.createElement("p", { className: "text-xs text-slate-400 truncate" }, "Balance: ", formatUSD(page.earningsBalance || 0), " \u00B7 lifetime: ", formatUSD(page.lifetimeEarnings || 0), " \u00B7 owner: ", React.createElement(AdminUserLabel, { uid: page.ownerId }))),
             React.createElement("button", { onClick: () => setOpen(v => !v), className: "text-slate-300 shrink-0" }, React.createElement("i", { className: "fa-solid " + (open ? 'fa-chevron-up' : 'fa-chevron-down') }))),
         open && React.createElement("div", { className: "mt-3 pt-3 border-t border-slate-100 dark:border-ink-700 space-y-2 text-xs text-slate-500 dark:text-slate-400" },
             React.createElement("p", null, React.createElement("b", { className: "text-slate-700 dark:text-slate-200" }, "Total withdrawn: "), (page.lifetimeWithdrawn || 0).toLocaleString()),
@@ -6015,7 +6223,7 @@ function AdminWithdrawalRow({ w, adminUid, adminEmail }) {
     return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
         React.createElement("div", { className: "flex items-center justify-between" },
             React.createElement("div", { className: "min-w-0 cursor-pointer", onClick: () => setOpen(v => !v) },
-                React.createElement("p", { className: "text-sm font-semibold truncate" }, w.pageDisplayName || w.pageId, " \u00B7 ", w.amount.toLocaleString(), " ",
+                React.createElement("p", { className: "text-sm font-semibold truncate" }, w.pageDisplayName || w.pageId, " \u00B7 ", formatUSD(w.amount), " ",
                     React.createElement("span", { className: "px-2 py-0.5 rounded-full text-[10px] font-semibold ml-1 " + (WITHDRAWAL_BADGE_CLS[w.status] || '') }, WITHDRAWAL_STATUS_LABELS[w.status] || w.status)),
                 React.createElement("p", { className: "text-xs text-slate-400 truncate" }, "owner: ", React.createElement(AdminUserLabel, { uid: w.ownerId }), " \u00B7 requested ", timeAgo(w.requestedAt))),
             React.createElement("button", { onClick: () => setOpen(v => !v), className: "text-slate-300 shrink-0" }, React.createElement("i", { className: "fa-solid " + (open ? 'fa-chevron-up' : 'fa-chevron-down') }))),
@@ -6056,12 +6264,28 @@ function AdminMonetizationSettingsForm({ form, adminUid, adminEmail }) {
                 React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Minimum follower requirement"),
                 React.createElement("input", { type: "number", value: local.minFollowersRequired, onChange: setNum('minFollowersRequired'), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-700 bg-transparent text-sm" })),
             React.createElement("div", null,
-                React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Earnings rate (per 1,000 Page views)"),
+                React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Earnings rate (per 1,000 Page views) \u2014 legacy, unused by the automatic system below"),
                 React.createElement("input", { type: "number", value: local.earningsRatePer1000Views, onChange: setNum('earningsRatePer1000Views'), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-700 bg-transparent text-sm" }),
                 React.createElement("p", { className: "text-[11px] text-slate-400 mt-1" }, "Reference figure for manual earnings adjustments \u2014 apply credits per Page from the Monetized Pages tab.")),
+            React.createElement("div", { className: "border-t border-slate-100 dark:border-ink-700 pt-3" },
+                React.createElement("p", { className: "text-xs font-semibold text-slate-500 mb-2" }, "Automatic engagement payout rates (USD, per 100 valid events)"),
+                React.createElement("div", { className: "grid grid-cols-3 gap-2" },
+                    React.createElement("div", null,
+                        React.createElement("label", { className: "text-[11px] text-slate-400" }, "Per 100 streams"),
+                        React.createElement("input", { type: "number", step: "0.01", value: local.earningsRatePerStreams100, onChange: setNum('earningsRatePerStreams100'), className: "w-full mt-1 px-2 py-2 rounded-lg border border-slate-200 dark:border-ink-700 bg-transparent text-sm" })),
+                    React.createElement("div", null,
+                        React.createElement("label", { className: "text-[11px] text-slate-400" }, "Per 100 likes"),
+                        React.createElement("input", { type: "number", step: "0.01", value: local.earningsRatePerLikes100, onChange: setNum('earningsRatePerLikes100'), className: "w-full mt-1 px-2 py-2 rounded-lg border border-slate-200 dark:border-ink-700 bg-transparent text-sm" })),
+                    React.createElement("div", null,
+                        React.createElement("label", { className: "text-[11px] text-slate-400" }, "Per 100 comments"),
+                        React.createElement("input", { type: "number", step: "0.01", value: local.earningsRatePerComments100, onChange: setNum('earningsRatePerComments100'), className: "w-full mt-1 px-2 py-2 rounded-lg border border-slate-200 dark:border-ink-700 bg-transparent text-sm" }))),
+                React.createElement("p", { className: "text-[11px] text-slate-400 mt-1" }, "Every like/comment/unique-viewer on approved Pages' content credits automatically, in near real time \u2014 see creditEngagementEarning in the code.")),
             React.createElement("div", null,
-                React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Minimum withdrawal amount"),
-                React.createElement("input", { type: "number", value: local.minWithdrawalAmount, onChange: setNum('minWithdrawalAmount'), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-700 bg-transparent text-sm" })),
+                React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Pending \u2192 withdrawable clearance (hours)"),
+                React.createElement("input", { type: "number", value: local.pendingClearanceHours, onChange: setNum('pendingClearanceHours'), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-700 bg-transparent text-sm" })),
+            React.createElement("div", null,
+                React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Minimum withdrawal amount (USD)"),
+                React.createElement("input", { type: "number", step: "0.01", value: local.minWithdrawalAmount, onChange: setNum('minWithdrawalAmount'), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-700 bg-transparent text-sm" })),
             React.createElement("label", { className: "flex items-center gap-2 text-sm" },
                 React.createElement("input", { type: "checkbox", checked: !!local.monetizationEnabled, onChange: setBool('monetizationEnabled') }), "Monetization enabled platform-wide"),
             React.createElement("label", { className: "flex items-center gap-2 text-sm" },
@@ -7185,7 +7409,7 @@ function ReelCommentsSheet({ reel, meId, isOwnerOrMod, onClose }) {
         if (!text.trim() && !imageFile) return;
         setBusy(true);
         try {
-            await addReelComment(reel.id, reel.authorId, meId, text, imageFile, replyTo ? replyTo.id : null);
+            await addReelComment(reel.id, reel.authorId, meId, text, imageFile, replyTo ? replyTo.id : null, reel.pageId);
             setText(''); setImageFile(null); setReplyTo(null);
         } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
     };
@@ -7250,7 +7474,7 @@ function ReelCard({ reel, active, go, meId, muted, onToggleMute, onOpenComments,
             }
             __zloveActiveReelVideo = v;
             v.play().catch(() => { });
-            if (!viewedRef.current) { viewedRef.current = true; recordReelView(reel.id, meId).catch(() => { }); }
+            if (!viewedRef.current) { viewedRef.current = true; recordReelView(reel.id, meId, reel.authorId, reel.pageId).catch(() => { }); }
         } else {
             v.pause();
             try { v.currentTime = 0; } catch (e) { }
@@ -7291,7 +7515,7 @@ function ReelCard({ reel, active, go, meId, muted, onToggleMute, onOpenComments,
                     React.createElement("i", { className: "fa-solid " + ((REEL_PRIVACY_OPTIONS.find(o => o.key === reel.privacy) || {}).icon || 'fa-earth-americas') + " text-[11px] text-white/70 ml-1", title: reel.privacy })),
                 reel.caption && React.createElement("p", { className: "text-sm leading-snug line-clamp-3" }, captionParts.map((part, i) => part.startsWith('#') ? React.createElement("span", { key: i, className: "text-brand-300 font-medium" }, part) : part))),
             React.createElement("div", { className: "flex flex-col items-center gap-4 text-white shrink-0" },
-                React.createElement("button", { onClick: () => toggleLikeReel(reel.id, meId, reel.authorId), className: "flex flex-col items-center gap-1" },
+                React.createElement("button", { onClick: () => toggleLikeReel(reel.id, meId, reel.authorId, reel.pageId), className: "flex flex-col items-center gap-1" },
                     React.createElement("i", { className: (liked ? "fa-solid text-pink-500" : "fa-regular") + " fa-heart text-2xl" }),
                     React.createElement("span", { className: "text-[11px] font-semibold" }, formatCount(reel.likesCount || 0))),
                 React.createElement("button", { onClick: () => onOpenComments(reel), className: "flex flex-col items-center gap-1" },
@@ -8866,6 +9090,28 @@ Review / Approved / Rejected / Suspended) once KYC has been verified.
       allow read, write: if isAdmin();
     }
 
+    match /pageEarningsLedger/{id} {
+      // One doc per automatically-credited engagement earning (see creditEngagementEarning) —
+      // the id itself (e.g. like_<postId>_<uid>) is what makes duplicate crediting impossible,
+      // so this collection must never be deletable by anyone but an admin, and never writable
+      // by a client claiming a status of 'matured' (only matureEarnings, run by the owner's own
+      // client today, may flip pending -> matured; move this into a Cloud Function for
+      // production if you don't want the owner's client to be trusted with even that).
+      allow read: if isAdmin() || (signedIn() && ownsPage(resource.data.pageId));
+      allow create: if signedIn() && request.resource.data.status == 'pending' &&
+        request.resource.data.actorId == request.auth.uid;
+      allow update: if isAdmin() || (signedIn() && ownsPage(resource.data.pageId) &&
+        resource.data.status == 'pending' && request.resource.data.status == 'matured');
+      allow delete: if isAdmin();
+    }
+
+    match /pageEarningsCaps/{id} {
+      // Per (page, actor, source, day) counters backing creditEngagementEarning's daily farming
+      // caps. Only the actor named in the doc id may increment their own counter.
+      allow read: if isAdmin();
+      allow write: if signedIn() && id.split('_')[1] == request.auth.uid;
+    }
+
     match /settings/site {
       // Public read (site branding + monetization toggles need to be visible to all signed-in
       // users so the client can gate Apply/Withdraw buttons); only admins can write.
@@ -8875,11 +9121,13 @@ Review / Approved / Rejected / Suspended) once KYC has been verified.
 
 Caution: the existing fanPages `allow update` rule above only blocks an owner from touching
 kycStatus/monetizationEnabled themselves — it does not stop a malicious client from writing
-earningsBalance directly. For production, tighten it to also require
-`request.resource.data.earningsBalance == resource.data.earningsBalance` for non-admin updates
-(all legitimate balance changes already go through adminAdjustEarnings/requestWithdrawal, i.e.
-admin-authenticated writes or Cloud Functions, never a raw owner update), or move balance
-mutations into a Cloud Function entirely.
+earningsBalance, pendingEarnings, lifetimeEarnings, lifetimeWithdrawn, totalValidStreams,
+totalValidLikes, or totalValidComments directly. For production, tighten it to also require
+each of those fields equal their previous value for any *non-admin, non-transaction* update
+(all legitimate changes already go through creditEngagementEarning/matureEarnings/
+adminAdjustEarnings/requestWithdrawal), or move every balance mutation into a Cloud Function
+entirely — the client-side transaction in creditEngagementEarning is a reasonable first line of
+defense but, being client code, is not something a determined attacker is bound by.
 
 Note: enforcing the "1,000 followers" half of eligibility purely in security rules would need
 a denormalized follower counter (this app intentionally reads follower counts live from the
