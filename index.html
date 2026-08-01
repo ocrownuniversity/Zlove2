@@ -2851,6 +2851,7 @@ function AuthScreen() {
     const [mode, setMode] = useState('login');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
     const [busy, setBusy] = useState(false);
     const [agreed, setAgreed] = useState(false);
     const toast = useToast();
@@ -2911,6 +2912,23 @@ function AuthScreen() {
             setBusy(false);
         }
     };
+    const handleForgotPassword = async () => {
+        const targetEmail = email || window.prompt("Enter your account email and we'll send you a reset link:");
+        if (!targetEmail)
+            return;
+        setBusy(true);
+        try {
+            await auth.sendPasswordResetEmail(targetEmail);
+            toast('Password reset email sent — check your inbox.', 'success');
+        }
+        catch (err) {
+            toast(err.message.replace('Firebase: ', ''), 'error');
+        }
+        finally {
+            setBusy(false);
+        }
+    };
+    const switchMode = () => { setMode(mode === 'login' ? 'signup' : 'login'); setShowPassword(false); };
     return (React.createElement("div", { className: "min-h-screen flex bg-white dark:bg-ink-900" },
         React.createElement("div", { className: "hidden lg:flex flex-1 bg-gradient-to-br from-brand-600 via-brand-700 to-ink-900 items-center justify-center relative overflow-hidden" },
             React.createElement("div", { className: "absolute -top-24 -left-24 w-96 h-96 rounded-full bg-brand-400/30 blur-3xl" }),
@@ -2920,23 +2938,30 @@ function AuthScreen() {
                     React.createElement("span", { className: "font-display font-extrabold text-3xl" }, "Blueface")),
                 React.createElement("h1", { className: "font-display text-4xl font-bold leading-tight mb-4" }, "Where your circle actually shows up."),
                 React.createElement("p", { className: "text-brand-100 text-lg" }, "Share moments, follow people you care about, and keep the feed real-time."))),
-        React.createElement("div", { className: "flex-1 flex items-center justify-center px-6 py-12" },
-            React.createElement("div", { className: "w-full max-w-sm" },
-                React.createElement("div", { className: "flex lg:hidden items-center gap-2 mb-8 justify-center text-brand-600" },
-                    React.createElement("span", { className: "font-display font-extrabold text-2xl" }, "Blueface")),
-                React.createElement("h2", { className: "font-display text-2xl font-bold mb-1" }, mode === 'login' ? 'Welcome back' : 'Create your account'),
-                React.createElement("p", { className: "text-slate-500 text-sm mb-6" }, mode === 'login' ? 'Sign in to continue' : 'Join Blueface in seconds'),
-                React.createElement("button", { onClick: handleGoogle, disabled: busy || needsConsent, className: "w-full flex items-center justify-center gap-2 border border-slate-200 dark:border-ink-700 rounded-xl py-2.5 font-medium text-sm mb-4 hover:bg-slate-50 dark:hover:bg-ink-800 transition disabled:opacity-50" },
-                    React.createElement("i", { className: "fa-brands fa-google text-red-500" }),
-                    " Continue with Google"),
-                React.createElement("div", { className: "flex items-center gap-3 mb-4" },
+        React.createElement("div", { className: "flex-1 flex items-start lg:items-center justify-center px-5 sm:px-6 py-10 sm:py-12" },
+            React.createElement("div", { className: "w-full max-w-sm flex flex-col gap-5" },
+                React.createElement("div", { className: "text-center" },
+                    React.createElement("span", { className: "font-display font-extrabold text-3xl text-brand-600 dark:text-brand-400" }, "Blueface")),
+                React.createElement("div", { className: "text-center" },
+                    React.createElement("h1", { className: "font-display text-2xl font-bold mb-1" }, mode === 'login' ? 'Welcome back' : 'Create your account'),
+                    React.createElement("p", { className: "text-slate-500 dark:text-slate-400 text-sm" }, mode === 'login' ? 'Sign in to continue' : 'Join Blueface in seconds')),
+                React.createElement("button", { type: "button", onClick: handleGoogle, disabled: busy || needsConsent, className: "w-full flex items-center justify-center gap-2.5 border border-slate-200 dark:border-ink-700 rounded-2xl py-3.5 font-semibold text-sm shadow-sm hover:bg-slate-50 dark:hover:bg-ink-800 active:scale-[0.98] transition disabled:opacity-50" },
+                    React.createElement("i", { className: "fa-brands fa-google text-red-500 text-base" }),
+                    "Continue with Google"),
+                React.createElement("div", { className: "flex items-center gap-3" },
                     React.createElement("div", { className: "h-px bg-slate-200 dark:bg-ink-700 flex-1" }),
-                    React.createElement("span", { className: "text-xs text-slate-400" }, "or"),
+                    React.createElement("span", { className: "text-xs font-semibold text-slate-400 uppercase tracking-wide" }, "or"),
                     React.createElement("div", { className: "h-px bg-slate-200 dark:bg-ink-700 flex-1" })),
-                React.createElement("form", { onSubmit: handleEmailAuth, className: "space-y-3" },
-                    React.createElement("input", { required: true, type: "email", placeholder: "Email", value: email, onChange: e => setEmail(e.target.value), className: "w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-ink-700 bg-transparent text-sm" }),
-                    React.createElement("input", { required: true, type: "password", placeholder: "Password", value: password, onChange: e => setPassword(e.target.value), className: "w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-ink-700 bg-transparent text-sm" }),
-                    mode === 'signup' && (React.createElement("label", { className: "flex items-start gap-2 text-xs text-slate-500 leading-relaxed select-none" },
+                React.createElement("form", { onSubmit: handleEmailAuth, className: "flex flex-col gap-3.5" },
+                    React.createElement("div", { className: "relative" },
+                        React.createElement("i", { className: "fa-regular fa-envelope absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm" }),
+                        React.createElement("input", { required: true, type: "email", autoComplete: "email", placeholder: "Email", value: email, onChange: e => setEmail(e.target.value), className: "w-full pl-11 pr-4 py-3.5 rounded-2xl border border-slate-200 dark:border-ink-700 bg-white dark:bg-ink-800 text-sm focus:outline-none focus:ring-4 focus:ring-brand-100 dark:focus:ring-brand-900/30 focus:border-brand-500 transition" })),
+                    React.createElement("div", { className: "relative" },
+                        React.createElement("i", { className: "fa-solid fa-lock absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm" }),
+                        React.createElement("input", { required: true, type: showPassword ? 'text' : 'password', autoComplete: mode === 'login' ? 'current-password' : 'new-password', placeholder: "Password", value: password, onChange: e => setPassword(e.target.value), className: "w-full pl-11 pr-11 py-3.5 rounded-2xl border border-slate-200 dark:border-ink-700 bg-white dark:bg-ink-800 text-sm focus:outline-none focus:ring-4 focus:ring-brand-100 dark:focus:ring-brand-900/30 focus:border-brand-500 transition" }),
+                        React.createElement("button", { type: "button", onClick: () => setShowPassword(v => !v), "aria-label": showPassword ? 'Hide password' : 'Show password', className: "absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1" },
+                            React.createElement("i", { className: "fa-regular " + (showPassword ? 'fa-eye-slash' : 'fa-eye') }))),
+                    mode === 'signup' && (React.createElement("label", { className: "flex items-start gap-2 text-xs text-slate-500 dark:text-slate-400 leading-relaxed select-none" },
                         React.createElement("input", { type: "checkbox", checked: agreed, onChange: e => setAgreed(e.target.checked), className: "mt-0.5 shrink-0" }),
                         React.createElement("span", null,
                             "I agree to Blueface's ",
@@ -2944,11 +2969,27 @@ function AuthScreen() {
                             " and ",
                             React.createElement(PageLink, { pageKey: "privacy" }, "Privacy Policy"),
                             "."))),
-                    React.createElement("button", { disabled: busy || needsConsent, type: "submit", className: "w-full bg-brand-600 hover:bg-brand-700 text-white rounded-xl py-2.5 font-semibold text-sm transition disabled:opacity-50" }, busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Sign up')),
-                React.createElement("p", { className: "text-center text-sm text-slate-500 mt-6" },
-                    mode === 'login' ? "Don't have an account? " : "Already have an account? ",
-                    React.createElement("button", { className: "text-brand-600 font-semibold", onClick: () => setMode(mode === 'login' ? 'signup' : 'login') }, mode === 'login' ? 'Sign up' : 'Sign in')),
-                React.createElement(Footer, null)))));
+                    React.createElement("button", { disabled: busy || needsConsent, type: "submit", className: "w-full bg-brand-600 hover:bg-brand-700 text-white rounded-2xl py-3.5 font-bold text-sm shadow-lg shadow-brand-600/20 active:scale-[0.98] transition disabled:opacity-50" }, busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Sign up')),
+                mode === 'login' && (React.createElement("button", { type: "button", onClick: handleForgotPassword, disabled: busy, className: "text-center text-brand-600 dark:text-brand-400 font-semibold text-sm hover:underline disabled:opacity-50" }, "Forgot Password?")),
+                mode === 'login' ? (React.createElement("div", { className: "bg-brand-50 dark:bg-brand-900/10 border border-brand-100 dark:border-brand-900/20 rounded-2xl p-5 shadow-sm" },
+                    React.createElement("div", { className: "flex items-start gap-3.5 mb-4" },
+                        React.createElement("div", { className: "w-12 h-12 rounded-full bg-white dark:bg-ink-800 shadow-sm flex items-center justify-center shrink-0" },
+                            React.createElement("i", { className: "fa-solid fa-user-plus text-brand-600 text-lg" })),
+                        React.createElement("div", null,
+                            React.createElement("h2", { className: "font-display font-bold text-base mb-0.5" }, "New to Blueface?"),
+                            React.createElement("p", { className: "text-sm text-slate-600 dark:text-slate-300 leading-snug" }, "Join millions of people sharing photos, videos, pages and groups."))),
+                    React.createElement("button", { type: "button", onClick: switchMode, className: "w-full bg-green-600 hover:bg-green-700 text-white rounded-2xl py-3.5 font-bold text-sm shadow-lg shadow-green-600/20 active:scale-[0.98] transition" }, "Create Account"))) : (
+                    React.createElement("p", { className: "text-center text-sm text-slate-500 dark:text-slate-400" },
+                        "Already have an account? ",
+                        React.createElement("button", { type: "button", className: "text-brand-600 dark:text-brand-400 font-semibold hover:underline", onClick: switchMode }, "Sign in"))),
+                React.createElement("footer", { className: "text-center pt-2" },
+                    React.createElement("div", { className: "flex justify-center items-center gap-2.5 text-sm text-slate-500 dark:text-slate-400 mb-1.5" },
+                        React.createElement(PageLink, { pageKey: "privacy", className: "hover:text-brand-600 dark:hover:text-brand-400" }, "Privacy"),
+                        React.createElement("span", null, "\u00B7"),
+                        React.createElement(PageLink, { pageKey: "terms", className: "hover:text-brand-600 dark:hover:text-brand-400" }, "Terms"),
+                        React.createElement("span", null, "\u00B7"),
+                        React.createElement(PageLink, { pageKey: "help", className: "hover:text-brand-600 dark:hover:text-brand-400" }, "Help")),
+                    React.createElement("p", { className: "text-xs text-slate-400" }, "\u00A9 ", new Date().getFullYear(), " Blueface"))))));
 }
 /* ============================== ONBOARDING ============================== */
 const NIGERIAN_STATES = [
