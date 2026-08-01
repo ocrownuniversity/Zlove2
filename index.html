@@ -3156,7 +3156,7 @@ function MainApp({ route, setRoute }) {
                             React.createElement("i", { className: "fa-solid " + n.icon + " text-[24px] " + (route.name === n.name ? "text-brand-600" : "text-slate-500 dark:text-slate-400") }),
                             !!n.badge && React.createElement("span", { className: "absolute top-1 right-1/4 min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center" }, n.badge > 9 ? '9+' : n.badge),
                             route.name === n.name && React.createElement("span", { className: "absolute bottom-0 left-1/2 -translate-x-1/2 w-9 h-[3px] rounded-full bg-brand-600" }))))),
-            React.createElement("main", { className: route.name === 'menu' ? "flex-1 max-w-2xl w-full mx-auto md:px-6 md:py-4" : route.name === 'chat' ? "flex-1 max-w-2xl w-full mx-auto md:px-6 md:py-4" : "flex-1 max-w-2xl w-full mx-auto px-2 md:px-6 py-2 pb-8" },
+            React.createElement("main", { className: route.name === 'menu' ? "flex-1 max-w-2xl w-full mx-auto md:px-6 md:py-4" : (route.name === 'chat' || route.name === 'datingChat') ? "flex-1 max-w-2xl w-full mx-auto md:px-6 md:py-4" : "flex-1 max-w-2xl w-full mx-auto px-2 md:px-6 py-2 pb-8" },
                 route.name === 'menu' && React.createElement(MenuScreen, { go: go, theme: theme, setTheme: setTheme }),
                 route.name === 'home' && React.createElement(HomeFeed, { go: go }),
                 route.name === 'reels' && React.createElement(ReelsFeedScreen, { go: go, route: route }),
@@ -3178,8 +3178,9 @@ function MainApp({ route, setRoute }) {
                 route.name === 'post' && React.createElement(PostDetailScreen, { id: route.id, go: go, openComments: route.openComments }),
                 route.name === 'profile' && React.createElement(ProfileScreen, { uid: route.uid, go: go }),
                 route.name === 'myPages' && React.createElement(MyPagesScreen, { go: go }),
-                route.name === 'dating' && React.createElement(DatingScreen, { go: go }),
+                route.name === 'dating' && React.createElement(DatingScreen, { go: go, route: route }),
                 route.name === 'datingProfile' && React.createElement(DatingProfileScreen, { uid: route.uid, go: go }),
+                route.name === 'datingChat' && React.createElement(DatingChatScreen, { matchId: route.matchId, otherUid: route.otherUid, go: go }),
                 route.name === 'groups' && React.createElement(GroupsHomeScreen, { go: go }),
                 route.name === 'groupForm' && React.createElement(GroupFormScreen, { id: route.id, go: go }),
                 route.name === 'group' && React.createElement(GroupScreen, { id: route.id, go: go }),
@@ -3189,7 +3190,7 @@ function MainApp({ route, setRoute }) {
                 route.name === 'monetization' && React.createElement(MonetizationScreen, { id: route.id, go: go }),
                 route.name === 'withdrawals' && React.createElement(WithdrawalsScreen, { id: route.id, go: go }),
                 route.name === 'kycForm' && React.createElement(KycFormScreen, { id: route.id, go: go }),
-                route.name !== 'chat' && route.name !== 'menu' && React.createElement(Footer, { compact: true })))));
+                route.name !== 'chat' && route.name !== 'menu' && route.name !== 'datingChat' && React.createElement(Footer, { compact: true })))));
 }
 /* ============================== MENU SCREEN (hamburger "\u2261" menu) ============================== */
 // Tiles that map to a real, working screen in this app navigate there.
@@ -4811,7 +4812,7 @@ const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your p
     page_name_change_submitted: 'Your Page name change request was submitted for review', page_name_change_approved: 'Your Page name change was approved',
     page_name_change_rejected: 'Your Page name change request was rejected',
     dating_kyc_approved: 'Your Dating identity verification was approved', dating_kyc_rejected: 'Your Dating identity verification was rejected',
-    dating_match: 'matched with you on Dating' };
+    dating_match: 'matched with you on Dating', dating_message: 'sent you a message on Dating' };
 const DATING_NOTIF_TYPES = ['dating_kyc_approved', 'dating_kyc_rejected'];
 const SYSTEM_NOTIF_TYPES = ['listing_approved', 'listing_removed', 'ad_approved', 'ad_declined', 'group_request_approved', 'group_request_rejected',
     'kyc_approved', 'kyc_rejected', 'followers_milestone', 'monetization_eligible', 'monetization_approved', 'monetization_rejected', 'monetization_suspended',
@@ -4866,6 +4867,10 @@ function NotifRow({ n, go }) {
             return go({ name: 'monetization', id: n.pageId });
         if (PAGE_NAME_CHANGE_NOTIF_TYPES.includes(n.type) && n.pageId)
             return go({ name: 'pageForm', id: n.pageId });
+        if (n.type === 'dating_message' && n.matchId)
+            return go({ name: 'datingChat', matchId: n.matchId, otherUid: n.fromUserId });
+        if (n.type === 'dating_match')
+            return go({ name: 'dating', tab: 'matches' });
         if (DATING_NOTIF_TYPES.includes(n.type))
             return go({ name: 'dating' });
         go({ name: 'profile', uid: n.fromUserId });
@@ -6072,7 +6077,89 @@ async function likeDatingProfile(fromUid, toUid) {
 async function passDatingProfile(fromUid, toUid) {
     await db.collection('datingPasses').doc(fromUid + '_' + toUid).set({ from: fromUid, to: toUid, createdAt: FieldValue.serverTimestamp() });
 }
-function DatingScreen({ go }) {
+/* ============================== DATING PROFILE (independent of the social profile) ==============================
+ * Everything below lives in its own `datingProfiles/{uid}` document — its own photos, bio, age,
+ * gender, location, interests, hobbies and relationship preference. It never reads or writes the
+ * users/{uid} document (besides the one-time gender/KYC/payment gate above), so editing, pausing
+ * or deleting a Dating profile can never touch the person's normal Blueface account.
+ */
+const DATING_HOBBIES = ['Cooking', 'Hiking', 'Photography', 'Dancing', 'Gaming', 'Reading', 'Painting', 'Yoga', 'Cycling', 'Swimming', 'Gardening', 'Writing', 'Singing', 'Volunteering', 'Football', 'Movies'];
+const DATING_INTERESTED_IN = [['male', 'Men'], ['female', 'Women'], ['everyone', 'Everyone']];
+const DATING_MAX_PHOTOS = 6;
+function datingPhotoPath(uid, i) { return `datingProfiles/${uid}/photo_${i}.jpg`; }
+async function uploadDatingPhoto(uid, file, index) {
+    const compressed = await compressImage(file, 1280, 0.85);
+    const ref = storage.ref(datingPhotoPath(uid, index));
+    await ref.put(compressed, { contentType: 'image/jpeg' });
+    return ref.getDownloadURL();
+}
+async function deleteDatingPhotoFile(uid, index) { await storage.ref(datingPhotoPath(uid, index)).delete().catch(() => { }); }
+function useDatingProfileDoc(uid) {
+    const [doc, setDoc] = useState(undefined);
+    useEffect(() => {
+        if (!uid) { setDoc(null); return; }
+        const unsub = db.collection('datingProfiles').doc(uid).onSnapshot(s => setDoc(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setDoc(null));
+        return unsub;
+    }, [uid]);
+    return doc;
+}
+async function saveDatingProfile(uid, fields) {
+    await db.collection('datingProfiles').doc(uid).set(Object.assign({ uid, visible: true, createdAt: FieldValue.serverTimestamp() }, fields, { updatedAt: FieldValue.serverTimestamp() }), { merge: true });
+}
+async function setDatingPaused(uid, paused) {
+    await db.collection('datingProfiles').doc(uid).set({ visible: !paused, pausedAt: paused ? FieldValue.serverTimestamp() : null }, { merge: true });
+}
+async function setDatingPrivacy(uid, privacy) { await db.collection('datingProfiles').doc(uid).set({ privacy }, { merge: true }); }
+async function blockDatingUser(uid, targetUid) {
+    await db.collection('datingProfiles').doc(uid).set({ blockedUsers: FieldValue.arrayUnion(targetUid) }, { merge: true });
+}
+async function unblockDatingUser(uid, targetUid) {
+    await db.collection('datingProfiles').doc(uid).set({ blockedUsers: FieldValue.arrayRemove(targetUid) }, { merge: true });
+}
+async function hideDatingProfileFromUser(uid, targetUid) {
+    // "Hide profile" from a specific person without a full block — used from the Discover card menu.
+    await db.collection('datingProfiles').doc(uid).set({ hiddenFrom: FieldValue.arrayUnion(targetUid) }, { merge: true });
+}
+async function unmatchDating(matchId) {
+    const msgsSnap = await db.collection('datingMatches').doc(matchId).collection('messages').limit(500).get();
+    const batch = db.batch();
+    msgsSnap.docs.forEach(d => batch.delete(d.ref));
+    batch.delete(db.collection('datingMatches').doc(matchId));
+    await batch.commit();
+}
+// Deletes the Dating profile and every trace of Dating activity (photos, likes/passes, matches,
+// and match messages) for this uid. Deliberately never touches users/{uid} or datingKyc/{uid} —
+// verification history is kept, but the dating profile itself and all matching data are gone.
+async function deleteDatingProfileCascade(uid) {
+    const [likesFrom, likesTo, passesFrom, matches] = await Promise.all([
+        db.collection('datingLikes').where('from', '==', uid).get(),
+        db.collection('datingLikes').where('to', '==', uid).get(),
+        db.collection('datingPasses').where('from', '==', uid).get(),
+        db.collection('datingMatches').where('uids', 'array-contains', uid).get(),
+    ]);
+    for (const m of matches.docs) { await unmatchDating(m.id).catch(() => { }); }
+    const toDelete = [...likesFrom.docs, ...likesTo.docs, ...passesFrom.docs];
+    let batch = db.batch(), n = 0;
+    for (const d of toDelete) { batch.delete(d.ref); n++; if (n % 400 === 0) { await batch.commit(); batch = db.batch(); } }
+    if (n % 400 !== 0) await batch.commit();
+    for (let i = 0; i < DATING_MAX_PHOTOS; i++) await deleteDatingPhotoFile(uid, i);
+    await db.collection('datingProfiles').doc(uid).delete();
+}
+/* ---- Dating chat: fully separate from the normal Messages system — only opens between two
+ * matched Dating profiles, and lives entirely under datingMatches/{matchId}/messages. ---- */
+async function sendDatingMessage(meId, matchId, otherUid, payload) {
+    await db.collection('datingMatches').doc(matchId).collection('messages').add(Object.assign({ senderId: meId, createdAt: FieldValue.serverTimestamp(), readBy: [], deliveredTo: [] }, payload));
+    const previewText = payload.type === 'text' ? payload.text : ('[' + payload.type + ']');
+    await db.collection('datingMatches').doc(matchId).set({
+        lastMessage: { type: payload.type, text: previewText, senderId: meId }, lastMessageAt: FieldValue.serverTimestamp(),
+        ['unread.' + otherUid]: FieldValue.increment(1)
+    }, { merge: true });
+    notifyUser(otherUid, 'dating_message', { fromUserId: meId, matchId });
+}
+function setDatingTyping(matchId, uid, typing) {
+    db.collection('datingMatches').doc(matchId).set({ typing: { [uid]: typing } }, { merge: true }).catch(() => { });
+}
+function DatingScreen({ go, route }) {
     const { profile } = useAuth();
     const toast = useToast();
     const settings = useSiteSettings();
@@ -6121,7 +6208,7 @@ function DatingScreen({ go }) {
     if (needsPayment) {
         return React.createElement(DatingPaymentPanel, { profile: profile, settings: settings });
     }
-    return React.createElement(DatingHomeFeed, { go: go, profile: profile });
+    return React.createElement(DatingApp, { go: go, profile: profile, initialTab: route && route.tab });
 }
 function DatingKycPanel({ kyc }) {
     const { profile } = useAuth();
@@ -6217,123 +6304,613 @@ function DatingPaymentPanel({ profile, settings }) {
         React.createElement("button", { disabled: busy, onClick: simulatePayment, className: "w-full border border-slate-200 dark:border-ink-700 rounded-xl py-3 font-semibold text-sm text-slate-500" }, busy ? 'Processing…' : 'Simulate payment (demo)'),
         React.createElement("p", { className: "text-[11px] text-slate-400 mt-3" }, "The fee is set by the platform admin and can change. This is a one-time payment — you won't be charged again."));
 }
-function DatingHomeFeed({ go, profile }) {
-    const toast = useToast();
-    const [tab, setTab] = useState('browse');
-    const [candidates, setCandidates] = useState(null);
-    const [passedIds, setPassedIds] = useState(new Set());
-    const [matches, setMatches] = useState(null);
-    const [index, setIndex] = useState(0);
-    const opposite = profile.gender === 'male' ? 'female' : 'male';
-    useEffect(() => {
-        if (tab !== 'browse') return;
-        db.collection('users').where('gender', '==', opposite).where('datingActive', '==', true).limit(40).get()
-            .then(snap => setCandidates(snap.docs.map(d => Object.assign({ id: d.id }, d.data())).filter(u => u.id !== profile.id)))
-            .catch(() => setCandidates([]));
-    }, [tab, opposite, profile.id]);
-    useEffect(() => {
-        if (tab !== 'matches') return;
-        const unsub = db.collection('datingMatches').where('uids', 'array-contains', profile.id).onSnapshot(async (snap) => {
-            const rows = snap.docs.map(d => Object.assign({ id: d.id }, d.data()));
-            const others = await Promise.all(rows.map(async (r) => {
-                const otherUid = r.uids.find(u => u !== profile.id);
-                const s = await db.collection('users').doc(otherUid).get();
-                return s.exists ? Object.assign({ id: s.id }, s.data()) : null;
-            }));
-            setMatches(others.filter(Boolean));
-        }, () => setMatches([]));
-        return unsub;
-    }, [tab, profile.id]);
-    const current = (candidates || []).filter(c => !passedIds.has(c.id))[index];
-    const like = async () => {
-        if (!current) return;
-        try {
-            const matched = await likeDatingProfile(profile.id, current.id);
-            toast(matched ? 'It’s a match! ❤️' : 'Liked', 'success');
-        }
-        catch (err) { toast(err.message, 'error'); }
-        setIndex(i => i + 1);
-    };
-    const pass = async () => {
-        if (!current) return;
-        try { await passDatingProfile(profile.id, current.id); } catch (e) { }
-        setPassedIds(s => new Set(s).add(current.id));
-        setIndex(i => i + 1);
-    };
+function VerifiedBadge({ size }) {
+    return React.createElement("span", { title: "ID verified", className: "inline-flex items-center justify-center text-white bg-sky-500 rounded-full shrink-0 " + (size === 'lg' ? 'w-5 h-5 text-[10px]' : 'w-4 h-4 text-[9px]') }, React.createElement("i", { className: "fa-solid fa-check" }));
+}
+function Toggle({ on, onClick }) {
+    return React.createElement("button", { type: "button", onClick: onClick, className: "w-11 h-6 rounded-full relative transition shrink-0 " + (on ? "bg-rose-500" : "bg-slate-200 dark:bg-ink-600") },
+        React.createElement("span", { className: "absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition " + (on ? "left-[22px]" : "left-0.5") }));
+}
+/* ============================== DATING APP SHELL ============================== */
+function DatingApp({ go, profile, initialTab }) {
+    const datingProfile = useDatingProfileDoc(profile.id);
+    const [tab, setTab] = useState(initialTab || 'discover');
+    if (datingProfile === undefined) {
+        return React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "Loading…");
+    }
+    const isSetupComplete = datingProfile && datingProfile.age && datingProfile.gender && (datingProfile.photos || []).length > 0;
+    if (!isSetupComplete) {
+        return React.createElement("div", { className: "max-w-md mx-auto" },
+            React.createElement(DatingProfileSetup, { profile: profile, datingProfile: datingProfile, onDone: () => setTab('discover') }));
+    }
+    if (datingProfile.visible === false && tab !== 'settings' && tab !== 'profile') {
+        return React.createElement("div", { className: "max-w-md mx-auto" }, React.createElement(DatingPausedPanel, { profile: profile, go: go, onSettings: () => setTab('settings') }));
+    }
+    const TABS = [['discover', 'Discover', 'fa-compass'], ['matches', 'Matches', 'fa-heart'], ['profile', 'Profile', 'fa-user'], ['settings', 'Settings', 'fa-gear']];
     return React.createElement("div", { className: "max-w-md mx-auto" },
         React.createElement("div", { className: "flex items-center gap-2 mb-4" },
             React.createElement("i", { className: "fa-solid fa-heart text-rose-500 text-xl" }),
-            React.createElement("h2", { className: "font-display text-xl font-bold" }, "Dating")),
-        React.createElement("div", { className: "flex gap-2 mb-4" },
-            [['browse', 'Browse'], ['matches', 'Matches'], ['profile', 'My Profile']].map(([k, l]) => React.createElement("button", { key: k, onClick: () => setTab(k), className: "px-3 py-1.5 rounded-full text-xs font-semibold " + (tab === k ? "bg-rose-500 text-white" : "bg-slate-100 dark:bg-ink-700") }, l))),
-        tab === 'browse' && (candidates === null ? React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "Loading…") :
-            !current ? React.createElement("div", { className: "text-center py-16" },
-                React.createElement("i", { className: "fa-solid fa-heart-crack text-3xl text-slate-300 mb-2" }),
-                React.createElement("p", { className: "text-sm text-slate-400" }, "No more profiles right now — check back later.")) :
-            React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 overflow-hidden" },
-                React.createElement("div", { className: "aspect-[4/5] bg-slate-100 dark:bg-ink-700" },
-                    current.photoURL && React.createElement("img", { src: current.photoURL, className: "w-full h-full object-cover" })),
-                React.createElement("div", { className: "p-4" },
-                    React.createElement("p", { className: "font-display text-lg font-bold" }, current.displayName || current.username),
-                    current.datingLookingFor && React.createElement("p", { className: "text-xs text-rose-500 font-semibold mb-1" }, "Looking for: ", (DATING_LOOKING_FOR.find(([k]) => k === current.datingLookingFor) || [null, current.datingLookingFor])[1]),
-                    current.datingBio && React.createElement("p", { className: "text-sm text-slate-500 mb-2" }, current.datingBio),
-                    !!(current.datingInterests || []).length && React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-2" }, current.datingInterests.map(t => React.createElement("span", { key: t, className: "text-[11px] px-2 py-0.5 rounded-full bg-rose-50 text-rose-600 dark:bg-rose-900/20 font-semibold" }, t))),
-                    React.createElement("div", { className: "flex gap-3 mt-3" },
-                        React.createElement("button", { onClick: pass, className: "flex-1 py-3 rounded-xl border border-slate-200 dark:border-ink-700 font-semibold text-slate-500" }, React.createElement("i", { className: "fa-solid fa-xmark mr-1.5" }), "Pass"),
-                        React.createElement("button", { onClick: like, className: "flex-1 py-3 rounded-xl bg-rose-500 hover:bg-rose-600 text-white font-semibold" }, React.createElement("i", { className: "fa-solid fa-heart mr-1.5" }), "Like"))))),
-        tab === 'matches' && (matches === null ? React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "Loading…") :
-            matches.length === 0 ? React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "No matches yet — keep browsing!") :
-                React.createElement("div", { className: "space-y-2" }, matches.map(m => React.createElement("div", { key: m.id, className: "flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
-                    React.createElement(Avatar, { user: m, size: 11 }),
-                    React.createElement("div", { className: "flex-1 min-w-0" },
-                        React.createElement("p", { className: "font-semibold text-sm truncate" }, m.displayName || m.username)),
-                    React.createElement("button", { onClick: () => go({ name: 'chat', chatId: chatIdFor(profile.id, m.id), otherUid: m.id }), className: "px-3 py-1.5 rounded-full bg-rose-500 text-white text-xs font-semibold" }, "Message"))))),
-        tab === 'profile' && React.createElement(DatingProfileEditor, { profile: profile }));
+            React.createElement("h2", { className: "font-display text-xl font-bold" }, "Dating"),
+            datingProfile.verified && React.createElement(VerifiedBadge, { size: "lg" })),
+        React.createElement("div", { className: "flex gap-2 mb-4 overflow-x-auto", style: { scrollbarWidth: 'none' } },
+            TABS.map(([k, l, icon]) => React.createElement("button", { key: k, onClick: () => setTab(k), className: "px-3 py-1.5 rounded-full text-xs font-semibold shrink-0 " + (tab === k ? "bg-rose-500 text-white" : "bg-slate-100 dark:bg-ink-700") }, React.createElement("i", { className: "fa-solid " + icon + " mr-1.5" }), l))),
+        tab === 'discover' && React.createElement(DatingDiscoverScreen, { profile: profile, datingProfile: datingProfile, go: go }),
+        tab === 'matches' && React.createElement(DatingMatchesScreen, { profile: profile, go: go }),
+        tab === 'profile' && React.createElement(DatingProfileSetup, { profile: profile, datingProfile: datingProfile, onDone: () => setTab('discover'), embedded: true }),
+        tab === 'settings' && React.createElement(DatingSettingsScreen, { profile: profile, datingProfile: datingProfile, go: go }));
 }
-function DatingProfileEditor({ profile }) {
+function DatingPausedPanel({ profile, go, onSettings }) {
     const toast = useToast();
-    const [bio, setBio] = useState(profile.datingBio || '');
-    const [lookingFor, setLookingFor] = useState(profile.datingLookingFor || 'relationship');
-    const [interests, setInterests] = useState(profile.datingInterests || []);
     const [busy, setBusy] = useState(false);
-    const toggleInterest = (t) => setInterests(list => list.includes(t) ? list.filter(x => x !== t) : [...list, t]);
+    const resume = async () => {
+        setBusy(true);
+        try { await setDatingPaused(profile.id, false); toast('Dating profile resumed', 'success'); }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    return React.createElement("div", { className: "text-center py-16 px-4" },
+        React.createElement("i", { className: "fa-solid fa-pause text-4xl text-slate-300 mb-3" }),
+        React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, "Your Dating profile is paused"),
+        React.createElement("p", { className: "text-sm text-slate-400 mb-6" }, "You're hidden from Discover and won't get new matches until you resume."),
+        React.createElement("button", { disabled: busy, onClick: resume, className: "w-full bg-rose-500 hover:bg-rose-600 disabled:opacity-50 text-white rounded-xl py-3 font-semibold text-sm" }, busy ? 'Resuming…' : 'Resume Dating profile'),
+        React.createElement("button", { onClick: onSettings, className: "w-full mt-2 py-2 text-sm text-slate-400 font-semibold" }, "Go to Settings"));
+}
+/* ============================== PROFILE SETUP / EDIT (independent data, own photos) ============================== */
+function DatingProfileSetup({ profile, datingProfile, onDone, embedded }) {
+    const toast = useToast();
+    const [photos, setPhotos] = useState((datingProfile && datingProfile.photos) || []);
+    const [uploadingSlot, setUploadingSlot] = useState(null);
+    const [bio, setBio] = useState((datingProfile && datingProfile.bio) || '');
+    const [age, setAge] = useState((datingProfile && datingProfile.age) || '');
+    const [gender, setGender] = useState((datingProfile && datingProfile.gender) || profile.gender || '');
+    const [interestedIn, setInterestedIn] = useState((datingProfile && datingProfile.interestedIn) || 'everyone');
+    const [location, setLocation] = useState((datingProfile && datingProfile.location) || '');
+    const [interests, setInterests] = useState((datingProfile && datingProfile.interests) || []);
+    const [hobbies, setHobbies] = useState((datingProfile && datingProfile.hobbies) || []);
+    const [relationshipGoal, setRelationshipGoal] = useState((datingProfile && datingProfile.relationshipGoal) || 'relationship');
+    const [displayName, setDisplayName] = useState((datingProfile && datingProfile.displayName) || profile.displayName || profile.username || '');
+    const [busy, setBusy] = useState(false);
+    const fileInputs = useRef([]);
+    const toggle = (list, setList, v) => setList(l => l.includes(v) ? l.filter(x => x !== v) : [...l, v]);
+    const pickPhoto = (i) => { const el = fileInputs.current[i]; if (el) el.click(); };
+    const onPhotoFile = async (i, file) => {
+        if (!file) return;
+        setUploadingSlot(i);
+        try {
+            const url = await uploadDatingPhoto(profile.id, file, i);
+            setPhotos(p => { const next = p.slice(); next[i] = url; return next.filter(Boolean); });
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setUploadingSlot(null); }
+    };
+    const removePhoto = async (i) => {
+        await deleteDatingPhotoFile(profile.id, i);
+        setPhotos(p => p.filter((_, idx) => idx !== i));
+    };
+    const inputCls = "w-full mt-1 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm";
     const save = async (e) => {
         e.preventDefault();
+        if (photos.length === 0) { toast('Add at least one photo', 'error'); return; }
+        if (!age || Number(age) < 18) { toast('You must be 18 or older to use Dating', 'error'); return; }
+        if (!gender) { toast('Select your gender', 'error'); return; }
+        if (!displayName.trim()) { toast('Add a display name for your Dating profile', 'error'); return; }
+        if (!bio.trim()) { toast('Write a short bio', 'error'); return; }
         setBusy(true);
         try {
-            await db.collection('users').doc(profile.id).update({ datingBio: bio.trim(), datingLookingFor: lookingFor, datingInterests: interests });
+            await saveDatingProfile(profile.id, {
+                displayName: displayName.trim(), photos, bio: bio.trim(), age: Number(age), gender, interestedIn,
+                location: location.trim(), interests, hobbies, relationshipGoal, verified: true,
+            });
             toast('Dating profile saved', 'success');
+            onDone && onDone();
         }
         catch (err) { toast(err.message, 'error'); }
         finally { setBusy(false); }
     };
     return React.createElement("form", { onSubmit: save, className: "space-y-4" },
+        !embedded && React.createElement("div", { className: "text-center mb-1" },
+            React.createElement("i", { className: "fa-solid fa-heart text-3xl text-rose-500 mb-2" }),
+            React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, datingProfile ? "Edit your Dating profile" : "Create your Dating profile"),
+            React.createElement("p", { className: "text-sm text-slate-400" }, "This is completely separate from your Blueface profile — your own photos, name and details.")),
+        React.createElement(PageFormField, { label: "Photos (up to " + DATING_MAX_PHOTOS + ")" },
+            React.createElement("div", { className: "grid grid-cols-3 gap-2 mt-1" },
+                Array.from({ length: DATING_MAX_PHOTOS }).map((_, i) => React.createElement("div", { key: i, className: "aspect-square rounded-xl border-2 border-dashed border-slate-200 dark:border-ink-600 relative overflow-hidden flex items-center justify-center bg-slate-50 dark:bg-ink-700" },
+                    photos[i] ? React.createElement(React.Fragment, null,
+                        React.createElement("img", { src: photos[i], className: "w-full h-full object-cover cursor-zoom-in", onClick: () => openLightbox(photos, i) }),
+                        React.createElement("button", { type: "button", onClick: () => removePhoto(i), className: "absolute top-1 right-1 bg-black/60 text-white w-5 h-5 rounded-full text-[10px] leading-5" }, "\u2715")) :
+                        React.createElement("button", { type: "button", onClick: () => pickPhoto(i), disabled: uploadingSlot === i, className: "text-slate-400 flex flex-col items-center gap-1" },
+                            uploadingSlot === i ? React.createElement("i", { className: "fa-solid fa-spinner fa-spin" }) : React.createElement("i", { className: "fa-solid fa-plus text-lg" })),
+                    React.createElement("input", { ref: el => fileInputs.current[i] = el, type: "file", accept: "image/*", hidden: true, onChange: e => { onPhotoFile(i, e.target.files[0]); e.target.value = ''; } }))))),
+        React.createElement(PageFormField, { label: "Display name" },
+            React.createElement("input", { value: displayName, onChange: e => setDisplayName(e.target.value), required: true, maxLength: 40, className: inputCls, placeholder: "What matches will see" })),
+        React.createElement("div", { className: "grid grid-cols-2 gap-3" },
+            React.createElement(PageFormField, { label: "Age" },
+                React.createElement("input", { type: "number", min: 18, max: 100, value: age, onChange: e => setAge(e.target.value), required: true, className: inputCls })),
+            React.createElement(PageFormField, { label: "Gender" },
+                React.createElement("select", { value: gender, onChange: e => setGender(e.target.value), className: inputCls },
+                    React.createElement("option", { value: "" }, "Select…"),
+                    React.createElement("option", { value: "male" }, "Male"),
+                    React.createElement("option", { value: "female" }, "Female"),
+                    React.createElement("option", { value: "other" }, "Other")))),
+        React.createElement(PageFormField, { label: "Interested in" },
+            React.createElement("div", { className: "grid grid-cols-3 gap-2 mt-1" }, DATING_INTERESTED_IN.map(([k, l]) => React.createElement("button", { key: k, type: "button", onClick: () => setInterestedIn(k), className: "py-2 rounded-lg border text-xs font-semibold " + (interestedIn === k ? "border-rose-500 bg-rose-50 text-rose-600 dark:bg-rose-900/20" : "border-slate-200 dark:border-ink-700") }, l)))),
+        React.createElement(PageFormField, { label: "Location" },
+            React.createElement("input", { value: location, onChange: e => setLocation(e.target.value), placeholder: "City, e.g. Lagos", className: inputCls })),
         React.createElement(PageFormField, { label: "About you" },
-            React.createElement("textarea", { value: bio, onChange: e => setBio(e.target.value), rows: 3, maxLength: 300, className: "w-full mt-1 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm", placeholder: "Tell people a bit about yourself…" })),
+            React.createElement("textarea", { value: bio, onChange: e => setBio(e.target.value), rows: 3, maxLength: 300, className: inputCls, placeholder: "Tell people a bit about yourself…" })),
         React.createElement(PageFormField, { label: "Looking for" },
-            React.createElement("select", { value: lookingFor, onChange: e => setLookingFor(e.target.value), className: "w-full mt-1 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" },
+            React.createElement("select", { value: relationshipGoal, onChange: e => setRelationshipGoal(e.target.value), className: inputCls },
                 DATING_LOOKING_FOR.map(([k, l]) => React.createElement("option", { key: k, value: k }, l)))),
         React.createElement(PageFormField, { label: "Interests" },
-            React.createElement("div", { className: "flex flex-wrap gap-1.5 mt-1" }, DATING_INTERESTS.map(t => React.createElement("button", { key: t, type: "button", onClick: () => toggleInterest(t), className: "text-xs px-2.5 py-1 rounded-full font-semibold " + (interests.includes(t) ? "bg-rose-500 text-white" : "bg-slate-100 dark:bg-ink-700 text-slate-500") }, t)))),
-        React.createElement("p", { className: "text-[11px] text-slate-400" }, "Your Dating profile uses your existing profile photo and name from Blueface."),
-        React.createElement("button", { disabled: busy, type: "submit", className: "w-full bg-rose-500 hover:bg-rose-600 disabled:opacity-50 text-white rounded-xl py-2.5 font-semibold text-sm" }, busy ? 'Saving…' : 'Save profile'));
+            React.createElement("div", { className: "flex flex-wrap gap-1.5 mt-1" }, DATING_INTERESTS.map(t => React.createElement("button", { key: t, type: "button", onClick: () => toggle(interests, setInterests, t), className: "text-xs px-2.5 py-1 rounded-full font-semibold " + (interests.includes(t) ? "bg-rose-500 text-white" : "bg-slate-100 dark:bg-ink-700 text-slate-500") }, t)))),
+        React.createElement(PageFormField, { label: "Hobbies" },
+            React.createElement("div", { className: "flex flex-wrap gap-1.5 mt-1" }, DATING_HOBBIES.map(t => React.createElement("button", { key: t, type: "button", onClick: () => toggle(hobbies, setHobbies, t), className: "text-xs px-2.5 py-1 rounded-full font-semibold " + (hobbies.includes(t) ? "bg-rose-500 text-white" : "bg-slate-100 dark:bg-ink-700 text-slate-500") }, t)))),
+        React.createElement("button", { disabled: busy, type: "submit", className: "w-full bg-rose-500 hover:bg-rose-600 disabled:opacity-50 text-white rounded-xl py-3 font-semibold text-sm" }, busy ? 'Saving…' : (datingProfile ? 'Save changes' : 'Create Dating profile')));
+}
+/* ============================== DISCOVER ============================== */
+function DatingDiscoverScreen({ profile, datingProfile, go }) {
+    const toast = useToast();
+    const [candidates, setCandidates] = useState(null);
+    const [index, setIndex] = useState(0);
+    const [photoIdx, setPhotoIdx] = useState(0);
+    const [filtersOpen, setFiltersOpen] = useState(false);
+    const [filters, setFilters] = useState({ minAge: 18, maxAge: 99, interest: '', location: '' });
+    const [matchModal, setMatchModal] = useState(null);
+    useEffect(() => {
+        let cancelled = false;
+        db.collection('datingProfiles').where('visible', '==', true).limit(100).get()
+            .then(snap => {
+            if (cancelled)
+                return;
+            const blocked = new Set(datingProfile.blockedUsers || []);
+            let rows = snap.docs.map(d => Object.assign({ id: d.id }, d.data()))
+                .filter(u => u.id !== profile.id && !blocked.has(u.id) && !(u.blockedUsers || []).includes(profile.id) && !(u.hiddenFrom || []).includes(profile.id));
+            if (datingProfile.interestedIn && datingProfile.interestedIn !== 'everyone')
+                rows = rows.filter(u => u.gender === datingProfile.interestedIn);
+            rows = rows.filter(u => !u.interestedIn || u.interestedIn === 'everyone' || u.interestedIn === datingProfile.gender);
+            setCandidates(rows);
+        })
+            .catch(() => setCandidates([]));
+        return () => { cancelled = true; };
+    }, [profile.id, datingProfile.blockedUsers, datingProfile.interestedIn, datingProfile.gender]);
+    const filtered = (candidates || []).filter(c => {
+        if (filters.minAge && c.age < filters.minAge)
+            return false;
+        if (filters.maxAge && c.age > filters.maxAge)
+            return false;
+        if (filters.interest && !(c.interests || []).includes(filters.interest))
+            return false;
+        if (filters.location && !(c.location || '').toLowerCase().includes(filters.location.toLowerCase()))
+            return false;
+        return true;
+    });
+    const current = filtered[index];
+    useEffect(() => { setPhotoIdx(0); }, [index]);
+    const like = async () => {
+        if (!current)
+            return;
+        try {
+            const matched = await likeDatingProfile(profile.id, current.id);
+            if (matched)
+                setMatchModal(current);
+            else
+                toast('Liked', 'success');
+        }
+        catch (err) { toast(err.message, 'error'); }
+        setIndex(i => i + 1);
+    };
+    const pass = async () => {
+        if (!current)
+            return;
+        try { await passDatingProfile(profile.id, current.id); }
+        catch (e) { }
+        setIndex(i => i + 1);
+    };
+    return React.createElement("div", null,
+        React.createElement("div", { className: "flex justify-end mb-2" },
+            React.createElement("button", { onClick: () => setFiltersOpen(true), className: "text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-100 dark:bg-ink-700" }, React.createElement("i", { className: "fa-solid fa-sliders mr-1.5" }), "Filters")),
+        candidates === null ? React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "Loading…") :
+            !current ? React.createElement("div", { className: "text-center py-16" },
+                React.createElement("i", { className: "fa-solid fa-heart-crack text-3xl text-slate-300 mb-2" }),
+                React.createElement("p", { className: "text-sm text-slate-400" }, "No more profiles right now — check back later or adjust your filters.")) :
+                React.createElement(DatingCard, { candidate: current, photoIdx: photoIdx, setPhotoIdx: setPhotoIdx, onLike: like, onPass: pass, go: go }),
+        filtersOpen && React.createElement(DatingFiltersSheet, { filters: filters, setFilters: setFilters, onClose: () => setFiltersOpen(false) }),
+        matchModal && React.createElement(DatingMatchModal, { profile: profile, match: matchModal, onClose: () => setMatchModal(null), go: go }));
+}
+function DatingCard({ candidate, photoIdx, setPhotoIdx, onLike, onPass, go }) {
+    const photos = candidate.photos || [];
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 overflow-hidden" },
+        React.createElement("div", { className: "aspect-[4/5] bg-slate-100 dark:bg-ink-700 relative cursor-pointer", onClick: () => go({ name: 'datingProfile', uid: candidate.id }) },
+            photos[photoIdx] && React.createElement("img", { src: photos[photoIdx], className: "w-full h-full object-cover" }),
+            photos.length > 1 && React.createElement("div", { className: "absolute top-2 left-2 right-2 flex gap-1" }, photos.map((_, i) => React.createElement("div", { key: i, className: "h-1 flex-1 rounded-full " + (i === photoIdx ? "bg-white" : "bg-white/40") }))),
+            photos.length > 1 && React.createElement(React.Fragment, null,
+                React.createElement("button", { onClick: e => { e.stopPropagation(); setPhotoIdx(i => Math.max(0, i - 1)); }, className: "absolute left-0 top-0 bottom-0 w-1/3" }),
+                React.createElement("button", { onClick: e => { e.stopPropagation(); setPhotoIdx(i => Math.min(photos.length - 1, i + 1)); }, className: "absolute right-0 top-0 bottom-0 w-1/3" })),
+            candidate.verified && React.createElement("div", { className: "absolute bottom-2 right-2" }, React.createElement(VerifiedBadge, { size: "lg" }))),
+        React.createElement("div", { className: "p-4" },
+            React.createElement("p", { className: "font-display text-lg font-bold flex items-center gap-1.5" }, candidate.displayName, candidate.age && React.createElement("span", { className: "font-normal text-slate-400" }, ", " + candidate.age)),
+            candidate.location && React.createElement("p", { className: "text-xs text-slate-400 mb-1" }, React.createElement("i", { className: "fa-solid fa-location-dot mr-1" }), candidate.location),
+            candidate.relationshipGoal && React.createElement("p", { className: "text-xs text-rose-500 font-semibold mb-1" }, "Looking for: ", (DATING_LOOKING_FOR.find(([k]) => k === candidate.relationshipGoal) || [null, candidate.relationshipGoal])[1]),
+            candidate.bio && React.createElement("p", { className: "text-sm text-slate-500 mb-2" }, candidate.bio),
+            !!(candidate.interests || []).length && React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-1" }, candidate.interests.map(t => React.createElement("span", { key: t, className: "text-[11px] px-2 py-0.5 rounded-full bg-rose-50 text-rose-600 dark:bg-rose-900/20 font-semibold" }, t))),
+            !!(candidate.hobbies || []).length && React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-2" }, candidate.hobbies.map(t => React.createElement("span", { key: t, className: "text-[11px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-ink-700 text-slate-500 font-semibold" }, t))),
+            React.createElement("div", { className: "flex gap-3 mt-3" },
+                React.createElement("button", { onClick: onPass, className: "flex-1 py-3 rounded-xl border border-slate-200 dark:border-ink-700 font-semibold text-slate-500" }, React.createElement("i", { className: "fa-solid fa-xmark mr-1.5" }), "Skip"),
+                React.createElement("button", { onClick: onLike, className: "flex-1 py-3 rounded-xl bg-rose-500 hover:bg-rose-600 text-white font-semibold" }, React.createElement("i", { className: "fa-solid fa-heart mr-1.5" }), "Like"))));
+}
+function DatingFiltersSheet({ filters, setFilters, onClose }) {
+    const [minAge, setMinAge] = useState(filters.minAge);
+    const [maxAge, setMaxAge] = useState(filters.maxAge);
+    const [interest, setInterest] = useState(filters.interest || '');
+    const [location, setLocation] = useState(filters.location || '');
+    const apply = () => { setFilters({ minAge: Number(minAge) || 18, maxAge: Number(maxAge) || 99, interest: interest, location: location }); onClose(); };
+    const inputCls = "w-full mt-1 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm";
+    return React.createElement(BottomSheet, { title: "Filters", onClose: onClose },
+        React.createElement("div", { className: "space-y-3 px-1 pb-2" },
+            React.createElement("div", { className: "grid grid-cols-2 gap-3" },
+                React.createElement(PageFormField, { label: "Min age" }, React.createElement("input", { type: "number", min: 18, value: minAge, onChange: e => setMinAge(e.target.value), className: inputCls })),
+                React.createElement(PageFormField, { label: "Max age" }, React.createElement("input", { type: "number", min: 18, value: maxAge, onChange: e => setMaxAge(e.target.value), className: inputCls }))),
+            React.createElement(PageFormField, { label: "Location contains" }, React.createElement("input", { value: location, onChange: e => setLocation(e.target.value), placeholder: "e.g. Lagos", className: inputCls })),
+            React.createElement(PageFormField, { label: "Must share interest" },
+                React.createElement("select", { value: interest, onChange: e => setInterest(e.target.value), className: inputCls },
+                    React.createElement("option", { value: "" }, "Any"),
+                    DATING_INTERESTS.map(t => React.createElement("option", { key: t, value: t }, t)))),
+            React.createElement("button", { onClick: apply, className: "w-full bg-rose-500 hover:bg-rose-600 text-white rounded-xl py-2.5 font-semibold text-sm" }, "Apply filters")));
+}
+function DatingMatchModal({ profile, match, onClose, go }) {
+    return React.createElement("div", { className: "fixed inset-0 z-[80] bg-black/70 flex items-center justify-center px-4", onClick: onClose },
+        React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl p-6 max-w-xs w-full text-center", onClick: e => e.stopPropagation() },
+            React.createElement("i", { className: "fa-solid fa-heart text-4xl text-rose-500 mb-3" }),
+            React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, "It's a match!"),
+            React.createElement("p", { className: "text-sm text-slate-400 mb-4" }, "You and " + (match.displayName || 'they') + " liked each other."),
+            React.createElement("div", { className: "flex gap-2" },
+                React.createElement("button", { onClick: onClose, className: "flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-ink-700 font-semibold text-sm" }, "Keep browsing"),
+                React.createElement("button", { onClick: () => go({ name: 'datingChat', matchId: [profile.id, match.id].sort().join('_'), otherUid: match.id }), className: "flex-1 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-600 text-white font-semibold text-sm" }, "Say hi"))));
+}
+/* ============================== MATCHES ============================== */
+function DatingMatchesScreen({ profile, go }) {
+    const [rows, setRows] = useState(null);
+    useEffect(() => {
+        const unsub = db.collection('datingMatches').where('uids', 'array-contains', profile.id).onSnapshot(async (snap) => {
+            const list = snap.docs.map(d => Object.assign({ id: d.id }, d.data()));
+            const withOthers = await Promise.all(list.map(async (m) => {
+                const otherUid = m.uids.find(u => u !== profile.id);
+                const s = await db.collection('datingProfiles').doc(otherUid).get();
+                return Object.assign({}, m, { otherUid, other: s.exists ? Object.assign({ id: s.id }, s.data()) : null });
+            }));
+            withOthers.sort((a, b) => ((b.lastMessageAt && b.lastMessageAt.toMillis) ? b.lastMessageAt.toMillis() : 0) - ((a.lastMessageAt && a.lastMessageAt.toMillis) ? a.lastMessageAt.toMillis() : 0));
+            setRows(withOthers.filter(m => m.other));
+        }, () => setRows([]));
+        return unsub;
+    }, [profile.id]);
+    if (rows === null)
+        return React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "Loading…");
+    if (rows.length === 0)
+        return React.createElement("div", { className: "text-center py-16" },
+            React.createElement("i", { className: "fa-solid fa-heart-crack text-3xl text-slate-300 mb-2" }),
+            React.createElement("p", { className: "text-sm text-slate-400" }, "No matches yet — keep browsing!"));
+    return React.createElement("div", { className: "space-y-2" }, rows.map(m => {
+        const unread = (m.unread && m.unread[profile.id]) || 0;
+        return React.createElement("div", { key: m.id, onClick: () => go({ name: 'datingChat', matchId: m.id, otherUid: m.otherUid }), className: "flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700 cursor-pointer" },
+            React.createElement("div", { className: "w-11 h-11 rounded-full overflow-hidden bg-slate-100 dark:bg-ink-700 shrink-0" }, (m.other.photos || [])[0] && React.createElement("img", { src: m.other.photos[0], className: "w-full h-full object-cover" })),
+            React.createElement("div", { className: "flex-1 min-w-0" },
+                React.createElement("p", { className: "font-semibold text-sm truncate flex items-center gap-1" }, m.other.displayName, m.other.verified && React.createElement(VerifiedBadge, null)),
+                React.createElement("p", { className: "text-xs text-slate-400 truncate" }, m.lastMessage ? ((m.lastMessage.senderId === profile.id ? 'You: ' : '') + (m.lastMessage.text || '')) : 'Say hello 👋')),
+            unread > 0 && React.createElement("span", { className: "bg-rose-500 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center shrink-0" }, unread));
+    }));
+}
+/* ============================== SETTINGS (privacy, block list, pause, delete) ============================== */
+function DatingSettingsRow({ icon, label, sub, right, onClick, danger }) {
+    return React.createElement("div", { onClick: onClick, className: "flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700 " + (onClick ? "cursor-pointer" : "") },
+        React.createElement("span", { className: "w-9 h-9 rounded-lg bg-slate-100 dark:bg-ink-700 flex items-center justify-center shrink-0 " + (danger ? "text-red-500" : "text-slate-500") }, React.createElement("i", { className: "fa-solid " + icon })),
+        React.createElement("div", { className: "flex-1 min-w-0" },
+            React.createElement("p", { className: "text-sm font-semibold " + (danger ? "text-red-500" : "") }, label),
+            sub && React.createElement("p", { className: "text-xs text-slate-400" }, sub)),
+        right);
+}
+function DatingSettingsScreen({ profile, datingProfile, go }) {
+    const toast = useToast();
+    const [busy, setBusy] = useState(false);
+    const [blockedOpen, setBlockedOpen] = useState(false);
+    const [confirmDelete, setConfirmDelete] = useState(false);
+    const privacy = datingProfile.privacy || {};
+    const togglePrivacy = async (key) => {
+        try { await setDatingPrivacy(profile.id, Object.assign({}, privacy, { [key]: privacy[key] === false ? true : false })); }
+        catch (e) { toast(e.message, 'error'); }
+    };
+    const paused = datingProfile.visible === false;
+    const togglePause = async () => {
+        setBusy(true);
+        try {
+            await setDatingPaused(profile.id, !paused);
+            toast(!paused ? 'Dating profile paused' : 'Dating profile resumed', 'success');
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    const doDelete = async () => {
+        setBusy(true);
+        try {
+            await deleteDatingProfileCascade(profile.id);
+            toast('Dating profile deleted', 'success');
+            go({ name: 'home' });
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); setConfirmDelete(false); }
+    };
+    return React.createElement("div", { className: "space-y-2" },
+        datingProfile.verified && React.createElement("div", { className: "flex items-center gap-2 bg-sky-50 dark:bg-sky-900/20 text-sky-600 dark:text-sky-300 rounded-xl p-3 text-xs font-semibold" },
+            React.createElement(VerifiedBadge, { size: "lg" }), "Your identity is verified"),
+        React.createElement(DatingSettingsRow, { icon: "fa-pen", label: "Edit Dating profile", sub: "Photos, bio, age, interests & more", onClick: () => go({ name: 'dating', tab: 'profile' }), right: React.createElement("i", { className: "fa-solid fa-chevron-right text-slate-300" }) }),
+        React.createElement(DatingSettingsRow, { icon: "fa-eye", label: "Show my online status", sub: "Let matches see when you're active", right: React.createElement(Toggle, { on: privacy.showOnlineStatus !== false, onClick: () => togglePrivacy('showOnlineStatus') }) }),
+        React.createElement(DatingSettingsRow, { icon: "fa-location-crosshairs", label: "Show my location", sub: "Show your city on your Dating profile", right: React.createElement(Toggle, { on: privacy.showDistance !== false, onClick: () => togglePrivacy('showDistance') }) }),
+        React.createElement(DatingSettingsRow, { icon: "fa-ban", label: "Blocked users", sub: "Manage people you've blocked in Dating", onClick: () => setBlockedOpen(true), right: React.createElement("i", { className: "fa-solid fa-chevron-right text-slate-300" }) }),
+        React.createElement(DatingSettingsRow, { icon: paused ? "fa-play" : "fa-pause", label: paused ? 'Resume Dating profile' : 'Pause Dating profile', sub: "Hide yourself from Discover temporarily — your matches & chats stay put", onClick: togglePause }),
+        React.createElement(DatingSettingsRow, { icon: "fa-trash", label: "Delete Dating profile", sub: "Your Blueface account, posts and friends are not affected", onClick: () => setConfirmDelete(true), danger: true }),
+        blockedOpen && React.createElement(DatingBlockedListSheet, { profile: profile, datingProfile: datingProfile, onClose: () => setBlockedOpen(false) }),
+        confirmDelete && React.createElement(BottomSheet, { title: "Delete Dating profile?", onClose: () => setConfirmDelete(false) },
+            React.createElement("p", { className: "text-sm text-slate-500 px-2 pb-3" }, "This permanently deletes your Dating photos, bio, likes, matches and chats. Your normal Blueface profile, posts and friends are not affected."),
+            React.createElement("div", { className: "flex gap-2 px-2 pb-2" },
+                React.createElement("button", { onClick: () => setConfirmDelete(false), className: "flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-ink-700 font-semibold text-sm" }, "Cancel"),
+                React.createElement("button", { disabled: busy, onClick: doDelete, className: "flex-1 py-2.5 rounded-xl bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white font-semibold text-sm" }, busy ? 'Deleting…' : 'Delete permanently'))));
+}
+function DatingBlockedListSheet({ profile, datingProfile, onClose }) {
+    const toast = useToast();
+    const [rows, setRows] = useState(null);
+    const blockedIds = datingProfile.blockedUsers || [];
+    useEffect(() => {
+        if (blockedIds.length === 0) { setRows([]); return; }
+        Promise.all(blockedIds.map(uid => db.collection('datingProfiles').doc(uid).get()))
+            .then(snaps => setRows(snaps.map((s, i) => s.exists ? Object.assign({ id: s.id }, s.data()) : { id: blockedIds[i], displayName: 'Deleted profile' })));
+    }, [JSON.stringify(blockedIds)]);
+    const unblock = async (uid) => {
+        try { await unblockDatingUser(profile.id, uid); toast('Unblocked', 'success'); }
+        catch (e) { toast(e.message, 'error'); }
+    };
+    return React.createElement(BottomSheet, { title: "Blocked users", onClose: onClose },
+        rows === null && React.createElement("p", { className: "text-sm text-slate-400 text-center py-6" }, "Loading…"),
+        rows && rows.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-6" }, "You haven't blocked anyone in Dating."),
+        rows && rows.map(u => React.createElement("div", { key: u.id, className: "flex items-center gap-3 px-2 py-2" },
+            React.createElement("div", { className: "w-9 h-9 rounded-full overflow-hidden bg-slate-100 dark:bg-ink-700 shrink-0" }, (u.photos || [])[0] && React.createElement("img", { src: u.photos[0], className: "w-full h-full object-cover" })),
+            React.createElement("p", { className: "flex-1 text-sm font-semibold truncate" }, u.displayName),
+            React.createElement("button", { onClick: () => unblock(u.id), className: "text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-100 dark:bg-ink-700" }, "Unblock"))));
 }
 function DatingProfileScreen({ uid, go }) {
-    const [user, setUser] = useState(undefined);
+    const { profile: me } = useAuth();
+    const toast = useToast();
+    const [dp, setDp] = useState(undefined);
+    const [photoIdx, setPhotoIdx] = useState(0);
+    const [menuOpen, setMenuOpen] = useState(false);
+    const [reportOpen, setReportOpen] = useState(false);
+    const myDatingProfile = useDatingProfileDoc(me.id);
     useEffect(() => {
-        const unsub = db.collection('users').doc(uid).onSnapshot(s => setUser(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setUser(null));
+        const unsub = db.collection('datingProfiles').doc(uid).onSnapshot(s => setDp(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setDp(null));
         return unsub;
     }, [uid]);
-    if (user === undefined) return React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "Loading…");
-    if (!user) return React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "Profile not found.");
+    if (dp === undefined) return React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "Loading…");
+    if (!dp) return React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "This Dating profile is no longer available.");
+    const photos = dp.photos || [];
+    const isBlocked = myDatingProfile && (myDatingProfile.blockedUsers || []).includes(uid);
+    const doBlock = async () => {
+        setMenuOpen(false);
+        try { await blockDatingUser(me.id, uid); toast('Blocked on Dating', 'success'); }
+        catch (e) { toast(e.message, 'error'); }
+    };
+    const doUnblock = async () => {
+        setMenuOpen(false);
+        try { await unblockDatingUser(me.id, uid); toast('Unblocked', 'success'); }
+        catch (e) { toast(e.message, 'error'); }
+    };
+    const doHide = async () => {
+        setMenuOpen(false);
+        try { await hideDatingProfileFromUser(uid, me.id); toast('Hidden from your Discover', 'success'); go({ name: 'dating' }); }
+        catch (e) { toast(e.message, 'error'); }
+    };
     return React.createElement("div", { className: "max-w-md mx-auto" },
-        React.createElement("button", { onClick: () => go({ name: 'dating' }), className: "text-sm text-slate-400 mb-3" }, React.createElement("i", { className: "fa-solid fa-arrow-left mr-1.5" }), "Back to Dating"),
+        React.createElement("div", { className: "flex items-center justify-between mb-3" },
+            React.createElement("button", { onClick: () => go({ name: 'dating' }), className: "text-sm text-slate-400" }, React.createElement("i", { className: "fa-solid fa-arrow-left mr-1.5" }), "Back to Dating"),
+            uid !== me.id && React.createElement("div", { className: "relative" },
+                React.createElement("button", { onClick: () => setMenuOpen(v => !v), className: "w-8 h-8 rounded-full bg-slate-100 dark:bg-ink-700 flex items-center justify-center" }, React.createElement("i", { className: "fa-solid fa-ellipsis" })),
+                menuOpen && React.createElement("div", { className: "absolute right-0 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-600 z-10 w-44" },
+                    React.createElement("button", { onClick: doHide, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Hide this profile"),
+                    isBlocked ? React.createElement("button", { onClick: doUnblock, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Unblock") :
+                        React.createElement("button", { onClick: doBlock, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Block"),
+                    React.createElement("button", { onClick: () => { setMenuOpen(false); setReportOpen(true); }, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Report")))),
         React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 overflow-hidden" },
-            React.createElement("div", { className: "aspect-[4/5] bg-slate-100 dark:bg-ink-700" }, user.photoURL && React.createElement("img", { src: user.photoURL, className: "w-full h-full object-cover" })),
+            React.createElement("div", { className: "aspect-[4/5] bg-slate-100 dark:bg-ink-700 relative" },
+                photos[photoIdx] && React.createElement("img", { src: photos[photoIdx], onClick: () => openLightbox(photos, photoIdx), className: "w-full h-full object-cover cursor-zoom-in" }),
+                photos.length > 1 && React.createElement("div", { className: "absolute top-2 left-2 right-2 flex gap-1" }, photos.map((_, i) => React.createElement("div", { key: i, onClick: () => setPhotoIdx(i), className: "h-1 flex-1 rounded-full cursor-pointer " + (i === photoIdx ? "bg-white" : "bg-white/40") }))),
+                dp.verified && React.createElement("div", { className: "absolute bottom-2 right-2" }, React.createElement(VerifiedBadge, { size: "lg" }))),
             React.createElement("div", { className: "p-4" },
-                React.createElement("p", { className: "font-display text-lg font-bold" }, user.displayName || user.username),
-                user.datingBio && React.createElement("p", { className: "text-sm text-slate-500 mt-1" }, user.datingBio))));
+                React.createElement("p", { className: "font-display text-lg font-bold flex items-center gap-1.5" }, dp.displayName, dp.age && React.createElement("span", { className: "font-normal text-slate-400" }, ", " + dp.age)),
+                dp.location && (!dp.privacy || dp.privacy.showDistance !== false) && React.createElement("p", { className: "text-xs text-slate-400 mb-1" }, React.createElement("i", { className: "fa-solid fa-location-dot mr-1" }), dp.location),
+                dp.relationshipGoal && React.createElement("p", { className: "text-xs text-rose-500 font-semibold mb-1" }, "Looking for: ", (DATING_LOOKING_FOR.find(([k]) => k === dp.relationshipGoal) || [null, dp.relationshipGoal])[1]),
+                dp.bio && React.createElement("p", { className: "text-sm text-slate-500 mb-2" }, dp.bio),
+                !!(dp.interests || []).length && React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-1" }, dp.interests.map(t => React.createElement("span", { key: t, className: "text-[11px] px-2 py-0.5 rounded-full bg-rose-50 text-rose-600 dark:bg-rose-900/20 font-semibold" }, t))),
+                !!(dp.hobbies || []).length && React.createElement("div", { className: "flex flex-wrap gap-1.5" }, dp.hobbies.map(t => React.createElement("span", { key: t, className: "text-[11px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-ink-700 text-slate-500 font-semibold" }, t))))),
+        reportOpen && React.createElement(ReportReasonSheet, { targetType: "dating profile", targetId: uid, targetOwnerId: uid, onClose: () => setReportOpen(false) }));
 }
+/* ============================== DATING CHAT (matched users only, fully separate from Messages) ============================== */
+function DatingMessageBubble({ message, isMe, otherUid }) {
+    var _a;
+    const status = () => {
+        if ((message.readBy || []).includes(otherUid)) return React.createElement("i", { className: "fa-solid fa-check-double text-rose-100" });
+        if ((message.deliveredTo || []).includes(otherUid)) return React.createElement("i", { className: "fa-solid fa-check-double text-white/60" });
+        return React.createElement("i", { className: "fa-solid fa-check text-white/60" });
+    };
+    return React.createElement("div", { className: "flex " + (isMe ? "justify-end" : "justify-start") },
+        React.createElement("div", { className: "max-w-[75%]" },
+            React.createElement("div", { className: "px-3 py-[6px] rounded-[18px] text-[15px] leading-snug " + (isMe ? "bg-rose-500 text-white" : "bg-[#F0F0F0] dark:bg-[#3A3B3C] text-[#050505] dark:text-white") },
+                message.type === 'text' && React.createElement("p", { className: "whitespace-pre-wrap break-words" }, message.text),
+                message.type === 'image' && React.createElement("img", { src: message.mediaURL, onClick: () => openLightbox([message.mediaURL], 0), loading: "lazy", className: "rounded-lg max-w-[220px] cursor-zoom-in" }),
+                message.type === 'audio' && React.createElement("audio", { src: message.mediaURL, controls: true, className: "w-56" }),
+                React.createElement("div", { className: "flex items-center gap-1 mt-0.5 justify-end text-[10px] " + (isMe ? "text-white/70" : "text-slate-400") },
+                    React.createElement("span", null, ((_a = message.createdAt) === null || _a === void 0 ? void 0 : _a.toDate) ? message.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''),
+                    isMe && status()))));
+}
+function DatingChatScreen({ matchId, otherUid, go }) {
+    var _a;
+    const { profile } = useAuth();
+    const toast = useToast();
+    const myDatingProfile = useDatingProfileDoc(profile.id);
+    const [otherUser, setOtherUser] = useState(undefined); // main users/{uid} doc — presence only
+    const [otherDp, setOtherDp] = useState(undefined); // datingProfiles/{uid} doc — identity shown in chat
+    const [matchDoc, setMatchDoc] = useState(null);
+    const [messages, setMessages] = useState(null);
+    const [text, setText] = useState('');
+    const [emojiOpen, setEmojiOpen] = useState(false);
+    const [attachOpen, setAttachOpen] = useState(false);
+    const [menuOpen, setMenuOpen] = useState(false);
+    const [reportOpen, setReportOpen] = useState(false);
+    const [recording, setRecording] = useState(false);
+    const [recordSeconds, setRecordSeconds] = useState(0);
+    const [uploading, setUploading] = useState(false);
+    const bottomRef = useRef();
+    const typingTimeout = useRef();
+    const recorderRef = useRef();
+    const chunksRef = useRef([]);
+    const recordTimerRef = useRef();
+    const imageInputRef = useRef();
+    useEffect(() => { const unsub = db.collection('users').doc(otherUid).onSnapshot(s => setOtherUser(s.exists ? Object.assign({ id: s.id }, s.data()) : null)); return unsub; }, [otherUid]);
+    useEffect(() => { const unsub = db.collection('datingProfiles').doc(otherUid).onSnapshot(s => setOtherDp(s.exists ? Object.assign({ id: s.id }, s.data()) : null)); return unsub; }, [otherUid]);
+    useEffect(() => { const unsub = db.collection('datingMatches').doc(matchId).onSnapshot(s => setMatchDoc(s.exists ? s.data() : null), () => setMatchDoc(null)); return unsub; }, [matchId]);
+    useEffect(() => {
+        const unsub = db.collection('datingMatches').doc(matchId).collection('messages').orderBy('createdAt', 'asc').limit(300)
+            .onSnapshot(snap => setMessages(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), e => { setMessages([]); toast('Could not load messages: ' + e.message, 'error'); });
+        return unsub;
+    }, [matchId]);
+    useEffect(() => { var _b; (_b = bottomRef.current) === null || _b === void 0 ? void 0 : _b.scrollIntoView({ behavior: 'smooth' }); }, [messages === null || messages === void 0 ? void 0 : messages.length]);
+    useEffect(() => {
+        if (!messages || messages.length === 0) return;
+        const unread = messages.filter(m => m.senderId !== profile.id && !(m.readBy || []).includes(profile.id));
+        if (unread.length === 0) return;
+        const batch = db.batch();
+        unread.forEach(m => batch.update(db.collection('datingMatches').doc(matchId).collection('messages').doc(m.id), { readBy: FieldValue.arrayUnion(profile.id), deliveredTo: FieldValue.arrayUnion(profile.id) }));
+        batch.commit().catch(() => { });
+        db.collection('datingMatches').doc(matchId).set({ ['unread.' + profile.id]: 0 }, { merge: true }).catch(() => { });
+    }, [messages, matchId, profile.id]);
+    useEffect(() => () => setDatingTyping(matchId, profile.id, false), [matchId]);
+    const iBlockedThem = myDatingProfile && (myDatingProfile.blockedUsers || []).includes(otherUid);
+    const theyBlockedMe = otherDp && (otherDp.blockedUsers || []).includes(profile.id);
+    const blocked = iBlockedThem || theyBlockedMe;
+    const showOnline = !otherDp || !otherDp.privacy || otherDp.privacy.showOnlineStatus !== false;
+    const onTextChange = (v) => {
+        setText(v);
+        setDatingTyping(matchId, profile.id, true);
+        clearTimeout(typingTimeout.current);
+        typingTimeout.current = setTimeout(() => setDatingTyping(matchId, profile.id, false), 2500);
+    };
+    const sendText = async () => {
+        if (blocked) { toast("You can't message this user", 'error'); return; }
+        if (!text.trim()) return;
+        const val = text.trim();
+        setText('');
+        setDatingTyping(matchId, profile.id, false);
+        try { await sendDatingMessage(profile.id, matchId, otherUid, { type: 'text', text: val }); }
+        catch (e) { toast(e.message, 'error'); }
+    };
+    const uploadAndSend = async (file, type) => {
+        if (blocked) { toast("You can't message this user", 'error'); return; }
+        const maxSizes = { image: 15 * 1024 * 1024, audio: 20 * 1024 * 1024 };
+        if (file.size > maxSizes[type]) { toast('File exceeds the size limit', 'error'); return; }
+        setUploading(true);
+        try {
+            let blob = file;
+            if (type === 'image') blob = await compressImage(file, 1600, 0.85);
+            const ext = type === 'image' ? 'jpg' : 'webm';
+            const path = `datingChatMedia/${matchId}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+            const ref = storage.ref(path);
+            await ref.put(blob, { contentType: type === 'image' ? 'image/jpeg' : (file.type || 'audio/webm') });
+            const url = await ref.getDownloadURL();
+            await sendDatingMessage(profile.id, matchId, otherUid, { type, mediaURL: url });
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setUploading(false); }
+    };
+    const startRecording = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const rec = new MediaRecorder(stream);
+            recorderRef.current = rec;
+            chunksRef.current = [];
+            rec.ondataavailable = e => chunksRef.current.push(e.data);
+            rec.onstop = async () => {
+                stream.getTracks().forEach(t => t.stop());
+                if (rec.__cancelled || chunksRef.current.length === 0) return;
+                const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+                const file = new File([blob], `voice-${Date.now()}.webm`, { type: 'audio/webm' });
+                await uploadAndSend(file, 'audio');
+            };
+            rec.start();
+            setRecording(true);
+            setRecordSeconds(0);
+            recordTimerRef.current = setInterval(() => setRecordSeconds(s => s + 1), 1000);
+        }
+        catch (e) { toast('Microphone access denied', 'error'); }
+    };
+    const stopRecording = (cancel) => {
+        clearInterval(recordTimerRef.current);
+        setRecording(false);
+        if (recorderRef.current) { recorderRef.current.__cancelled = !!cancel; recorderRef.current.stop(); }
+    };
+    const doUnmatch = async () => {
+        if (!confirm('Unmatch with ' + ((otherDp && otherDp.displayName) || 'this person') + '? This deletes your chat and can\'t be undone.')) return;
+        try { await unmatchDating(matchId); toast('Unmatched', 'success'); go({ name: 'dating', tab: 'matches' }); }
+        catch (e) { toast(e.message, 'error'); }
+    };
+    const doBlock = async () => {
+        setMenuOpen(false);
+        try { await blockDatingUser(profile.id, otherUid); toast('Blocked on Dating', 'success'); }
+        catch (e) { toast(e.message, 'error'); }
+    };
+    if (otherUser === undefined || otherDp === undefined)
+        return React.createElement("div", { className: "p-6" }, React.createElement(PostSkeleton, null));
+    if (!otherDp)
+        return React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "This match's Dating profile is no longer available.");
+    return React.createElement("div", { className: "flex flex-col bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 md:rounded-2xl overflow-hidden h-[calc(100dvh-7.25rem)] md:h-[calc(100vh-2rem)]" },
+        React.createElement("div", { className: "flex items-center gap-3 px-3 py-2.5 border-b border-slate-100 dark:border-ink-700 shrink-0" },
+            React.createElement("button", { onClick: () => go({ name: 'dating', tab: 'matches' }), className: "text-rose-500 w-8 h-8 flex items-center justify-center md:hidden" }, React.createElement("i", { className: "fa-solid fa-arrow-left" })),
+            React.createElement("div", { className: "relative cursor-pointer shrink-0", onClick: () => go({ name: 'datingProfile', uid: otherUid }) },
+                React.createElement("div", { className: "w-9 h-9 rounded-full overflow-hidden bg-slate-100 dark:bg-ink-700" }, (otherDp.photos || [])[0] && React.createElement("img", { src: otherDp.photos[0], className: "w-full h-full object-cover" })),
+                showOnline && isUserOnline(otherUser) && React.createElement("span", { className: "absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-white dark:border-ink-800" })),
+            React.createElement("div", { className: "flex-1 min-w-0 cursor-pointer", onClick: () => go({ name: 'datingProfile', uid: otherUid }) },
+                React.createElement("p", { className: "font-semibold text-sm truncate flex items-center gap-1" }, otherDp.displayName, otherDp.verified && React.createElement(VerifiedBadge, null)),
+                React.createElement("p", { className: "text-xs text-slate-400 truncate" }, ((_a = matchDoc === null || matchDoc === void 0 ? void 0 : matchDoc.typing) === null || _a === void 0 ? void 0 : _a[otherUid]) ? React.createElement("span", { className: "text-rose-500" }, "typing…") : (showOnline ? lastSeenLabel(otherUser) : ''))),
+            React.createElement("div", { className: "relative shrink-0" },
+                React.createElement("button", { onClick: () => setMenuOpen(v => !v), className: "w-9 h-9 rounded-full flex items-center justify-center text-slate-400" }, React.createElement("i", { className: "fa-solid fa-ellipsis" })),
+                menuOpen && React.createElement("div", { className: "absolute right-0 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-600 z-20 w-44" },
+                    React.createElement("button", { onClick: () => { setMenuOpen(false); go({ name: 'datingProfile', uid: otherUid }); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "View profile"),
+                    React.createElement("button", { onClick: doBlock, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Block"),
+                    React.createElement("button", { onClick: () => { setMenuOpen(false); setReportOpen(true); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Report"),
+                    React.createElement("button", { onClick: doUnmatch, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Unmatch")))),
+        React.createElement("div", { className: "flex-1 overflow-y-auto px-4 py-4 space-y-2 bg-white dark:bg-ink-800" },
+            messages === null && React.createElement("p", { className: "text-sm text-slate-400 text-center" }, "Loading…"),
+            (messages === null || messages === void 0 ? void 0 : messages.length) === 0 && React.createElement("div", { className: "text-center text-slate-400 py-10" },
+                React.createElement("div", { className: "w-16 h-16 rounded-full overflow-hidden mx-auto bg-slate-100 dark:bg-ink-700" }, (otherDp.photos || [])[0] && React.createElement("img", { src: otherDp.photos[0], className: "w-full h-full object-cover" })),
+                React.createElement("p", { className: "mt-3 font-semibold text-sm text-slate-600 dark:text-slate-300" }, "You matched with ", otherDp.displayName, "!"),
+                React.createElement("p", { className: "text-xs mt-1" }, "Say hello \uD83D\uDC4B")),
+            (messages || []).map(m => React.createElement(DatingMessageBubble, { key: m.id, message: m, isMe: m.senderId === profile.id, otherUid: otherUid })),
+            React.createElement("div", { ref: bottomRef })),
+        blocked && React.createElement("div", { className: "px-4 py-2 text-xs text-center text-red-500 bg-red-50 dark:bg-red-900/20 shrink-0" }, iBlockedThem ? "You've blocked this match." : "You can't message this match."),
+        uploading && React.createElement("div", { className: "px-4 pt-2 shrink-0" }, React.createElement("p", { className: "text-xs text-slate-400" }, "Uploading…")),
+        React.createElement("div", { className: "p-3 border-t border-slate-100 dark:border-ink-700 shrink-0 relative" },
+            emojiOpen && React.createElement("div", { className: "absolute bottom-14 left-3 bg-white dark:bg-ink-700 border border-slate-100 dark:border-ink-600 rounded-xl shadow-lg p-2 grid grid-cols-6 gap-1 z-20" }, EMOJI_PICKER_SET.map(e => React.createElement("button", { key: e, onClick: () => { setText(t => t + e); setEmojiOpen(false); }, className: "text-lg hover:bg-slate-100 dark:hover:bg-ink-600 rounded-lg p-1" }, e))),
+            React.createElement("input", { ref: imageInputRef, type: "file", accept: "image/*", hidden: true, onChange: e => { if (e.target.files[0]) uploadAndSend(e.target.files[0], 'image'); e.target.value = ''; } }),
+            recording ? React.createElement("div", { className: "flex items-center gap-3 bg-red-50 dark:bg-red-900/20 rounded-full px-4 py-2" },
+                React.createElement("span", { className: "w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" }),
+                React.createElement("span", { className: "text-sm text-red-500 flex-1" }, "Recording… ", Math.floor(recordSeconds / 60), ":", String(recordSeconds % 60).padStart(2, '0')),
+                React.createElement("button", { onClick: () => stopRecording(true), className: "text-slate-400 text-sm" }, "Cancel"),
+                React.createElement("button", { onClick: () => stopRecording(false), className: "bg-rose-500 text-white rounded-full w-8 h-8 flex items-center justify-center" }, React.createElement("i", { className: "fa-solid fa-paper-plane text-xs" }))) :
+                React.createElement("div", { className: "flex items-center gap-2" },
+                    React.createElement("button", { onClick: () => imageInputRef.current.click(), disabled: blocked, className: "text-rose-500 w-9 h-9 flex items-center justify-center disabled:opacity-40 text-lg" }, React.createElement("i", { className: "fa-solid fa-image" })),
+                    React.createElement("div", { className: "flex-1 relative flex items-center" },
+                        React.createElement("input", { value: text, onChange: e => onTextChange(e.target.value), onKeyDown: e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendText(); } }, disabled: blocked, placeholder: blocked ? "You can't message this match" : "Message…", className: "w-full bg-[#F0F0F0] dark:bg-ink-700 rounded-full pl-4 pr-9 py-2 text-sm disabled:opacity-50" }),
+                        React.createElement("button", { onClick: () => setEmojiOpen(a => !a), disabled: blocked, className: "absolute right-2 text-rose-500 w-6 h-6 flex items-center justify-center disabled:opacity-40" }, React.createElement("i", { className: "fa-regular fa-face-smile" }))),
+                    text.trim() ? React.createElement("button", { onClick: sendText, className: "text-rose-500 rounded-full w-9 h-9 flex items-center justify-center shrink-0 text-xl" }, React.createElement("i", { className: "fa-solid fa-paper-plane" })) :
+                        React.createElement("button", { onClick: startRecording, disabled: blocked, className: "text-rose-500 w-9 h-9 flex items-center justify-center disabled:opacity-40 text-xl" }, React.createElement("i", { className: "fa-solid fa-microphone" })))),
+        reportOpen && React.createElement(ReportReasonSheet, { targetType: "dating profile", targetId: otherUid, targetOwnerId: otherUid, onClose: () => setReportOpen(false) }));
+}
+
 /* ============================== ADMIN ============================== */
 function SuperAdminApp({ theme, setTheme }) {
     const { profile, firebaseUser } = useAuth();
