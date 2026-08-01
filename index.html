@@ -9405,6 +9405,10 @@ const DATING_RELIGIONS = ['Christianity', 'Islam', 'Traditional', 'Other', 'Pref
 const DATING_SMOKING_OPTIONS = ['Non-smoker', 'Occasionally', 'Regularly'];
 const DATING_DRINKING_OPTIONS = ['Never', 'Socially', 'Regularly'];
 const DATING_CHILDREN_OPTIONS = ["Don't have children", 'Have children', 'Want children someday', "Don't want children"];
+// Selectable ranges so users pick a value instead of free-typing a number.
+const DATING_HEIGHT_OPTIONS_CM = Array.from({ length: 111 }, (_, i) => 140 + i); // 140cm–250cm
+const DATING_WEIGHT_OPTIONS_KG = Array.from({ length: 121 }, (_, i) => 30 + i); // 30kg–150kg
+function cmToFeetInches(cm) { const totalIn = Math.round(cm / 2.54); const ft = Math.floor(totalIn / 12); const inch = totalIn % 12; return ft + "'" + inch + '"'; }
 
 /* ---- config (fee + Paystack public key), admin-editable ---- */
 function useDatingConfig() {
@@ -9910,6 +9914,7 @@ function DatingProfileSetupStep({ dp }) {
     const [education, setEducation] = useState(dp.education || '');
     const [religion, setReligion] = useState(dp.religion || '');
     const [heightCm, setHeightCm] = useState(dp.heightCm || '');
+    const [weightKg, setWeightKg] = useState(dp.weightKg || '');
     const [languages, setLanguages] = useState(dp.languages || []);
     const [smoking, setSmoking] = useState((dp.lifestyle || {}).smoking || '');
     const [drinking, setDrinking] = useState((dp.lifestyle || {}).drinking || '');
@@ -9946,6 +9951,7 @@ function DatingProfileSetupStep({ dp }) {
                 interests, interestedIn, relationshipGoal, location: location.trim(),
                 phone: phone.trim(), whatsapp: whatsapp.trim(), email: email.trim(),
                 occupation: occupation.trim(), education, religion, heightCm: heightCm ? Number(heightCm) : null,
+                weightKg: weightKg ? Number(weightKg) : null,
                 languages, lifestyle: { smoking, drinking, children },
                 photos: photos.filter(Boolean), privacy
             });
@@ -9992,8 +9998,14 @@ function DatingProfileSetupStep({ dp }) {
             React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Religion (optional)"),
                 React.createElement("select", { value: religion, onChange: e => setReligion(e.target.value), className: selectClass },
                     React.createElement("option", { value: "" }, "Select\u2026"), DATING_RELIGIONS.map(g => React.createElement("option", { key: g, value: g }, g)))),
-            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Height (cm)"),
-                React.createElement("input", { type: "number", min: 100, max: 250, value: heightCm, onChange: e => setHeightCm(e.target.value), className: selectClass })),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Height"),
+                React.createElement("select", { value: heightCm, onChange: e => setHeightCm(e.target.value), className: selectClass },
+                    React.createElement("option", { value: "" }, "Select\u2026"),
+                    DATING_HEIGHT_OPTIONS_CM.map(cm => React.createElement("option", { key: cm, value: cm }, cm + ' cm (' + cmToFeetInches(cm) + ')')))),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Weight"),
+                React.createElement("select", { value: weightKg, onChange: e => setWeightKg(e.target.value), className: selectClass },
+                    React.createElement("option", { value: "" }, "Select\u2026"),
+                    DATING_WEIGHT_OPTIONS_KG.map(kg => React.createElement("option", { key: kg, value: kg }, kg + ' kg')))),
             React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500 mb-1.5 block" }, "Languages spoken"),
                 React.createElement("div", { className: "flex flex-wrap gap-1.5" }, DATING_LANGUAGES.map(l => React.createElement("button", { key: l, type: "button", onClick: () => toggleLanguage(l), className: "px-3 py-1.5 rounded-full text-xs font-semibold border " + (languages.includes(l) ? "bg-brand-600 border-brand-600 text-white" : "border-slate-200 dark:border-ink-600 text-slate-500") }, l)))),
             React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Interested in"),
@@ -10074,6 +10086,7 @@ function DatingProfileDetailSheet({ person, onClose, onLike, onPass, isMatched }
         person.education && ['fa-graduation-cap', person.education],
         person.religion && ['fa-hands-praying', person.religion],
         person.heightCm && ['fa-ruler-vertical', person.heightCm + ' cm'],
+        person.weightKg && ['fa-weight-scale', person.weightKg + ' kg'],
     ].filter(Boolean);
     return React.createElement("div", { className: "fixed inset-0 z-[90] flex items-end sm:items-center sm:justify-center", onClick: onClose },
         React.createElement("div", { className: "absolute inset-0 bg-black/60" }),
