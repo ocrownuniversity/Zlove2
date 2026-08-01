@@ -853,6 +853,28 @@ function usePageMonetizationApp(pageId) {
     }, [pageId]);
     return app;
 }
+// The single pending page-name-change request for one Page, if any (a Page can only ever have
+// one live request at a time — see submitPageNameChangeRequest). undefined = loading.
+function usePendingPageNameChangeRequest(pageId) {
+    const [request, setRequest] = useState(undefined);
+    useEffect(() => {
+        if (!pageId) { setRequest(null); return; }
+        const unsub = db.collection('pageNameChangeRequests').where('pageId', '==', pageId).where('status', '==', 'pending').limit(1)
+            .onSnapshot(snap => setRequest(snap.empty ? null : Object.assign({ id: snap.docs[0].id }, snap.docs[0].data())), () => setRequest(null));
+        return unsub;
+    }, [pageId]);
+    return request;
+}
+// Platform-wide count of pending page-name-change requests, for the admin sidebar badge.
+function usePendingPageNameChangeCount() {
+    const [count, setCount] = useState(0);
+    useEffect(() => {
+        const unsub = db.collection('pageNameChangeRequests').where('status', '==', 'pending')
+            .onSnapshot(snap => setCount(snap.size), () => setCount(0));
+        return unsub;
+    }, []);
+    return count;
+}
 // Live follow status for the signed-in user against one Page. Reads a single doc
 // (uid_pageId) rather than the whole pageFollows-for-this-page query, so every button on
 // the site (page profile, timeline posts, Page cards) stays in sync the instant a follow
@@ -1457,16 +1479,21 @@ function normalizeWebsiteUrl(url) {
 }
 async function createFanPage(profileId, fields) {
     const uname = fields.username.toLowerCase();
+    const nameKey = normalizePageNameKey(fields.displayName);
     let newId = null;
     const contact = cleanPageContactFields(fields);
     await db.runTransaction(async (tx) => {
         const unameRef = db.collection('pageUsernames').doc(uname);
-        const unameSnap = await tx.get(unameRef);
+        const nameRef = db.collection('pageNames').doc(nameKey);
+        const [unameSnap, nameSnap] = await Promise.all([tx.get(unameRef), tx.get(nameRef)]);
         if (unameSnap.exists)
             throw new Error('That Page username is already taken.');
+        if (nameSnap.exists)
+            throw new Error('That Page name is already in use. Please choose another.');
         const pageRef = db.collection('fanPages').doc();
         newId = pageRef.id;
         tx.set(unameRef, { pageId: pageRef.id });
+        tx.set(nameRef, { pageId: pageRef.id });
         tx.set(pageRef, Object.assign({
             ownerId: profileId, displayName: fields.displayName.trim(), username: uname,
             category: fields.category, bio: fields.bio.trim(), photoURL: null, coverURL: null,
@@ -1475,17 +1502,108 @@ async function createFanPage(profileId, fields) {
     });
     return newId;
 }
+// NOTE: displayName is intentionally excluded here. A Page's name can never be changed by a
+// direct write from the owner — see the Page Name Change Approval System below, which is the
+// only path (via adminApprovePageNameChangeRequest) that is allowed to update displayName.
 async function updateFanPage(pageId, fields) {
     await db.collection('fanPages').doc(pageId).update(Object.assign({
-        displayName: fields.displayName.trim(), category: fields.category, bio: fields.bio.trim()
+        category: fields.category, bio: fields.bio.trim()
     }, cleanPageContactFields(fields)));
 }
 async function deleteFanPagePermanently(page) {
     await db.collection('pageUsernames').doc((page.username || '').toLowerCase()).delete().catch(() => { });
+    await db.collection('pageNames').doc(normalizePageNameKey(page.displayName)).delete().catch(() => { });
     await db.collection('fanPages').doc(page.id).delete();
 }
 async function adminVerifyPage(p) { await db.collection('fanPages').doc(p.id).update({ verified: !p.verified }); }
 async function adminSuspendPage(p) { await db.collection('fanPages').doc(p.id).update({ suspended: !p.suspended }); }
+/* ============================== PAGE NAME CHANGE APPROVAL SYSTEM ==============================
+ * Page owners can never rename a Page instantly — every rename goes through a request that an
+ * admin must approve. Two collections back this:
+ *  - pageNames/{normalizedKey}            reservation doc, one per live Page name, keyed by a
+ *                                          case/whitespace-insensitive normalization of the name
+ *                                          (mirrors the pageUsernames pattern above) so names are
+ *                                          guaranteed globally unique regardless of case/spacing.
+ *  - pageNameChangeRequests/{requestId}   one doc per submitted request, carrying the current
+ *                                          name, requested name, reason, status, and admin decision.
+ * A Page can only ever have one *pending* request at a time (see submitPageNameChangeRequest).
+ */
+const PAGE_NAME_CHANGE_MIN_REASON_LENGTH = 20;
+// Case-insensitive, whitespace-collapsed key so "My Store", "my store", and "MY  STORE" are all
+// treated as the same name.
+function normalizePageNameKey(name) {
+    return (name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+async function isPageNameTaken(name, excludePageId) {
+    const key = normalizePageNameKey(name);
+    if (!key) return false;
+    const snap = await db.collection('pageNames').doc(key).get();
+    return snap.exists && snap.data().pageId !== excludePageId;
+}
+// Owner submits a request to rename their Page. Validates the mandatory 20+ character reason,
+// blocks a second simultaneous pending request for the same Page, and checks name availability
+// up front (checked again at approval time, since availability can change while pending).
+async function submitPageNameChangeRequest(page, profileId, requestedName, reason) {
+    const trimmedName = (requestedName || '').trim();
+    const trimmedReason = (reason || '').trim();
+    if (!trimmedName)
+        throw new Error('Please enter the new Page name.');
+    if (trimmedReason.length < PAGE_NAME_CHANGE_MIN_REASON_LENGTH)
+        throw new Error('Please provide a reason of at least ' + PAGE_NAME_CHANGE_MIN_REASON_LENGTH + ' characters.');
+    const key = normalizePageNameKey(trimmedName);
+    if (key === normalizePageNameKey(page.displayName))
+        throw new Error("That's already this Page's current name.");
+    const existingPending = await db.collection('pageNameChangeRequests')
+        .where('pageId', '==', page.id).where('status', '==', 'pending').limit(1).get();
+    if (!existingPending.empty)
+        throw new Error('This Page already has a pending name change request.');
+    if (await isPageNameTaken(trimmedName, page.id))
+        throw new Error('That Page name is already in use. Please choose another.');
+    const ref = db.collection('pageNameChangeRequests').doc();
+    await ref.set({
+        pageId: page.id, ownerId: profileId, currentName: page.displayName || '',
+        requestedName: trimmedName, requestedNameKey: key, reason: trimmedReason,
+        status: 'pending', submittedAt: FieldValue.serverTimestamp(),
+        decidedAt: null, decidedBy: null, adminNotes: null,
+    });
+    notifyPageOwner(profileId, page.id, 'page_name_change_submitted', { requestedName: trimmedName });
+    return ref.id;
+}
+// Admin approves a pending request. Re-verifies the requested name is still available (someone
+// else may have grabbed it while this request sat pending) inside a transaction that atomically
+// moves the pageNames reservation and updates the Page's displayName, so the two can never
+// drift out of sync. Throws (and leaves the request pending) if the name was taken meanwhile.
+async function adminApprovePageNameChangeRequest(request, adminUid) {
+    await db.runTransaction(async (tx) => {
+        const reqRef = db.collection('pageNameChangeRequests').doc(request.id);
+        const reqSnap = await tx.get(reqRef);
+        if (!reqSnap.exists || reqSnap.data().status !== 'pending')
+            throw new Error('This request is no longer pending.');
+        const pageRef = db.collection('fanPages').doc(request.pageId);
+        const pageSnap = await tx.get(pageRef);
+        if (!pageSnap.exists)
+            throw new Error('The Page no longer exists.');
+        const newKey = request.requestedNameKey || normalizePageNameKey(request.requestedName);
+        const newNameRef = db.collection('pageNames').doc(newKey);
+        const newNameSnap = await tx.get(newNameRef);
+        if (newNameSnap.exists && newNameSnap.data().pageId !== request.pageId)
+            throw new Error('That Page name was taken by another Page while this request was pending. Approval cancelled.');
+        const oldKey = normalizePageNameKey(pageSnap.data().displayName);
+        tx.set(newNameRef, { pageId: request.pageId });
+        if (oldKey && oldKey !== newKey)
+            tx.delete(db.collection('pageNames').doc(oldKey));
+        tx.update(pageRef, { displayName: request.requestedName });
+        tx.update(reqRef, { status: 'approved', decidedAt: FieldValue.serverTimestamp(), decidedBy: adminUid, adminNotes: null });
+    });
+    notifyPageOwner(request.ownerId, request.pageId, 'page_name_change_approved', { requestedName: request.requestedName });
+}
+async function adminRejectPageNameChangeRequest(request, adminUid, adminNotes) {
+    const notes = (adminNotes || '').trim() || null;
+    await db.collection('pageNameChangeRequests').doc(request.id).update({
+        status: 'rejected', decidedAt: FieldValue.serverTimestamp(), decidedBy: adminUid, adminNotes: notes,
+    });
+    notifyPageOwner(request.ownerId, request.pageId, 'page_name_change_rejected', { requestedName: request.requestedName, adminNotes: notes });
+}
 /* ============================== PAGE MONETIZATION & KYC ==============================
  * Collections used (see the Monetization security rules documented at the end of this
  * file for the recommended production rules):
@@ -4413,10 +4531,14 @@ const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your p
     monetization_approved: 'Your Page monetization application was approved', monetization_rejected: 'Your Page monetization application was rejected',
     monetization_suspended: 'Monetization on your Page was suspended', earnings_updated: 'Your Page earnings were updated',
     withdrawal_approved: 'Your withdrawal request was approved', withdrawal_rejected: 'Your withdrawal request was rejected',
-    withdrawal_paid: 'Your withdrawal payment was completed' };
+    withdrawal_paid: 'Your withdrawal payment was completed',
+    page_name_change_submitted: 'Your Page name change request was submitted for review', page_name_change_approved: 'Your Page name change was approved',
+    page_name_change_rejected: 'Your Page name change request was rejected' };
 const SYSTEM_NOTIF_TYPES = ['listing_approved', 'listing_removed', 'ad_approved', 'ad_declined', 'group_request_approved', 'group_request_rejected',
     'kyc_approved', 'kyc_rejected', 'followers_milestone', 'monetization_eligible', 'monetization_approved', 'monetization_rejected', 'monetization_suspended',
-    'earnings_updated', 'withdrawal_approved', 'withdrawal_rejected', 'withdrawal_paid'];
+    'earnings_updated', 'withdrawal_approved', 'withdrawal_rejected', 'withdrawal_paid',
+    'page_name_change_submitted', 'page_name_change_approved', 'page_name_change_rejected'];
+const PAGE_NAME_CHANGE_NOTIF_TYPES = ['page_name_change_submitted', 'page_name_change_approved', 'page_name_change_rejected'];
 const MONETIZATION_NOTIF_TYPES = ['kyc_approved', 'kyc_rejected', 'followers_milestone', 'monetization_eligible', 'monetization_approved', 'monetization_rejected', 'monetization_suspended', 'earnings_updated'];
 const WITHDRAWAL_NOTIF_TYPES = ['withdrawal_approved', 'withdrawal_rejected', 'withdrawal_paid'];
 function NotificationsScreen({ go }) {
@@ -4462,10 +4584,12 @@ function NotifRow({ n, go }) {
             return go({ name: 'withdrawals', id: n.pageId });
         if (MONETIZATION_NOTIF_TYPES.includes(n.type) && n.pageId)
             return go({ name: 'monetization', id: n.pageId });
+        if (PAGE_NAME_CHANGE_NOTIF_TYPES.includes(n.type) && n.pageId)
+            return go({ name: 'pageForm', id: n.pageId });
         go({ name: 'profile', uid: n.fromUserId });
     };
     return (React.createElement("div", { onClick: openNotif, className: "flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700 cursor-pointer" },
-        isSystem ? React.createElement("div", { className: "w-9 h-9 rounded-full bg-brand-50 dark:bg-brand-900/30 flex items-center justify-center text-brand-600 dark:text-brand-400 shrink-0" }, React.createElement("i", { className: "fa-solid " + (n.groupId ? 'fa-people-group' : (MONETIZATION_NOTIF_TYPES.includes(n.type) || WITHDRAWAL_NOTIF_TYPES.includes(n.type)) ? 'fa-sack-dollar' : 'fa-store') })) : React.createElement(Avatar, { user: from, size: 9 }),
+        isSystem ? React.createElement("div", { className: "w-9 h-9 rounded-full bg-brand-50 dark:bg-brand-900/30 flex items-center justify-center text-brand-600 dark:text-brand-400 shrink-0" }, React.createElement("i", { className: "fa-solid " + (n.groupId ? 'fa-people-group' : PAGE_NAME_CHANGE_NOTIF_TYPES.includes(n.type) ? 'fa-signature' : (MONETIZATION_NOTIF_TYPES.includes(n.type) || WITHDRAWAL_NOTIF_TYPES.includes(n.type)) ? 'fa-sack-dollar' : 'fa-store') })) : React.createElement(Avatar, { user: from, size: 9 }),
         React.createElement("p", { className: "text-sm" },
             !isSystem && React.createElement("span", { className: "font-semibold" }, from.displayName),
             !isSystem && " ",
@@ -4927,6 +5051,8 @@ function PageFormScreen({ id, go }) {
     const [location, setLocation] = useState('');
     const [countryPickerFor, setCountryPickerFor] = useState(null); // 'location' | 'phone' | null
     const [busy, setBusy] = useState(false);
+    const [showNameChangeSheet, setShowNameChangeSheet] = useState(false);
+    const pendingNameChangeRequest = usePendingPageNameChangeRequest(isEdit ? id : null);
     const inputCls = "w-full mt-1 px-3 py-2.5 sm:py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm";
     useEffect(() => {
         if (!isEdit)
@@ -5006,7 +5132,17 @@ function PageFormScreen({ id, go }) {
         React.createElement("p", { className: "text-sm text-slate-400 mb-5" }, "Pages are public and separate from your personal profile."),
         React.createElement("form", { onSubmit: submit, className: "space-y-4" },
             React.createElement(PageFormField, { label: "Page name" },
-                React.createElement("input", { value: displayName, onChange: e => setDisplayName(e.target.value), required: true, className: inputCls, placeholder: "e.g. Blueface Coffee Co." })),
+                isEdit
+                    ? React.createElement("div", { className: "mt-1" },
+                        React.createElement("div", { className: "w-full px-3 py-2.5 sm:py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-slate-50 dark:bg-ink-900 text-sm flex items-center justify-between gap-2 text-slate-500 dark:text-slate-400" },
+                            React.createElement("span", { className: "truncate" }, displayName),
+                            React.createElement("i", { className: "fa-solid fa-lock text-[11px]" })),
+                        pendingNameChangeRequest
+                            ? React.createElement("p", { className: "text-xs text-amber-500 mt-1.5" },
+                                React.createElement("i", { className: "fa-solid fa-clock mr-1.5" }),
+                                "Your request to rename to \u201c", pendingNameChangeRequest.requestedName, "\u201d is pending admin review.")
+                            : React.createElement("button", { type: "button", onClick: () => setShowNameChangeSheet(true), className: "text-xs font-semibold text-brand-500 hover:underline mt-1.5" }, "Request a name change"))
+                    : React.createElement("input", { value: displayName, onChange: e => setDisplayName(e.target.value), required: true, className: inputCls, placeholder: "e.g. Blueface Coffee Co." })),
             !isEdit && React.createElement(PageFormField, { label: "Page username" },
                 React.createElement("div", { className: "relative mt-1" },
                     React.createElement("span", { className: "absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm" }, "@"),
@@ -5035,7 +5171,48 @@ function PageFormScreen({ id, go }) {
                         React.createElement("i", { className: "fa-solid fa-chevron-down text-[10px] text-slate-400" })))),
             React.createElement("button", { disabled: busy, type: "submit", className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl py-3 sm:py-2.5 font-semibold text-sm" }, busy ? 'Saving…' : (isEdit ? 'Save changes' : 'Create Page'))),
         countryPickerFor === 'location' && React.createElement(CountryPickerSheet, { title: "Select your country", onClose: () => setCountryPickerFor(null), onSelect: (c) => { setLocation(c.name); setCountryPickerFor(null); } }),
-        countryPickerFor === 'phone' && React.createElement(CountryPickerSheet, { title: "Select country code", showDial: true, onClose: () => setCountryPickerFor(null), onSelect: (c) => { setDialCode(c.dial); setCountryPickerFor(null); } })));
+        countryPickerFor === 'phone' && React.createElement(CountryPickerSheet, { title: "Select country code", showDial: true, onClose: () => setCountryPickerFor(null), onSelect: (c) => { setDialCode(c.dial); setCountryPickerFor(null); } }),
+        isEdit && showNameChangeSheet && React.createElement(PageNameChangeRequestSheet, { page: page, onClose: () => setShowNameChangeSheet(false) })));
+}
+// Modal for submitting a Page name change request (see PAGE NAME CHANGE APPROVAL SYSTEM).
+// The Page's actual name never changes here — this only creates a pending
+// pageNameChangeRequests doc for an admin to review.
+function PageNameChangeRequestSheet({ page, onClose }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const [requestedName, setRequestedName] = useState('');
+    const [reason, setReason] = useState('');
+    const [busy, setBusy] = useState(false);
+    const reasonLen = reason.trim().length;
+    const reasonOk = reasonLen >= PAGE_NAME_CHANGE_MIN_REASON_LENGTH;
+    const submit = async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        try {
+            await submitPageNameChangeRequest(page, profile.id, requestedName, reason);
+            toast('Name change request submitted for review', 'success');
+            onClose();
+        }
+        catch (err) {
+            toast(err.message, 'error');
+        }
+        finally {
+            setBusy(false);
+        }
+    };
+    return React.createElement("div", { className: "fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center", onClick: onClose },
+        React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-5 max-h-[90vh] overflow-y-auto fade-in", onClick: e => e.stopPropagation() },
+            React.createElement("h3", { className: "font-display text-lg font-bold mb-1" }, "Request a Page name change"),
+            React.createElement("p", { className: "text-xs text-slate-400 mb-4" }, "Name changes require admin approval. Your Page keeps its current name until this request is approved."),
+            React.createElement("form", { onSubmit: submit, className: "space-y-4" },
+                React.createElement(PageFormField, { label: "New Page name" },
+                    React.createElement("input", { value: requestedName, onChange: e => setRequestedName(e.target.value), required: true, className: "w-full mt-1 px-3 py-2.5 sm:py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm", placeholder: "e.g. Blueface Coffee Co." })),
+                React.createElement(PageFormField, { label: "Reason for change" },
+                    React.createElement("textarea", { value: reason, onChange: e => setReason(e.target.value), rows: 3, className: "w-full mt-1 px-3 py-2.5 sm:py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm", placeholder: "Why are you renaming this Page? (minimum 20 characters)" }),
+                    React.createElement("p", { className: "text-[11px] mt-1 " + (reasonOk ? "text-slate-400" : "text-red-500") }, reasonLen, " / ", PAGE_NAME_CHANGE_MIN_REASON_LENGTH, " characters minimum")),
+                React.createElement("div", { className: "flex gap-2 pt-1" },
+                    React.createElement("button", { type: "button", onClick: onClose, className: "flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-ink-600 text-sm font-semibold" }, "Cancel"),
+                    React.createElement("button", { disabled: busy || !reasonOk || !requestedName.trim(), type: "submit", className: "flex-1 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white text-sm font-semibold" }, busy ? 'Submitting\u2026' : 'Submit request')))));
 }
 // Renders the contact/about row for a Page — website, email, and phone are rendered as real
 // clickable links (mailto:/tel:/https:), and any field the owner left blank is simply omitted.
@@ -5586,12 +5763,14 @@ function WithdrawalsScreen({ id, go }) {
 /* ============================== ADMIN ============================== */
 function SuperAdminApp({ theme, setTheme }) {
     const { profile, firebaseUser } = useAuth();
+    const pendingNameChangeCount = usePendingPageNameChangeCount();
     const SA_TABS = [
         { key: 'dashboard', label: 'Dashboard', icon: 'fa-gauge-high' },
         { key: 'users', label: 'Users', icon: 'fa-users' },
         { key: 'posts', label: 'Posts', icon: 'fa-note-sticky' },
         { key: 'reels', label: 'Reels', icon: 'fa-clapperboard' },
         { key: 'pages', label: 'Pages', icon: 'fa-flag' },
+        { key: 'pageNameRequests', label: 'Name Change Requests' + (pendingNameChangeCount ? ' (' + pendingNameChangeCount + ')' : ''), icon: 'fa-signature' },
         { key: 'monetization', label: 'Monetization', icon: 'fa-sack-dollar' },
         { key: 'marketplace', label: 'Marketplace', icon: 'fa-store' },
         { key: 'reports', label: 'Reports', icon: 'fa-flag' },
@@ -5641,6 +5820,8 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
     const [fanPages, setFanPages] = useState([]);
     const [kycApps, setKycApps] = useState([]);
     const [kycFilter, setKycFilter] = useState('pending');
+    const [pageNameChangeRequests, setPageNameChangeRequests] = useState([]);
+    const [pageNameRequestFilter, setPageNameRequestFilter] = useState('pending');
     const [monetizationSubtab, setMonetizationSubtab] = useState('overview');
     const [monetizationApps, setMonetizationApps] = useState([]);
     const [monetizationFilter, setMonetizationFilter] = useState('pending');
@@ -5657,7 +5838,7 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
     useEffect(() => {
         if (tab !== 'dashboard') return;
         (async () => {
-            const [usersSnap, postsSnap, listingsSnap, chatsSnap, notifSnap, reportsA, reportsB, reportsC, pagesSnap, kycPendingSnap, monetizedSnap, pendingWithdrawalsSnap, paidWithdrawalsSnap] = await Promise.all([
+            const [usersSnap, postsSnap, listingsSnap, chatsSnap, notifSnap, reportsA, reportsB, reportsC, pagesSnap, kycPendingSnap, monetizedSnap, pendingWithdrawalsSnap, paidWithdrawalsSnap, pendingNameRequestsSnap] = await Promise.all([
                 db.collection('users').get(), db.collection('posts').get(), db.collection('listings').get(),
                 db.collection('chatMembers').get().catch(() => ({ size: 0 })),
                 db.collection('announcements').get().catch(() => ({ size: 0 })),
@@ -5669,6 +5850,7 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
                 db.collection('fanPages').where('monetizationStatus', 'in', ['approved', 'suspended']).get().catch(() => ({ size: 0 })),
                 db.collection('withdrawalRequests').where('status', '==', 'pending').get().catch(() => ({ size: 0, docs: [] })),
                 db.collection('withdrawalRequests').where('status', '==', 'paid').get().catch(() => ({ size: 0, docs: [] })),
+                db.collection('pageNameChangeRequests').where('status', '==', 'pending').get().catch(() => ({ size: 0 })),
             ]);
             let comments = 0, likes = 0, shares = 0, newToday = 0;
             const dayAgo = Date.now() - 86400000;
@@ -5681,6 +5863,7 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
                 reports: (reportsA.size || 0) + (reportsB.size || 0) + (reportsC.size || 0), pages: pagesSnap.size,
                 pendingKyc: kycPendingSnap.size, monetizedPages: monetizedSnap.size,
                 pendingWithdrawals: pendingWithdrawalsSnap.size, totalPayouts,
+                pendingNameRequests: pendingNameRequestsSnap.size,
             });
         })();
     }, [tab]);
@@ -5702,6 +5885,15 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
     useEffect(() => {
         if (tab !== 'monetization') return;
         const unsub = db.collection('pageKyc').limit(300).onSnapshot(snap => setKycApps(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setKycApps([]));
+        return unsub;
+    }, [tab]);
+    useEffect(() => {
+        if (tab !== 'pageNameRequests') return;
+        const unsub = db.collection('pageNameChangeRequests').limit(300).onSnapshot(snap => {
+            const list = snap.docs.map(d => (Object.assign({ id: d.id }, d.data())));
+            list.sort((a, b) => { var _a, _b; return (((_a = b.submittedAt) === null || _a === void 0 ? void 0 : _a.toMillis) ? b.submittedAt.toMillis() : 0) - (((_b = a.submittedAt) === null || _b === void 0 ? void 0 : _b.toMillis) ? a.submittedAt.toMillis() : 0); });
+            setPageNameChangeRequests(list);
+        }, () => setPageNameChangeRequests([]));
         return unsub;
     }, [tab]);
     useEffect(() => {
@@ -5764,6 +5956,7 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
             'Marketplace listings': stats.marketplace, 'Chat threads': stats.messages, 'Total Pages': stats.pages,
             'Open reports': stats.reports, 'Announcements sent': stats.announcements, 'Pending KYC applications': stats.pendingKyc,
             'Monetized Pages': stats.monetizedPages, 'Pending withdrawals': stats.pendingWithdrawals, 'Total payouts': (stats.totalPayouts || 0).toLocaleString(),
+            'Pending name change requests': stats.pendingNameRequests,
         } : null;
         return React.createElement("div", null,
             React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, "Super Admin Dashboard"),
@@ -5799,6 +5992,17 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
             React.createElement("input", { value: search, onChange: e => setSearch(e.target.value), placeholder: "Search by Page name or username\u2026", className: "w-full mb-3 px-4 py-2 rounded-xl border border-slate-200 dark:border-ink-700 bg-white dark:bg-ink-800 text-sm" }),
             filteredPages.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No Pages found."),
             React.createElement("div", { className: "space-y-2" }, filteredPages.map(p => React.createElement(AdminPageRow, { key: p.id, page: p, adminUid: adminUid, adminEmail: adminEmail }))));
+    }
+    if (tab === 'pageNameRequests') {
+        const filteredNameRequests = pageNameChangeRequests.filter(r => pageNameRequestFilter === 'all' || r.status === pageNameRequestFilter);
+        return React.createElement("div", null,
+            React.createElement("div", { className: "flex items-center justify-between mb-3 gap-3" },
+                React.createElement("h2", { className: "font-display text-lg font-bold" }, "Page Name Change Requests"),
+                React.createElement("button", { onClick: () => exportToCsv('page-name-change-requests.csv', pageNameChangeRequests.map(r => ({ id: r.id, pageId: r.pageId, ownerId: r.ownerId, currentName: r.currentName || '', requestedName: r.requestedName || '', reason: r.reason || '', status: r.status }))), className: "text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-100 dark:bg-ink-700" }, React.createElement("i", { className: "fa-solid fa-file-arrow-down mr-1.5" }), "Export CSV")),
+            React.createElement("p", { className: "text-xs text-slate-400 mb-3" }, "Page owners cannot rename a Page directly \u2014 every rename must be approved here first."),
+            React.createElement("div", { className: "flex gap-2 mb-3 overflow-x-auto", style: { scrollbarWidth: 'none' } }, [['pending', 'Pending'], ['approved', 'Approved'], ['rejected', 'Rejected'], ['all', 'All']].map(([k, l]) => (React.createElement("button", { key: k, onClick: () => setPageNameRequestFilter(k), className: "shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold " + (pageNameRequestFilter === k ? "bg-brand-600 text-white" : "bg-white dark:bg-ink-800 border border-slate-200 dark:border-ink-700") }, l)))),
+            filteredNameRequests.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No ", pageNameRequestFilter === 'all' ? '' : pageNameRequestFilter, " requests."),
+            React.createElement("div", { className: "space-y-2" }, filteredNameRequests.map(r => React.createElement(AdminPageNameChangeRow, { key: r.id, request: r, adminUid: adminUid, adminEmail: adminEmail }))));
     }
     if (tab === 'monetization') {
         const filteredKyc = kycApps.filter(k => kycFilter === 'all' || k.status === kycFilter);
@@ -6086,6 +6290,55 @@ function AdminPageRow({ page, adminUid, adminEmail }) {
                 React.createElement("button", { disabled: busy, onClick: () => run(() => adminVerifyPage(page), 'toggle_verify_page'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-900/20" }, page.verified ? 'Unverify' : 'Verify'),
                 React.createElement("button", { disabled: busy, onClick: () => run(() => adminSuspendPage(page), 'toggle_suspend_page'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg " + (page.suspended ? "bg-emerald-500 text-white" : "bg-amber-500 text-white") }, page.suspended ? 'Reactivate' : 'Suspend'),
                 React.createElement("button", { disabled: busy, onClick: () => confirm('Permanently delete this Page? This cannot be undone.') && run(() => deleteFanPagePermanently(page), 'delete_page'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Delete Permanently"))));
+}
+/* ============================== SUPER ADMIN: PAGE NAME CHANGE REQUEST ROW ============================== */
+function AdminPageNameChangeRow({ request, adminUid, adminEmail }) {
+    const toast = useToast();
+    const [busy, setBusy] = useState(false);
+    const [open, setOpen] = useState(false);
+    const [notes, setNotes] = useState('');
+    const STATUS_BADGE = {
+        pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+        approved: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+        rejected: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400',
+    };
+    const approve = async () => {
+        setBusy(true);
+        try {
+            await adminApprovePageNameChangeRequest(request, adminUid);
+            logAdminAction(adminUid, adminEmail, 'approve_page_name_change', 'page', request.pageId, (request.currentName || '') + ' \u2192 ' + request.requestedName);
+            toast('Page name updated', 'success');
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    const reject = async () => {
+        setBusy(true);
+        try {
+            await adminRejectPageNameChangeRequest(request, adminUid, notes);
+            logAdminAction(adminUid, adminEmail, 'reject_page_name_change', 'page', request.pageId, request.requestedName);
+            toast('Request rejected', 'success');
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
+        React.createElement("div", { className: "flex items-center justify-between" },
+            React.createElement("div", { className: "min-w-0 cursor-pointer", onClick: () => setOpen(v => !v) },
+                React.createElement("p", { className: "text-sm font-semibold truncate" },
+                    request.currentName || '(untitled)', " \u2192 ", request.requestedName, " ",
+                    React.createElement("span", { className: "px-2 py-0.5 rounded-full text-[10px] font-semibold ml-1 " + (STATUS_BADGE[request.status] || '') }, request.status)),
+                React.createElement("p", { className: "text-xs text-slate-400 truncate" }, "owner: ", React.createElement(AdminUserLabel, { uid: request.ownerId }), " \u00B7 submitted ", timeAgo(request.submittedAt))),
+            React.createElement("button", { onClick: () => setOpen(v => !v), className: "text-slate-300 shrink-0" }, React.createElement("i", { className: "fa-solid " + (open ? 'fa-chevron-up' : 'fa-chevron-down') }))),
+        open && React.createElement("div", { className: "mt-3 pt-3 border-t border-slate-100 dark:border-ink-700 space-y-2 text-xs text-slate-500 dark:text-slate-400" },
+            React.createElement("p", null, React.createElement("b", { className: "text-slate-700 dark:text-slate-200" }, "Reason: "), request.reason),
+            React.createElement("p", null, React.createElement("b", { className: "text-slate-700 dark:text-slate-200" }, "Page ID: "), request.pageId),
+            request.status !== 'pending' && request.adminNotes && React.createElement("p", { className: request.status === 'rejected' ? "text-red-500" : "" }, React.createElement("b", null, "Admin note: "), request.adminNotes),
+            request.status !== 'pending' && React.createElement("p", null, React.createElement("b", { className: "text-slate-700 dark:text-slate-200" }, "Decided: "), timeAgo(request.decidedAt)),
+            request.status === 'pending' && React.createElement("input", { value: notes, onChange: e => setNotes(e.target.value), placeholder: "Rejection reason (optional, shown to the owner)", className: "w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-xs" }),
+            request.status === 'pending' && React.createElement("div", { className: "flex flex-wrap gap-1.5 pt-1" },
+                React.createElement("button", { disabled: busy, onClick: approve, className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-500 text-white" }, "Approve"),
+                React.createElement("button", { disabled: busy, onClick: reject, className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Reject"))));
 }
 /* ============================== SUPER ADMIN: KYC (MONETIZATION) ROW ============================== */
 function AdminKycRow({ k, adminUid, adminEmail }) {
@@ -9045,12 +9298,40 @@ Review / Approved / Rejected / Suspended) once KYC has been verified.
       // submitPageKyc / applyForMonetization, which only ever set those fields to 'pending' —
       // never to 'verified'/'approved') and monetizationEnabled, while reserving the actual
       // approval transitions for admins only:
+      // Also add `request.resource.data.displayName == resource.data.displayName` to the owner
+      // branch below so an owner can never rename a Page with a direct write — only the
+      // pageNameChangeRequests approval transaction (which runs as an admin) may change it.
       allow update: if signedIn() && (
         (resource.data.ownerId == request.auth.uid &&
          request.resource.data.kycStatus == resource.data.kycStatus &&
-         request.resource.data.monetizationEnabled == resource.data.monetizationEnabled) || // owner can't self-approve
+         request.resource.data.monetizationEnabled == resource.data.monetizationEnabled &&
+         request.resource.data.displayName == resource.data.displayName) || // owner can't self-approve or self-rename
         isAdmin()
       );
+    }
+
+    match /pageNames/{nameKey} {
+      // Reservation doc backing the globally-unique Page name index (nameKey is the
+      // case/whitespace-insensitive normalization of the name — see normalizePageNameKey).
+      // Public read so create-Page/request-name-change flows can check availability client-side;
+      // only ever created by the Page-creation transaction (owner, for a key that doesn't yet
+      // exist) or moved by the name-change-approval transaction (admin only, from then on).
+      allow read: if true;
+      allow create: if signedIn() && ownsPage(request.resource.data.pageId) &&
+        !exists(/databases/$(db)/documents/pageNames/$(nameKey));
+      allow update, delete: if isAdmin();
+    }
+
+    match /pageNameChangeRequests/{requestId} {
+      // Owners may read/create their own Page's requests; only admins can read across every
+      // Page (needed for the admin Page Name Change Requests panel) or transition status
+      // (approve/reject). The Page's displayName itself is never writable by the owner directly
+      // (see the fanPages `update` rule above) — approval is the only path that changes it.
+      allow read: if isAdmin() || (signedIn() && resource.data.ownerId == request.auth.uid);
+      allow create: if signedIn() && ownsPage(request.resource.data.pageId) &&
+        request.resource.data.ownerId == request.auth.uid && request.resource.data.status == 'pending';
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
 
     match /pageKyc/{pageId} {
