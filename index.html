@@ -666,6 +666,33 @@ function notifyTagged(taggedUsers, fromUserId, postId, type) {
         }).catch(() => { });
     });
 }
+// On the day of a user's birthday (matched on month/day only, dob is stored 'YYYY-MM-DD'),
+// notify every accepted friend once. Guarded by `lastBirthdayNotifiedYear` on the user's own
+// doc so re-opening the app the same day (or any day that isn't a new year) doesn't spam
+// duplicate notifications to friends.
+async function notifyFriendsOfBirthdayIfDue(profile) {
+    if (!(profile === null || profile === void 0 ? void 0 : profile.dob))
+        return;
+    const parts = profile.dob.split('-');
+    if (parts.length !== 3)
+        return;
+    const today = new Date();
+    const isBirthdayToday = Number(parts[1]) === (today.getMonth() + 1) && Number(parts[2]) === today.getDate();
+    if (!isBirthdayToday)
+        return;
+    const yearKey = String(today.getFullYear());
+    if (profile.lastBirthdayNotifiedYear === yearKey)
+        return;
+    try {
+        const snap = await db.collection('friendships').where('users', 'array-contains', profile.id).get();
+        const friendIds = snap.docs.map(d => d.data()).filter(f => f.status === 'accepted').map(f => otherUidOfFriendship(f, profile.id));
+        await Promise.all(friendIds.map(fid => db.collection('notifications').doc(fid).collection('items').add({
+            type: 'friend_birthday', fromUserId: profile.id, read: false, createdAt: FieldValue.serverTimestamp()
+        }).catch(() => { })));
+        await db.collection('users').doc(profile.id).set({ lastBirthdayNotifiedYear: yearKey }, { merge: true }).catch(() => { });
+    }
+    catch (e) { /* best-effort, ignore */ }
+}
 function isUserOnline(user) {
     if (!user || !user.lastSeen)
         return false;
@@ -2744,6 +2771,11 @@ function App() {
             setSaSession(false);
         }
     }, [firebaseUser]);
+    useEffect(() => {
+        if (!(profile === null || profile === void 0 ? void 0 : profile.username) || profile.suspended)
+            return;
+        notifyFriendsOfBirthdayIfDue(profile);
+    }, [profile === null || profile === void 0 ? void 0 : profile.id, profile === null || profile === void 0 ? void 0 : profile.dob, profile === null || profile === void 0 ? void 0 : profile.lastBirthdayNotifiedYear]);
     const authValue = useMemo(() => ({ firebaseUser, profile }), [firebaseUser, profile]);
     if (firebaseUser === undefined) {
         return React.createElement(SplashScreen, null);
@@ -4678,14 +4710,22 @@ function HomeFeed({ go }) {
     return (React.createElement("div", null,
         React.createElement(PostTriggerBar, { go: go }),
         React.createElement(ReelsStrip, { go: go }),
-        React.createElement(PeopleYouMayKnow, { go: go }),
         items === null && React.createElement(React.Fragment, null, [1, 2, 3].map(i => React.createElement(PostSkeleton, { key: i }))),
         items !== null && items.length === 0 && (React.createElement("div", { className: "text-center py-16 text-slate-400" },
             React.createElement("i", { className: "fa-regular fa-face-smile text-4xl mb-3" }),
             React.createElement("p", null, "No posts yet. Be the first to share something."))),
-        items !== null && items.map(it => it.kind === 'post'
-            ? React.createElement(PostCard, { key: 'p-' + it.data.id, post: it.data, go: go })
-            : React.createElement(TimelineReelCard, { key: 'r-' + it.data.id, reel: it.data, go: go }))));
+        // "People you may know" is inserted after the first few timeline items (3 if there are
+        // that many, otherwise after whatever's there) instead of sitting above every post.
+        items !== null && items.length > 0 && (() => {
+            const cutoff = Math.min(3, items.length);
+            const renderItem = it => it.kind === 'post'
+                ? React.createElement(PostCard, { key: 'p-' + it.data.id, post: it.data, go: go })
+                : React.createElement(TimelineReelCard, { key: 'r-' + it.data.id, reel: it.data, go: go });
+            return React.createElement(React.Fragment, null,
+                items.slice(0, cutoff).map(renderItem),
+                React.createElement(PeopleYouMayKnow, { go: go }),
+                items.slice(cutoff).map(renderItem));
+        })()));
 }
 /* ============================== SEARCH / PEOPLE DIRECTORY ============================== */
 function SearchScreen({ go, route }) {
@@ -4792,7 +4832,7 @@ function SearchScreen({ go, route }) {
                 React.createElement("div", { className: "space-y-2" }, friendUsers.map(u => React.createElement(PersonRow, { key: u.id, u: u })))))))));
 }
 /* ============================== NOTIFICATIONS ============================== */
-const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', reply: 'replied to your comment', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group', dating_invite: 'invited you to join Blueface Dating',
+const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', reply: 'replied to your comment', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group', dating_invite: 'invited you to join Blueface Dating', friend_birthday: '\uD83C\uDF82 is celebrating a birthday today \u2014 wish them well!',
     kyc_approved: 'Your Page KYC verification was approved', kyc_rejected: 'Your Page KYC verification was rejected',
     followers_milestone: 'Your Page reached 1,000 followers', monetization_eligible: 'Your Page is now eligible for monetization',
     monetization_approved: 'Your Page monetization application was approved', monetization_rejected: 'Your Page monetization application was rejected',
