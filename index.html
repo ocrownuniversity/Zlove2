@@ -4698,16 +4698,34 @@ function HomeFeed({ go }) {
     // more than once per mount; the cap itself is what governs whether an ad is chosen at all.
     const [adSlot, setAdSlot] = useState(null);
     const adDecidedRef = useRef(false);
-    useEffect(() => {
-        if (adDecidedRef.current || activeCampaigns.length === 0) return;
+    const adTriedIndicesRef = useRef(new Set());
+    const chooseAd = useCallback(() => {
+        if (activeCampaigns.length === 0) return;
         const { lastShownAt, rotationCount } = getAdFrequencyState();
-        if (Date.now() - lastShownAt >= AD_MIN_INTERVAL_MS) {
-            const campaign = activeCampaigns[rotationCount % activeCampaigns.length];
-            setAdSlot({ kind: 'ad', data: campaign });
+        if (Date.now() - lastShownAt < AD_MIN_INTERVAL_MS) return;
+        // Skip any campaign already tried and found unusable this session (e.g. its post was
+        // deleted), so one broken campaign can't blank out ads for the whole session.
+        for (let i = 0; i < activeCampaigns.length; i++) {
+            const idx = (rotationCount + i) % activeCampaigns.length;
+            if (adTriedIndicesRef.current.has(idx)) continue;
+            adTriedIndicesRef.current.add(idx);
+            setAdSlot({ kind: 'ad', data: activeCampaigns[idx] });
             markAdSlotShown(rotationCount);
             adDecidedRef.current = true;
+            return;
         }
     }, [activeCampaigns]);
+    useEffect(() => {
+        if (adDecidedRef.current) return;
+        chooseAd();
+    }, [activeCampaigns, chooseAd]);
+    // If the chosen campaign's post turns out to be missing, retry with the next one instead of
+    // leaving the slot permanently empty for this session.
+    const handleAdUnavailable = useCallback(() => {
+        adDecidedRef.current = false;
+        setAdSlot(null);
+        chooseAd();
+    }, [chooseAd]);
     useEffect(() => {
         // Group posts are deliberately excluded from the global timeline — they only ever show
         // inside that group's own Posts tab. Besides matching how Groups behave on Facebook,
@@ -4767,7 +4785,7 @@ function HomeFeed({ go }) {
             const renderItem = it => it.kind === 'post'
                 ? React.createElement(PostCard, { key: 'p-' + it.data.id, post: it.data, go: go })
                 : it.kind === 'ad'
-                    ? React.createElement(AdSlot, { key: 'ad-' + it.data.id, campaign: it.data, go: go })
+                    ? React.createElement(AdSlot, { key: 'ad-' + it.data.id, campaign: it.data, go: go, onUnavailable: handleAdUnavailable })
                     : React.createElement(TimelineReelCard, { key: 'r-' + it.data.id, reel: it.data, go: go });
             return React.createElement(React.Fragment, null,
                 items.slice(0, cutoff).map(renderItem),
@@ -11654,7 +11672,7 @@ function useActiveAdCampaigns() {
    being promoted, or the sponsored post created for this campaign) and hands it to PostCard
    with `sponsored` set, so every interaction — like, comment, share, save — works exactly like
    a normal post for free. */
-function AdSlot({ campaign, go }) {
+function AdSlot({ campaign, go, onUnavailable }) {
     const [post, setPost] = useState(undefined);
     const cfg = useWalletConfig();
     useEffect(() => {
@@ -11662,6 +11680,10 @@ function AdSlot({ campaign, go }) {
         const unsub = db.collection('posts').doc(campaign.postId).onSnapshot(s => setPost(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setPost(null));
         return unsub;
     }, [campaign.postId]);
+    // `post === null` means Firestore confirmed there's nothing there (deleted post, bad
+    // reference) — as opposed to `undefined`, which just means the read hasn't resolved yet.
+    // Only the confirmed-missing case should trigger falling back to the next campaign.
+    useEffect(() => { if (post === null && onUnavailable) onUnavailable(); }, [post]);
     if (!post) return null;
     const sponsored = Object.assign({}, campaign, { costPerImpression: cfg.costPerImpressionNaira });
     return React.createElement(PostCard, { post: post, go: go, sponsored: sponsored });
