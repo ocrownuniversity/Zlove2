@@ -3174,6 +3174,8 @@ function MainApp({ route, setRoute }) {
                 route.name === 'notifications' && React.createElement(NotificationsScreen, { go: go }),
                 route.name === 'bookmarks' && React.createElement(BookmarksScreen, { go: go }),
                 route.name === 'birthdays' && React.createElement(BirthdaysScreen, { go: go }),
+                route.name === 'wallet' && React.createElement(WalletScreen, { go: go }),
+                route.name === 'adCentre' && React.createElement(AdCentreScreen, { go: go }),
                 route.name === 'post' && React.createElement(PostDetailScreen, { id: route.id, go: go, openComments: route.openComments }),
                 route.name === 'profile' && React.createElement(ProfileScreen, { uid: route.uid, go: go }),
                 route.name === 'myPages' && React.createElement(MyPagesScreen, { go: go }),
@@ -3209,7 +3211,8 @@ const MENU_TILES = [
     { key: 'memories', label: 'Memories', icon: 'fa-clock-rotate-left', route: null },
     { key: 'birthdays', label: 'Birthdays', icon: 'fa-gift', route: { name: 'birthdays' } },
     { key: 'events', label: 'Events', icon: 'fa-calendar-days', route: null },
-    { key: 'adCentre', label: 'Ad Centre', icon: 'fa-bullhorn', route: null },
+    { key: 'adCentre', label: 'Ad Centre', icon: 'fa-bullhorn', route: { name: 'adCentre' } },
+    { key: 'wallet', label: 'Wallet', icon: 'fa-wallet', route: { name: 'wallet' } },
     { key: 'feeds', label: 'Feeds', icon: 'fa-table-cells-large', route: null },
 ];
 const MENU_TILE_COLORS = {
@@ -3219,7 +3222,7 @@ const MENU_TILE_COLORS = {
     games: 'bg-violet-100 text-violet-600', pages: 'bg-orange-100 text-orange-600',
     saved: 'bg-purple-100 text-purple-600', memories: 'bg-blue-100 text-blue-600',
     birthdays: 'bg-red-100 text-red-500', events: 'bg-red-100 text-red-500',
-    adCentre: 'bg-blue-100 text-blue-600', feeds: 'bg-orange-100 text-orange-600',
+    adCentre: 'bg-blue-100 text-blue-600', wallet: 'bg-emerald-100 text-emerald-600', feeds: 'bg-orange-100 text-orange-600',
 };
 function MenuTile({ tile, onOpen }) {
     return React.createElement("button", { onClick: () => onOpen(tile), className: "flex items-center gap-3 bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3 text-left active:scale-[0.98] transition" },
@@ -4078,10 +4081,19 @@ function ReactionsListModal({ reactions, onClose, go }) {
                 React.createElement("span", { className: "text-sm font-semibold truncate" }, u ? (u.displayName || u.username) : 'Loading\u2026'));
         }));
 }
-function PostCard({ post, go, groupCtx, autoOpenComments }) {
+function PostCard({ post, go, groupCtx, autoOpenComments, sponsored }) {
     var _a;
     const { profile } = useAuth();
     const toast = useToast();
+    useEffect(() => {
+        if (!sponsored) return;
+        recordAdImpression(sponsored.id, profile.id, sponsored.costPerImpression).catch(() => { });
+    }, [sponsored && sponsored.id, profile.id]);
+    const handleAdCtaClick = () => {
+        if (!sponsored) return;
+        recordAdClick(sponsored.id).catch(() => { });
+        window.open(sponsored.destinationUrl, '_blank', 'noopener');
+    };
     const [author, setAuthor] = useState(null);
     const [myReaction, setMyReaction] = useState(null); // reaction key the signed-in user picked, or null
     const [reactions, setReactions] = useState([]); // [{uid, type}] — every reaction on this post, live
@@ -4211,6 +4223,7 @@ function PostCard({ post, go, groupCtx, autoOpenComments }) {
                 React.createElement("div", { className: "min-w-0" },
                     React.createElement("p", { className: "font-bold text-base flex items-center gap-1.5" }, author.displayName,
                         post.pageId && React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-brand-600 bg-brand-50 dark:bg-brand-900/30 dark:text-brand-400 px-1.5 py-0.5 rounded" }, "Page"),
+                        sponsored && React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-amber-600 bg-amber-50 dark:bg-amber-900/30 dark:text-amber-400 px-1.5 py-0.5 rounded flex items-center gap-1" }, React.createElement("i", { className: "fa-solid fa-bullhorn" }), "Sponsored"),
                         post.groupAnnouncement && React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-amber-600 bg-amber-50 dark:bg-amber-900/30 dark:text-amber-400 px-1.5 py-0.5 rounded flex items-center gap-1" }, React.createElement("i", { className: "fa-solid fa-bullhorn" }), "Announcement")),
                     React.createElement("p", { className: "text-sm text-slate-400 flex items-center gap-1.5 flex-wrap" },
                         "@", author.username,
@@ -4279,6 +4292,10 @@ function PostCard({ post, go, groupCtx, autoOpenComments }) {
                     React.createElement("p", { className: "font-bold text-sm" }, "Blueface Dating"),
                     React.createElement("p", { className: "text-xs text-white/85" }, "Find genuine matches near you.")),
                 React.createElement("button", { onClick: () => go({ name: 'dating' }), className: "shrink-0 bg-white text-rose-600 text-xs font-bold px-3 py-2 rounded-full" }, "Join now"))),
+        sponsored && React.createElement("div", { className: "px-3 sm:px-4 mb-2" },
+            React.createElement("button", { onClick: handleAdCtaClick, className: "w-full flex items-center justify-between bg-slate-50 dark:bg-ink-700 border border-slate-200 dark:border-ink-600 rounded-xl px-4 py-2.5" },
+                React.createElement("span", { className: "text-xs text-slate-500 truncate" }, (() => { try { return new URL(sponsored.destinationUrl).hostname; } catch (e) { return sponsored.destinationUrl; } })()),
+                React.createElement("span", { className: "shrink-0 bg-brand-600 text-white text-xs font-bold px-3 py-1.5 rounded-full ml-2" }, sponsored.ctaLabel || 'Learn More'))),
         React.createElement("div", { className: "px-3 sm:px-4" },
             post.sharedPostId && React.createElement(SharedPostPreview, { postId: post.sharedPostId, go: go }),
             post.sharedGroupId && React.createElement(SharedGroupPreview, { groupId: post.sharedGroupId, go: go }),
@@ -4671,6 +4688,7 @@ function HomeFeed({ go }) {
     const [posts, setPosts] = useState(null);
     const [reels, setReels] = useState(null);
     const [refreshing, setRefreshing] = useState(false);
+    const activeCampaigns = useActiveAdCampaigns();
     useEffect(() => {
         // Group posts are deliberately excluded from the global timeline — they only ever show
         // inside that group's own Posts tab. Besides matching how Groups behave on Facebook,
@@ -4706,8 +4724,21 @@ function HomeFeed({ go }) {
                 return pinB - pinA;
             return millisOf(b.data.createdAt) - millisOf(a.data.createdAt);
         });
+        // Sprinkle one sponsored slot every 5 timeline items, Facebook-style, cycling through
+        // whatever active campaigns are available so no single ad dominates the feed.
+        if (activeCampaigns.length > 0) {
+            const withAds = [];
+            merged.forEach((it, i) => {
+                withAds.push(it);
+                if ((i + 1) % 5 === 0) {
+                    const campaign = activeCampaigns[Math.floor(i / 5) % activeCampaigns.length];
+                    withAds.push({ kind: 'ad', data: campaign });
+                }
+            });
+            return withAds;
+        }
         return merged;
-    }, [posts, reels]);
+    }, [posts, reels, activeCampaigns]);
     return (React.createElement("div", null,
         React.createElement(PostTriggerBar, { go: go }),
         React.createElement(ReelsStrip, { go: go }),
@@ -4721,7 +4752,9 @@ function HomeFeed({ go }) {
             const cutoff = Math.min(3, items.length);
             const renderItem = it => it.kind === 'post'
                 ? React.createElement(PostCard, { key: 'p-' + it.data.id, post: it.data, go: go })
-                : React.createElement(TimelineReelCard, { key: 'r-' + it.data.id, reel: it.data, go: go });
+                : it.kind === 'ad'
+                    ? React.createElement(AdSlot, { key: 'ad-' + it.data.id, campaign: it.data, go: go })
+                    : React.createElement(TimelineReelCard, { key: 'r-' + it.data.id, reel: it.data, go: go });
             return React.createElement(React.Fragment, null,
                 items.slice(0, cutoff).map(renderItem),
                 React.createElement(PeopleYouMayKnow, { go: go }),
@@ -6245,6 +6278,8 @@ function SuperAdminApp({ theme, setTheme }) {
         { key: 'dating', label: 'Dating' + (pendingDatingKycCount ? ' (' + pendingDatingKycCount + ')' : ''), icon: 'fa-heart' },
         { key: 'pageNameRequests', label: 'Name Change Requests' + (pendingNameChangeCount ? ' (' + pendingNameChangeCount + ')' : ''), icon: 'fa-signature' },
         { key: 'monetization', label: 'Monetization', icon: 'fa-sack-dollar' },
+        { key: 'ads', label: 'Ads', icon: 'fa-bullhorn' },
+        { key: 'wallet', label: 'Wallet', icon: 'fa-wallet' },
         { key: 'marketplace', label: 'Marketplace', icon: 'fa-store' },
         { key: 'reports', label: 'Reports', icon: 'fa-flag' },
         { key: 'announcements', label: 'Announcements', icon: 'fa-bullhorn' },
@@ -6585,6 +6620,12 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
     }
     if (tab === 'dating') {
         return React.createElement(DatingAdminPanel, { adminUid: adminUid, adminEmail: adminEmail });
+    }
+    if (tab === 'ads') {
+        return React.createElement(AdminAdsPanel, { adminUid: adminUid, adminEmail: adminEmail });
+    }
+    if (tab === 'wallet') {
+        return React.createElement(AdminWalletPanel, { adminUid: adminUid, adminEmail: adminEmail });
     }
     if (tab === 'announcements') {
         return React.createElement(AdminAnnouncementForm, { adminUid: adminUid, adminEmail: adminEmail });
@@ -11258,6 +11299,670 @@ function DatingAdminPanel({ adminUid, adminEmail }) {
                 React.createElement("input", { value: cfgForm.bankAccountNumber, onChange: e => setCfgForm(f => Object.assign({}, f, { bankAccountNumber: e.target.value.trim() })), placeholder: "0123456789", className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm font-mono" })),
             React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Account name"),
                 React.createElement("input", { value: cfgForm.bankAccountName, onChange: e => setCfgForm(f => Object.assign({}, f, { bankAccountName: e.target.value })), placeholder: "Company account name", className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" })),
+            React.createElement("button", { onClick: saveCfg, className: "w-full bg-brand-600 hover:bg-brand-700 text-white rounded-xl py-2.5 text-sm font-semibold" }, "Save settings")) :
+            React.createElement("div", { className: "py-10 flex justify-center" }, React.createElement("div", { className: "w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" }))));
+}
+
+/* ============================== WALLET ==============================
+ * Generic user wallet, funded via the site's existing Paystack integration or via manual
+ * bank-transfer receipt upload (admin-reviewed) — the same pattern already used by Dating.
+ * Firestore layout:
+ *   settings/wallet                 { paystackPublicKey, bankName, bankAccountNumber,
+ *                                      bankAccountName, costPerImpressionNaira, updatedAt }
+ *   users/{uid}.walletBalance       number, kept in sync via walletTransactions below
+ *   walletTransactions/{autoId}     { uid, type:'fund_paystack'|'fund_manual'|'ad_spend'|'ad_refund',
+ *                                      amount, campaignId, reference, description, createdAt }
+ *   walletManualFundings/{autoId}   { uid, amount, receiptURL, status:'pending'|'approved'|'rejected',
+ *                                      rejectionReason, submittedAt, reviewedAt, reviewedBy, reviewedByEmail }
+ * NOTE — same no-backend caveat as Dating's Paystack flow: the transaction is confirmed
+ * client-side after checkout closes. For production, verify the reference server-side with a
+ * Cloud Function before crediting the wallet.
+ */
+const WALLET_CFG_DEFAULTS = {
+    paystackPublicKey: '', bankName: '', bankAccountNumber: '', bankAccountName: '',
+    costPerImpressionNaira: 2
+};
+function useWalletConfig() {
+    const [cfg, setCfg] = useState(WALLET_CFG_DEFAULTS);
+    useEffect(() => {
+        const unsub = db.collection('settings').doc('wallet').onSnapshot(s => {
+            setCfg(Object.assign({}, WALLET_CFG_DEFAULTS, s.exists ? s.data() : {}));
+        }, () => { });
+        return unsub;
+    }, []);
+    return cfg;
+}
+async function saveWalletConfig(fields) {
+    await db.collection('settings').doc('wallet').set(Object.assign({}, fields, { updatedAt: FieldValue.serverTimestamp() }), { merge: true });
+}
+function useWalletTransactions(uid) {
+    const [rows, setRows] = useState(null);
+    useEffect(() => {
+        if (!uid) { setRows([]); return; }
+        const unsub = db.collection('walletTransactions').where('uid', '==', uid).limit(200)
+            .onSnapshot(snap => {
+                const list = snap.docs.map(d => Object.assign({ id: d.id }, d.data()));
+                list.sort((a, b) => millisOf(b.createdAt) - millisOf(a.createdAt));
+                setRows(list);
+            }, () => setRows([]));
+        return unsub;
+    }, [uid]);
+    return rows;
+}
+async function creditWallet(uid, amount, type, extra) {
+    if (!amount) return;
+    await db.runTransaction(async (tx) => {
+        const ref = db.collection('users').doc(uid);
+        const snap = await tx.get(ref);
+        const bal = (snap.exists ? snap.data().walletBalance : 0) || 0;
+        tx.update(ref, { walletBalance: bal + amount });
+    });
+    await db.collection('walletTransactions').add(Object.assign({ uid, type, amount, createdAt: FieldValue.serverTimestamp() }, extra || {}));
+}
+async function debitWallet(uid, amount, type, extra) {
+    if (!amount) return;
+    await db.runTransaction(async (tx) => {
+        const ref = db.collection('users').doc(uid);
+        const snap = await tx.get(ref);
+        const bal = (snap.exists ? snap.data().walletBalance : 0) || 0;
+        if (bal < amount) throw new Error('Insufficient wallet balance');
+        tx.update(ref, { walletBalance: bal - amount });
+    });
+    await db.collection('walletTransactions').add(Object.assign({ uid, type, amount: -amount, createdAt: FieldValue.serverTimestamp() }, extra || {}));
+}
+async function recordWalletPaystackFunding(uid, amountNaira, reference) {
+    await creditWallet(uid, amountNaira, 'fund_paystack', { reference, description: 'Wallet funded via Paystack' });
+}
+function launchWalletPaystack({ email, amountNaira, publicKey, metadata, onSuccess, onClose }) {
+    if (typeof PaystackPop === 'undefined') { throw new Error('Payment service failed to load. Check your connection and try again.'); }
+    if (!publicKey) { throw new Error('Payments are not configured yet. Please contact support.'); }
+    const handler = PaystackPop.setup({
+        key: publicKey, email: email, amount: Math.round(Number(amountNaira || 0) * 100), currency: 'NGN',
+        metadata: metadata || {}, callback: function (response) { onSuccess(response); }, onClose: function () { onClose && onClose(); }
+    });
+    handler.openIframe();
+}
+function uploadWalletReceipt(uid, file, onProgress) {
+    const isImage = (file.type || '').startsWith('image/');
+    const prep = isImage ? compressImage(file, 1600, 0.85) : Promise.resolve(file);
+    return prep.then(blob => {
+        const ext = isImage ? 'jpg' : (file.name ? file.name.split('.').pop() : 'dat');
+        const path = `wallet-receipts/${uid}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+        const ref = storage.ref(path);
+        return new Promise((resolve, reject) => {
+            const task = ref.put(blob, { contentType: isImage ? 'image/jpeg' : (file.type || 'application/octet-stream') });
+            task.on('state_changed', s => onProgress && onProgress(Math.round((s.bytesTransferred / s.totalBytes) * 100)), reject, () => resolve());
+        }).then(() => ref.getDownloadURL());
+    });
+}
+async function submitWalletManualFunding(uid, { amountNaira, receiptURL }) {
+    await db.collection('walletManualFundings').add({
+        uid, amount: amountNaira, receiptURL, status: 'pending', submittedAt: FieldValue.serverTimestamp()
+    });
+}
+function useWalletManualFundings(statusFilter) {
+    const [rows, setRows] = useState([]);
+    useEffect(() => {
+        if (statusFilter === undefined) { setRows([]); return; }
+        const unsub = db.collection('walletManualFundings').orderBy('submittedAt', 'desc').limit(300).onSnapshot(snap => {
+            let list = snap.docs.map(d => Object.assign({ id: d.id }, d.data()));
+            if (statusFilter && statusFilter !== 'all') list = list.filter(r => r.status === statusFilter);
+            setRows(list);
+        }, () => setRows([]));
+        return unsub;
+    }, [statusFilter]);
+    return rows;
+}
+async function adminApproveWalletManualFunding(row, adminUid, adminEmail) {
+    await creditWallet(row.uid, row.amount, 'fund_manual', { reference: 'manual:' + row.id, description: 'Wallet funded via manual bank transfer' });
+    await db.collection('walletManualFundings').doc(row.id).update({ status: 'approved', reviewedAt: FieldValue.serverTimestamp(), reviewedBy: adminUid, reviewedByEmail: adminEmail || null });
+}
+async function adminRejectWalletManualFunding(row, reason, adminUid, adminEmail) {
+    await db.collection('walletManualFundings').doc(row.id).update({ status: 'rejected', rejectionReason: reason || '', reviewedAt: FieldValue.serverTimestamp(), reviewedBy: adminUid, reviewedByEmail: adminEmail || null });
+}
+
+/* ============================== ADVERTISING SYSTEM ==============================
+ * No Cloud Functions: budget deduction, refunds, impression/click accounting, and campaign
+ * lifecycle transitions all run client-side, the same "best effort, Firestore rules are the
+ * real enforcement" pattern used throughout this app (see creditEngagementEarning). Structured
+ * so a Cloud Function can later take over recordAdImpression / recordAdClick / syncCampaignStatus
+ * without changing the data shape.
+ * Firestore layout:
+ *   adCampaigns/{campaignId}   { advertiserId, mode:'promote'|'new', postId, title, description,
+ *                                 ctaLabel, destinationUrl, mediaType:'image'|'video'|null, mediaURL,
+ *                                 budget, spent, impressions, clicks, reach,
+ *                                 startDate, endDate, status:'pending'|'approved'|'rejected'|
+ *                                 'active'|'paused'|'completed', rejectionReason, createdAt, updatedAt }
+ *     └ viewers/{uid}          { createdAt }   — used only to dedupe "reach" (unique viewers)
+ * Storage layout: adCreatives/{advertiserId}/{campaignId}/media.jpg|mp4
+ */
+const AD_STATUS_LABELS = {
+    pending: 'Pending review', approved: 'Approved', rejected: 'Rejected',
+    active: 'Active', paused: 'Paused', completed: 'Completed'
+};
+const AD_CTA_OPTIONS = ['Learn More', 'Shop Now', 'Sign Up', 'Contact Us', 'Book Now', 'Download', 'Get Offer', 'Send Message'];
+function uploadAdCreative(uid, campaignId, file) {
+    const isVideo = (file.type || '').startsWith('video/');
+    const prep = isVideo ? Promise.resolve(file) : compressImage(file, 1600, 0.85);
+    return prep.then(blob => {
+        const ext = isVideo ? (file.name ? file.name.split('.').pop() : 'mp4') : 'jpg';
+        const path = `adCreatives/${uid}/${campaignId}/media.${ext}`;
+        const ref = storage.ref(path);
+        return ref.put(blob, { contentType: isVideo ? (file.type || 'video/mp4') : 'image/jpeg' })
+            .then(() => ref.getDownloadURL())
+            .then(url => ({ url, type: isVideo ? 'video' : 'image' }));
+    });
+}
+/* Advances a campaign through its lifecycle based on the current date / spend, purely client-
+   side and best-effort (mirrors matureEarnings()). Refunds whatever's left unspent the moment a
+   campaign lands on 'completed', regardless of what triggered it (date expiry, budget exhausted,
+   or an admin/advertiser stopping it early). */
+async function syncCampaignStatus(campaign) {
+    if (!campaign || !campaign.id) return campaign;
+    const now = Date.now();
+    const start = millisOf(campaign.startDate);
+    const end = millisOf(campaign.endDate);
+    const remaining = (campaign.budget || 0) - (campaign.spent || 0);
+    let nextStatus = campaign.status;
+    if (campaign.status === 'approved' && start && now >= start) nextStatus = 'active';
+    if ((campaign.status === 'active' || campaign.status === 'approved') && ((end && now > end) || remaining <= 0)) nextStatus = 'completed';
+    if (nextStatus === campaign.status) return campaign;
+    const patch = { status: nextStatus, updatedAt: FieldValue.serverTimestamp() };
+    await db.collection('adCampaigns').doc(campaign.id).update(patch).catch(() => { });
+    if (nextStatus === 'completed' && remaining > 0) {
+        await debitWallet(campaign.advertiserId, -remaining, 'ad_refund', { campaignId: campaign.id, description: 'Unspent ad budget refunded — "' + campaign.title + '"' }).catch(() => { });
+    }
+    return Object.assign({}, campaign, patch);
+}
+async function createAdCampaign(uid, fields) {
+    const campaignRef = db.collection('adCampaigns').doc();
+    let postId = fields.existingPostId || null;
+    let mediaURL = fields.mediaURL || null, mediaType = fields.mediaType || null;
+    if (fields.mode === 'new') {
+        const postRef = await db.collection('posts').add({
+            authorId: uid, text: fields.description || fields.title || '', images: mediaType === 'image' && mediaURL ? [mediaURL] : [],
+            videoURL: mediaType === 'video' ? mediaURL : null, bold: false, bgStyle: null, taggedUsers: [],
+            isAd: true, campaignId: campaignRef.id,
+            createdAt: FieldValue.serverTimestamp(), likesCount: 0, commentsCount: 0, sharesCount: 0
+        });
+        postId = postRef.id;
+        await db.collection('users').doc(uid).update({ postsCount: FieldValue.increment(1) }).catch(() => { });
+    }
+    await campaignRef.set({
+        advertiserId: uid, mode: fields.mode, postId,
+        title: fields.title, description: fields.description || '', ctaLabel: fields.ctaLabel, destinationUrl: fields.destinationUrl,
+        mediaType, mediaURL,
+        budget: fields.budget, spent: 0, impressions: 0, clicks: 0, reach: 0,
+        startDate: fields.startDate, endDate: fields.endDate,
+        status: 'pending', rejectionReason: null,
+        createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp()
+    });
+    await debitWallet(uid, fields.budget, 'ad_spend', { campaignId: campaignRef.id, description: 'Ad campaign budget — "' + fields.title + '"' });
+    return campaignRef.id;
+}
+async function deleteAdCampaign(campaign) {
+    if (campaign.status !== 'pending') throw new Error('Only campaigns still pending review can be deleted.');
+    await db.collection('adCampaigns').doc(campaign.id).delete();
+    if (campaign.mode === 'new' && campaign.postId) {
+        db.collection('posts').doc(campaign.postId).delete().catch(() => { });
+    }
+    await creditWallet(campaign.advertiserId, campaign.budget, 'ad_refund', { campaignId: campaign.id, description: 'Refund — deleted campaign "' + campaign.title + '"' });
+}
+async function pauseAdCampaign(campaignId) {
+    await db.collection('adCampaigns').doc(campaignId).update({ status: 'paused', updatedAt: FieldValue.serverTimestamp() });
+}
+async function resumeAdCampaign(campaign) {
+    const now = Date.now();
+    const end = millisOf(campaign.endDate);
+    if (end && now > end) throw new Error('This campaign\u2019s end date has passed \u2014 edit the dates before resuming.');
+    const start = millisOf(campaign.startDate);
+    const status = (start && now < start) ? 'approved' : 'active';
+    await db.collection('adCampaigns').doc(campaign.id).update({ status, updatedAt: FieldValue.serverTimestamp() });
+}
+async function adminApproveCampaign(campaign, adminUid, adminEmail) {
+    const now = Date.now();
+    const start = millisOf(campaign.startDate);
+    const status = (start && now < start) ? 'approved' : 'active';
+    await db.collection('adCampaigns').doc(campaign.id).update({ status, rejectionReason: null, reviewedBy: adminUid, reviewedByEmail: adminEmail || null, updatedAt: FieldValue.serverTimestamp() });
+}
+async function adminRejectCampaign(campaign, reason, adminUid, adminEmail) {
+    await db.collection('adCampaigns').doc(campaign.id).update({ status: 'rejected', rejectionReason: reason || '', reviewedBy: adminUid, reviewedByEmail: adminEmail || null, updatedAt: FieldValue.serverTimestamp() });
+    if (campaign.mode === 'new' && campaign.postId) {
+        db.collection('posts').doc(campaign.postId).delete().catch(() => { });
+    }
+    const remaining = (campaign.budget || 0) - (campaign.spent || 0);
+    if (remaining > 0) {
+        await creditWallet(campaign.advertiserId, remaining, 'ad_refund', { campaignId: campaign.id, description: 'Refund — rejected campaign "' + campaign.title + '"' });
+    }
+}
+async function adminStopCampaign(campaign) {
+    const remaining = (campaign.budget || 0) - (campaign.spent || 0);
+    await db.collection('adCampaigns').doc(campaign.id).update({ status: 'completed', updatedAt: FieldValue.serverTimestamp() });
+    if (remaining > 0) {
+        await creditWallet(campaign.advertiserId, remaining, 'ad_refund', { campaignId: campaign.id, description: 'Unspent ad budget refunded — "' + campaign.title + '" (stopped by admin)' });
+    }
+}
+/* Mirrors fanPages' unique-view counter: only bumps `reach` the first time this uid sees this
+   campaign; `impressions` and `spent` (capped to budget, at the admin-configured rate per view)
+   bump every time. Silently no-ops once the campaign is out of budget or not active. */
+async function recordAdImpression(campaignId, uid, costPerImpression) {
+    if (!campaignId || !uid) return;
+    const campaignRef = db.collection('adCampaigns').doc(campaignId);
+    const viewerRef = campaignRef.collection('viewers').doc(uid);
+    try {
+        await db.runTransaction(async (tx) => {
+            const [cSnap, vSnap] = await Promise.all([tx.get(campaignRef), tx.get(viewerRef)]);
+            if (!cSnap.exists) return;
+            const c = cSnap.data();
+            if (c.status !== 'active') return;
+            const remaining = (c.budget || 0) - (c.spent || 0);
+            if (remaining <= 0) return;
+            const amount = Math.min(costPerImpression || 0, remaining);
+            const patch = { impressions: (c.impressions || 0) + 1, spent: (c.spent || 0) + amount };
+            if (!vSnap.exists) {
+                tx.set(viewerRef, { createdAt: FieldValue.serverTimestamp() });
+                patch.reach = (c.reach || 0) + 1;
+            }
+            tx.update(campaignRef, patch);
+        });
+    } catch (e) { /* best-effort, never blocks rendering */ }
+}
+async function recordAdClick(campaignId) {
+    if (!campaignId) return;
+    db.collection('adCampaigns').doc(campaignId).update({ clicks: FieldValue.increment(1) }).catch(() => { });
+}
+function useMyAdCampaigns(uid) {
+    const [rows, setRows] = useState(null);
+    useEffect(() => {
+        if (!uid) { setRows([]); return; }
+        const unsub = db.collection('adCampaigns').where('advertiserId', '==', uid).limit(200)
+            .onSnapshot(snap => {
+                const list = snap.docs.map(d => Object.assign({ id: d.id }, d.data()));
+                list.sort((a, b) => millisOf(b.createdAt) - millisOf(a.createdAt));
+                setRows(list);
+                list.forEach(c => { if (c.status === 'approved' || c.status === 'active') syncCampaignStatus(c); });
+            }, () => setRows([]));
+        return unsub;
+    }, [uid]);
+    return rows;
+}
+function useAllAdCampaigns(active) {
+    const [rows, setRows] = useState([]);
+    useEffect(() => {
+        if (!active) { setRows([]); return; }
+        const unsub = db.collection('adCampaigns').limit(500).onSnapshot(snap => {
+            const list = snap.docs.map(d => Object.assign({ id: d.id }, d.data()));
+            list.sort((a, b) => millisOf(b.createdAt) - millisOf(a.createdAt));
+            setRows(list);
+        }, () => setRows([]));
+        return unsub;
+    }, [active]);
+    return rows;
+}
+/* Feed-facing: live 'active' campaigns only, synced lazily so 'approved' campaigns whose start
+   date just arrived (or 'active' ones that just ran out of budget/date) flip promptly. */
+function useActiveAdCampaigns() {
+    const [rows, setRows] = useState([]);
+    useEffect(() => {
+        const unsub = db.collection('adCampaigns').where('status', 'in', ['approved', 'active']).limit(50)
+            .onSnapshot(snap => {
+                const list = snap.docs.map(d => Object.assign({ id: d.id }, d.data()));
+                Promise.all(list.map(syncCampaignStatus)).then(synced => {
+                    setRows(synced.filter(c => c.status === 'active'));
+                });
+            }, () => setRows([]));
+        return unsub;
+    }, []);
+    return rows;
+}
+/* Renders one sponsored slot in the home timeline: loads the referenced post (existing post
+   being promoted, or the sponsored post created for this campaign) and hands it to PostCard
+   with `sponsored` set, so every interaction — like, comment, share, save — works exactly like
+   a normal post for free. */
+function AdSlot({ campaign, go }) {
+    const [post, setPost] = useState(undefined);
+    const cfg = useWalletConfig();
+    useEffect(() => {
+        if (!campaign.postId) { setPost(null); return; }
+        const unsub = db.collection('posts').doc(campaign.postId).onSnapshot(s => setPost(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setPost(null));
+        return unsub;
+    }, [campaign.postId]);
+    if (!post) return null;
+    const sponsored = Object.assign({}, campaign, { costPerImpression: cfg.costPerImpressionNaira });
+    return React.createElement(PostCard, { post: post, go: go, sponsored: sponsored });
+}
+
+/* ============================== ADVERTISER UI ============================== */
+function WalletScreen({ go }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const cfg = useWalletConfig();
+    const txns = useWalletTransactions(profile.id);
+    const [fundOpen, setFundOpen] = useState(false);
+    return React.createElement("div", null,
+        React.createElement("div", { className: "flex items-center gap-2 mb-4" },
+            React.createElement("button", { onClick: () => go({ name: 'menu' }), className: "text-slate-400" }, React.createElement("i", { className: "fa-solid fa-arrow-left text-lg" })),
+            React.createElement("h1", { className: "font-display text-lg font-bold" }, "Wallet")),
+        React.createElement("div", { className: "bg-gradient-to-br from-brand-600 to-brand-700 rounded-2xl p-5 text-white mb-4" },
+            React.createElement("p", { className: "text-xs text-white/80 mb-1" }, "Wallet balance"),
+            React.createElement("p", { className: "text-3xl font-extrabold mb-4" }, formatNaira(profile.walletBalance || 0)),
+            React.createElement("button", { onClick: () => setFundOpen(true), className: "bg-white text-brand-700 text-sm font-bold px-4 py-2 rounded-xl" }, React.createElement("i", { className: "fa-solid fa-plus mr-1.5" }), "Fund wallet")),
+        React.createElement("button", { onClick: () => go({ name: 'adCentre' }), className: "w-full flex items-center justify-between bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-4 mb-4" },
+            React.createElement("span", { className: "flex items-center gap-3 font-semibold text-sm" }, React.createElement("i", { className: "fa-solid fa-bullhorn text-brand-600" }), "Ad Centre \u2014 create & manage ads"),
+            React.createElement("i", { className: "fa-solid fa-chevron-right text-slate-400" })),
+        React.createElement("h2", { className: "font-bold text-sm mb-2" }, "Transaction history"),
+        txns === null && React.createElement("div", { className: "py-10 flex justify-center" }, React.createElement("div", { className: "w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" })),
+        txns !== null && txns.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-8" }, "No transactions yet."),
+        React.createElement("div", { className: "space-y-1.5" }, (txns || []).map(t => React.createElement("div", { key: t.id, className: "flex items-center justify-between bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-lg px-3 py-2.5" },
+            React.createElement("div", { className: "min-w-0" },
+                React.createElement("p", { className: "text-sm font-semibold truncate" }, t.description || WALLET_TXN_LABELS[t.type] || t.type),
+                React.createElement("p", { className: "text-[11px] text-slate-400" }, timeAgo(t.createdAt))),
+            React.createElement("span", { className: "text-sm font-bold shrink-0 " + (t.amount >= 0 ? "text-emerald-600" : "text-red-500") }, (t.amount >= 0 ? '+' : '') + formatNaira(t.amount))))),
+        fundOpen && React.createElement(FundWalletSheet, { cfg: cfg, onClose: () => setFundOpen(false) }));
+}
+const WALLET_TXN_LABELS = {
+    fund_paystack: 'Wallet funding (Paystack)', fund_manual: 'Wallet funding (bank transfer)',
+    ad_spend: 'Ad campaign budget', ad_refund: 'Ad budget refund'
+};
+function FundWalletSheet({ cfg, onClose }) {
+    const { profile, firebaseUser } = useAuth();
+    const toast = useToast();
+    const [method, setMethod] = useState('paystack');
+    const [amount, setAmount] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [receiptFile, setReceiptFile] = useState(null);
+    const [receiptPreview, setReceiptPreview] = useState(null);
+    const fileRef = useRef();
+    const payWithPaystack = () => {
+        const amt = Number(amount);
+        if (!amt || amt < 100) { toast('Enter a valid amount (min \u20A6100)', 'error'); return; }
+        if (!cfg.paystackPublicKey) { toast('Payments aren\u2019t configured yet. Contact support.', 'error'); return; }
+        try {
+            launchWalletPaystack({
+                email: firebaseUser.email, amountNaira: amt, publicKey: cfg.paystackPublicKey,
+                metadata: { uid: profile.id, purpose: 'wallet_funding' },
+                onSuccess: async (resp) => {
+                    setBusy(true);
+                    try { await recordWalletPaystackFunding(profile.id, amt, resp.reference); toast('Wallet funded!', 'success'); onClose(); }
+                    catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+                },
+                onClose: () => { }
+            });
+        } catch (e) { toast(e.message, 'error'); }
+    };
+    const onPickReceipt = (e) => {
+        const file = e.target.files && e.target.files[0];
+        e.target.value = '';
+        if (!file) return;
+        setReceiptFile(file);
+        setReceiptPreview(URL.createObjectURL(file));
+    };
+    const submitManual = async () => {
+        const amt = Number(amount);
+        if (!amt || amt < 100) { toast('Enter a valid amount (min \u20A6100)', 'error'); return; }
+        if (!receiptFile) { toast('Upload your payment receipt', 'error'); return; }
+        setBusy(true);
+        try {
+            const receiptURL = await uploadWalletReceipt(profile.id, receiptFile);
+            await submitWalletManualFunding(profile.id, { amountNaira: amt, receiptURL });
+            toast('Submitted \u2014 an admin will review it shortly', 'success');
+            onClose();
+        } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+    };
+    return React.createElement("div", { className: "fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center", onClick: onClose },
+        React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm max-h-[90vh] overflow-y-auto p-5", onClick: e => e.stopPropagation() },
+            React.createElement("h3", { className: "font-display font-bold text-lg mb-3" }, "Fund wallet"),
+            React.createElement("div", { className: "flex gap-2 mb-4" },
+                React.createElement("button", { onClick: () => setMethod('paystack'), className: "flex-1 py-2 rounded-lg text-xs font-semibold " + (method === 'paystack' ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, "Paystack"),
+                React.createElement("button", { onClick: () => setMethod('manual'), className: "flex-1 py-2 rounded-lg text-xs font-semibold " + (method === 'manual' ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, "Bank transfer")),
+            React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Amount (\u20A6)"),
+            React.createElement("input", { type: "number", min: 100, value: amount, onChange: e => setAmount(e.target.value), placeholder: "e.g. 5000", className: "w-full mt-1 mb-4 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+            method === 'paystack' ? (React.createElement("div", null,
+                !cfg.paystackPublicKey && React.createElement("p", { className: "text-xs text-amber-600 bg-amber-50 dark:bg-amber-900/20 rounded-lg p-2 mb-3" }, "Payments aren't configured yet. Contact support."),
+                React.createElement("button", { disabled: busy, onClick: payWithPaystack, className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl py-3 font-semibold text-sm" }, busy ? 'Processing\u2026' : 'Pay with Paystack'))) :
+                (React.createElement("div", null,
+                    (cfg.bankName || cfg.bankAccountNumber) ? React.createElement("div", { className: "bg-slate-50 dark:bg-ink-700 rounded-lg p-3 mb-3 text-sm space-y-0.5" },
+                        React.createElement("p", null, React.createElement("span", { className: "text-slate-400" }, "Bank: "), cfg.bankName),
+                        React.createElement("p", null, React.createElement("span", { className: "text-slate-400" }, "Account no: "), cfg.bankAccountNumber),
+                        React.createElement("p", null, React.createElement("span", { className: "text-slate-400" }, "Account name: "), cfg.bankAccountName)) :
+                        React.createElement("p", { className: "text-xs text-amber-600 bg-amber-50 dark:bg-amber-900/20 rounded-lg p-2 mb-3" }, "Bank details aren't configured yet. Contact support."),
+                    React.createElement("input", { ref: fileRef, type: "file", accept: "image/*", hidden: true, onChange: onPickReceipt }),
+                    receiptPreview ? React.createElement("img", { src: receiptPreview, className: "w-full h-32 object-cover rounded-lg mb-3" }) :
+                        React.createElement("button", { onClick: () => fileRef.current.click(), className: "w-full border-2 border-dashed border-slate-200 dark:border-ink-600 rounded-lg py-6 text-xs text-slate-400 mb-3" }, React.createElement("i", { className: "fa-solid fa-camera text-lg block mb-1" }), "Upload payment receipt"),
+                    receiptPreview && React.createElement("button", { onClick: () => fileRef.current.click(), className: "text-xs font-semibold text-brand-600 mb-3" }, "Change receipt"),
+                    React.createElement("button", { disabled: busy, onClick: submitManual, className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl py-3 font-semibold text-sm" }, busy ? 'Submitting\u2026' : 'Submit for review'))),
+            React.createElement("button", { onClick: onClose, className: "w-full text-center text-xs text-slate-400 mt-3" }, "Cancel")));
+}
+
+function AdCentreScreen({ go }) {
+    const { profile } = useAuth();
+    const campaigns = useMyAdCampaigns(profile.id);
+    const [creating, setCreating] = useState(false);
+    const [filter, setFilter] = useState('all');
+    const filtered = (campaigns || []).filter(c => filter === 'all' || c.status === filter);
+    return React.createElement("div", null,
+        React.createElement("div", { className: "flex items-center gap-2 mb-4" },
+            React.createElement("button", { onClick: () => go({ name: 'menu' }), className: "text-slate-400" }, React.createElement("i", { className: "fa-solid fa-arrow-left text-lg" })),
+            React.createElement("h1", { className: "font-display text-lg font-bold flex-1" }, "Ad Centre"),
+            React.createElement("button", { onClick: () => go({ name: 'wallet' }), className: "text-xs font-semibold text-brand-600 bg-brand-50 dark:bg-brand-900/30 px-3 py-1.5 rounded-full" }, formatNaira(profile.walletBalance || 0))),
+        React.createElement("button", { onClick: () => setCreating(true), className: "w-full bg-brand-600 hover:bg-brand-700 text-white rounded-xl py-3 font-semibold text-sm mb-4" }, React.createElement("i", { className: "fa-solid fa-plus mr-1.5" }), "Create campaign"),
+        React.createElement("div", { className: "flex gap-2 overflow-x-auto mb-4" }, ['all', 'pending', 'approved', 'active', 'paused', 'rejected', 'completed'].map(f => React.createElement("button", { key: f, onClick: () => setFilter(f), className: "shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold " + (filter === f ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, f === 'all' ? 'All' : AD_STATUS_LABELS[f]))),
+        campaigns === null && React.createElement("div", { className: "py-10 flex justify-center" }, React.createElement("div", { className: "w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" })),
+        campaigns !== null && filtered.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-10" }, "No campaigns in this filter."),
+        filtered.map(c => React.createElement(MyCampaignCard, { key: c.id, campaign: c })),
+        creating && React.createElement(CreateCampaignSheet, { onClose: () => setCreating(false) }));
+}
+function MyCampaignCard({ campaign }) {
+    const toast = useToast();
+    const remaining = (campaign.budget || 0) - (campaign.spent || 0);
+    const statusColor = { pending: 'bg-amber-100 text-amber-700', approved: 'bg-sky-100 text-sky-700', active: 'bg-emerald-100 text-emerald-700', paused: 'bg-slate-200 text-slate-600', rejected: 'bg-red-100 text-red-600', completed: 'bg-slate-100 text-slate-500' }[campaign.status] || 'bg-slate-100';
+    const doDelete = async () => { if (!confirm('Delete this campaign and refund its budget?')) return; try { await deleteAdCampaign(campaign); toast('Campaign deleted and refunded', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    const doPause = async () => { try { await pauseAdCampaign(campaign.id); toast('Campaign paused', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    const doResume = async () => { try { await resumeAdCampaign(campaign); toast('Campaign resumed', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3 mb-2" },
+        React.createElement("div", { className: "flex items-start justify-between gap-2 mb-2" },
+            React.createElement("div", { className: "min-w-0" },
+                React.createElement("p", { className: "font-semibold text-sm truncate" }, campaign.title),
+                React.createElement("p", { className: "text-[11px] text-slate-400" }, timeAgo(campaign.createdAt))),
+            React.createElement("span", { className: "text-[11px] font-bold px-2 py-0.5 rounded-full shrink-0 " + statusColor }, AD_STATUS_LABELS[campaign.status] || campaign.status)),
+        campaign.status === 'rejected' && campaign.rejectionReason && React.createElement("p", { className: "text-xs text-red-500 mb-2" }, "Reason: ", campaign.rejectionReason),
+        React.createElement("div", { className: "grid grid-cols-4 gap-1.5 text-center mb-2" },
+            [['Budget', formatNaira(campaign.budget)], ['Spent', formatNaira(campaign.spent || 0)], ['Remaining', formatNaira(remaining)], ['Impressions', formatCompactCount(campaign.impressions || 0)]].map(([l, v]) => React.createElement("div", { key: l, className: "bg-slate-50 dark:bg-ink-700 rounded-lg py-1.5" },
+                React.createElement("p", { className: "text-xs font-bold" }, v), React.createElement("p", { className: "text-[9px] text-slate-400" }, l)))),
+        React.createElement("div", { className: "grid grid-cols-3 gap-1.5 text-center mb-2" },
+            [['Reach', formatCompactCount(campaign.reach || 0)], ['Clicks', formatCompactCount(campaign.clicks || 0)], ['Ends', campaign.endDate ? new Date(campaign.endDate).toLocaleDateString() : '\u2014']].map(([l, v]) => React.createElement("div", { key: l, className: "bg-slate-50 dark:bg-ink-700 rounded-lg py-1.5" },
+                React.createElement("p", { className: "text-xs font-bold" }, v), React.createElement("p", { className: "text-[9px] text-slate-400" }, l)))),
+        React.createElement("div", { className: "flex gap-2" },
+            campaign.status === 'pending' && React.createElement("button", { onClick: doDelete, className: "flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-1.5 text-xs font-semibold" }, "Delete"),
+            (campaign.status === 'active' || campaign.status === 'approved') && React.createElement("button", { onClick: doPause, className: "flex-1 bg-slate-100 dark:bg-ink-700 rounded-lg py-1.5 text-xs font-semibold" }, "Pause"),
+            campaign.status === 'paused' && React.createElement("button", { onClick: doResume, className: "flex-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg py-1.5 text-xs font-semibold" }, "Resume")));
+}
+function CreateCampaignSheet({ onClose }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const [mode, setMode] = useState('new');
+    const [myPosts, setMyPosts] = useState(null);
+    const [existingPostId, setExistingPostId] = useState('');
+    const [title, setTitle] = useState('');
+    const [description, setDescription] = useState('');
+    const [ctaLabel, setCtaLabel] = useState(AD_CTA_OPTIONS[0]);
+    const [destinationUrl, setDestinationUrl] = useState('');
+    const [budget, setBudget] = useState('');
+    const [startDate, setStartDate] = useState('');
+    const [endDate, setEndDate] = useState('');
+    const [file, setFile] = useState(null);
+    const [preview, setPreview] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const fileRef = useRef();
+    useEffect(() => {
+        if (mode !== 'promote') return;
+        db.collection('posts').where('authorId', '==', profile.id).limit(50).get()
+            .then(snap => {
+                const list = snap.docs.map(d => Object.assign({ id: d.id }, d.data())).filter(p => !p.isAd);
+                list.sort((a, b) => millisOf(b.createdAt) - millisOf(a.createdAt));
+                setMyPosts(list);
+            }).catch(() => setMyPosts([]));
+    }, [mode, profile.id]);
+    const onPickFile = (e) => {
+        const f = e.target.files && e.target.files[0];
+        e.target.value = '';
+        if (!f) return;
+        if (!f.type.startsWith('image/') && !f.type.startsWith('video/')) { toast('Choose an image or video file', 'error'); return; }
+        if (f.size > 50 * 1024 * 1024) { toast('File exceeds 50MB', 'error'); return; }
+        setFile(f);
+        setPreview(URL.createObjectURL(f));
+    };
+    const submit = async () => {
+        if (!title.trim()) { toast('Enter a campaign title', 'error'); return; }
+        if (!destinationUrl.trim()) { toast('Enter a destination URL', 'error'); return; }
+        if (mode === 'new' && !description.trim() && !file) { toast('Add ad copy or media for your sponsored post', 'error'); return; }
+        if (mode === 'promote' && !existingPostId) { toast('Choose a post to promote', 'error'); return; }
+        const budgetNum = Number(budget);
+        if (!budgetNum || budgetNum < 500) { toast('Enter a budget (min \u20A6500)', 'error'); return; }
+        if ((profile.walletBalance || 0) < budgetNum) { toast('Insufficient wallet balance \u2014 fund your wallet first', 'error'); return; }
+        if (!startDate || !endDate) { toast('Choose a start and end date', 'error'); return; }
+        const startMs = new Date(startDate).getTime(), endMs = new Date(endDate).getTime();
+        if (endMs <= startMs) { toast('End date must be after the start date', 'error'); return; }
+        setBusy(true);
+        try {
+            let mediaURL = null, mediaType = null;
+            if (mode === 'new' && file) {
+                const tempId = db.collection('adCampaigns').doc().id;
+                const uploaded = await uploadAdCreative(profile.id, tempId, file);
+                mediaURL = uploaded.url; mediaType = uploaded.type;
+            }
+            await createAdCampaign(profile.id, {
+                mode, existingPostId: mode === 'promote' ? existingPostId : null,
+                title: title.trim(), description: description.trim(), ctaLabel, destinationUrl: destinationUrl.trim(),
+                mediaURL, mediaType, budget: budgetNum, startDate: startMs, endDate: endMs
+            });
+            toast('Campaign submitted for review', 'success');
+            onClose();
+        } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+    };
+    return React.createElement("div", { className: "fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center", onClick: onClose },
+        React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-lg max-h-[92vh] overflow-y-auto p-5", onClick: e => e.stopPropagation() },
+            React.createElement("h3", { className: "font-display font-bold text-lg mb-3" }, "Create ad campaign"),
+            React.createElement("div", { className: "flex gap-2 mb-4" },
+                React.createElement("button", { onClick: () => setMode('new'), className: "flex-1 py-2 rounded-lg text-xs font-semibold " + (mode === 'new' ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, "New sponsored post"),
+                React.createElement("button", { onClick: () => setMode('promote'), className: "flex-1 py-2 rounded-lg text-xs font-semibold " + (mode === 'promote' ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, "Promote existing post")),
+            mode === 'promote' && React.createElement("div", { className: "mb-4" },
+                React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Choose a post"),
+                myPosts === null && React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, "Loading your posts\u2026"),
+                myPosts !== null && myPosts.length === 0 && React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, "You don\u2019t have any posts to promote yet."),
+                React.createElement("div", { className: "space-y-1.5 mt-1 max-h-40 overflow-y-auto" }, (myPosts || []).map(p => React.createElement("button", { key: p.id, onClick: () => setExistingPostId(p.id), className: "w-full text-left px-3 py-2 rounded-lg text-xs border " + (existingPostId === p.id ? "border-brand-600 bg-brand-50 dark:bg-brand-900/20" : "border-slate-200 dark:border-ink-600") }, (p.text || '(no caption)').slice(0, 80))))),
+            mode === 'new' && React.createElement("div", { className: "mb-4" },
+                React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Ad copy"),
+                React.createElement("textarea", { value: description, onChange: e => setDescription(e.target.value), rows: 3, placeholder: "What do you want to say?", className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+                React.createElement("input", { ref: fileRef, type: "file", accept: "image/*,video/*", hidden: true, onChange: onPickFile }),
+                preview ? (file.type.startsWith('video/') ? React.createElement("video", { src: preview, controls: true, className: "w-full h-40 object-cover rounded-lg mt-2" }) : React.createElement("img", { src: preview, className: "w-full h-40 object-cover rounded-lg mt-2" })) :
+                    React.createElement("button", { onClick: () => fileRef.current.click(), className: "w-full border-2 border-dashed border-slate-200 dark:border-ink-600 rounded-lg py-6 text-xs text-slate-400 mt-2" }, React.createElement("i", { className: "fa-solid fa-image text-lg block mb-1" }), "Upload image or video")),
+            React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Campaign title"),
+            React.createElement("input", { value: title, onChange: e => setTitle(e.target.value), placeholder: "e.g. Weekend sale", className: "w-full mt-1 mb-3 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+            React.createElement("div", { className: "grid grid-cols-2 gap-3 mb-3" },
+                React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "CTA button"),
+                    React.createElement("select", { value: ctaLabel, onChange: e => setCtaLabel(e.target.value), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }, AD_CTA_OPTIONS.map(o => React.createElement("option", { key: o, value: o }, o)))),
+                React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Budget (\u20A6)"),
+                    React.createElement("input", { type: "number", min: 500, value: budget, onChange: e => setBudget(e.target.value), placeholder: "5000", className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }))),
+            React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Destination URL"),
+            React.createElement("input", { value: destinationUrl, onChange: e => setDestinationUrl(e.target.value), placeholder: "https://\u2026", className: "w-full mt-1 mb-3 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+            React.createElement("div", { className: "grid grid-cols-2 gap-3 mb-4" },
+                React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Start date"),
+                    React.createElement("input", { type: "date", value: startDate, onChange: e => setStartDate(e.target.value), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" })),
+                React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "End date"),
+                    React.createElement("input", { type: "date", value: endDate, onChange: e => setEndDate(e.target.value), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }))),
+            React.createElement("p", { className: "text-[11px] text-slate-400 mb-3" }, "Budget is deducted from your wallet balance (", formatNaira(profile.walletBalance || 0), " available) the moment you submit. It's refunded automatically if rejected, deleted, or left unspent when the campaign ends."),
+            React.createElement("button", { disabled: busy, onClick: submit, className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl py-3 font-semibold text-sm" }, busy ? 'Submitting\u2026' : 'Submit for review'),
+            React.createElement("button", { onClick: onClose, className: "w-full text-center text-xs text-slate-400 mt-2" }, "Cancel")));
+}
+
+/* ============================== ADMIN: ADS & WALLET ============================== */
+function AdminAdsPanel({ adminUid, adminEmail }) {
+    const toast = useToast();
+    const [filter, setFilter] = useState('pending');
+    const [search, setSearch] = useState('');
+    const campaigns = useAllAdCampaigns(true);
+    const totalRevenue = campaigns.reduce((s, c) => s + (c.spent || 0), 0);
+    const filtered = campaigns.filter(c => (filter === 'all' || c.status === filter) && (!search || (c.title || '').toLowerCase().includes(search.toLowerCase()) || c.advertiserId.includes(search)));
+    const approve = async (c) => { try { await adminApproveCampaign(c, adminUid, adminEmail); toast('Campaign approved', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    const reject = async (c) => { const reason = prompt('Reason for rejection (shown to the advertiser):'); if (reason === null) return; try { await adminRejectCampaign(c, reason, adminUid, adminEmail); toast('Campaign rejected and refunded', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    const pause = async (c) => { try { await pauseAdCampaign(c.id); toast('Paused', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    const resume = async (c) => { try { await resumeAdCampaign(c); toast('Resumed', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    const stop = async (c) => { if (!confirm('Stop this campaign and refund the unspent balance?')) return; try { await adminStopCampaign(c); toast('Campaign stopped', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    return React.createElement("div", null,
+        React.createElement("h2", { className: "font-display text-lg font-bold mb-3 flex items-center gap-2" }, React.createElement("i", { className: "fa-solid fa-bullhorn text-brand-600" }), "Advertising"),
+        React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4" },
+            [['Total campaigns', campaigns.length], ['Pending review', campaigns.filter(c => c.status === 'pending').length],
+            ['Active', campaigns.filter(c => c.status === 'active').length], ['Ad revenue', formatNaira(totalRevenue)]].map(([l, v]) => React.createElement("div", { key: l, className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-4" },
+                React.createElement("p", { className: "text-xl font-bold" }, v), React.createElement("p", { className: "text-xs text-slate-400" }, l)))),
+        React.createElement("input", { value: search, onChange: e => setSearch(e.target.value), placeholder: "Search by title or advertiser uid\u2026", className: "w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm mb-3" }),
+        React.createElement("div", { className: "flex gap-2 overflow-x-auto mb-3" }, ['all', 'pending', 'approved', 'active', 'paused', 'rejected', 'completed'].map(f => React.createElement("button", { key: f, onClick: () => setFilter(f), className: "shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold " + (filter === f ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, f === 'all' ? 'All' : AD_STATUS_LABELS[f]))),
+        filtered.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No campaigns in this filter."),
+        filtered.map(c => {
+            const remaining = (c.budget || 0) - (c.spent || 0);
+            const statusColor = { pending: 'bg-amber-100 text-amber-700', approved: 'bg-sky-100 text-sky-700', active: 'bg-emerald-100 text-emerald-700', paused: 'bg-slate-200 text-slate-600', rejected: 'bg-red-100 text-red-600', completed: 'bg-slate-100 text-slate-500' }[c.status] || 'bg-slate-100';
+            return React.createElement("div", { key: c.id, className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3 mb-2" },
+                React.createElement("div", { className: "flex items-start justify-between gap-2 mb-2" },
+                    React.createElement("div", { className: "min-w-0" },
+                        React.createElement("p", { className: "font-semibold text-sm truncate" }, c.title),
+                        React.createElement("p", { className: "text-[11px] text-slate-400 truncate" }, "Advertiser: ", c.advertiserId)),
+                    React.createElement("span", { className: "text-[11px] font-bold px-2 py-0.5 rounded-full shrink-0 " + statusColor }, AD_STATUS_LABELS[c.status] || c.status)),
+                c.description && React.createElement("p", { className: "text-xs text-slate-500 mb-2" }, c.description),
+                c.mediaURL && (c.mediaType === 'video' ? React.createElement("video", { src: c.mediaURL, controls: true, className: "w-full h-32 object-cover rounded-lg mb-2" }) : React.createElement("img", { src: c.mediaURL, onClick: () => openLightbox([c.mediaURL], 0), className: "w-full h-32 object-cover rounded-lg mb-2 cursor-zoom-in" })),
+                React.createElement("div", { className: "grid grid-cols-4 gap-1.5 text-center mb-2" },
+                    [['Budget', formatNaira(c.budget)], ['Spent', formatNaira(c.spent || 0)], ['Impressions', formatCompactCount(c.impressions || 0)], ['Clicks', formatCompactCount(c.clicks || 0)]].map(([l, v]) => React.createElement("div", { key: l, className: "bg-slate-50 dark:bg-ink-700 rounded-lg py-1.5" },
+                        React.createElement("p", { className: "text-xs font-bold" }, v), React.createElement("p", { className: "text-[9px] text-slate-400" }, l)))),
+                React.createElement("div", { className: "flex gap-2" },
+                    c.status === 'pending' && React.createElement(React.Fragment, null,
+                        React.createElement("button", { onClick: () => approve(c), className: "flex-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg py-1.5 text-xs font-semibold" }, "Approve"),
+                        React.createElement("button", { onClick: () => reject(c), className: "flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-1.5 text-xs font-semibold" }, "Reject")),
+                    (c.status === 'active' || c.status === 'approved') && React.createElement("button", { onClick: () => pause(c), className: "flex-1 bg-slate-100 dark:bg-ink-700 rounded-lg py-1.5 text-xs font-semibold" }, "Pause"),
+                    c.status === 'paused' && React.createElement("button", { onClick: () => resume(c), className: "flex-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg py-1.5 text-xs font-semibold" }, "Resume"),
+                    (c.status === 'active' || c.status === 'paused' || c.status === 'approved') && React.createElement("button", { onClick: () => stop(c), className: "flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-1.5 text-xs font-semibold" }, "Stop")));
+        }));
+}
+function AdminWalletPanel({ adminUid, adminEmail }) {
+    const toast = useToast();
+    const [subtab, setSubtab] = useState('manual');
+    const [filter, setFilter] = useState('pending');
+    const fundings = useWalletManualFundings(filter);
+    const cfg = useWalletConfig();
+    const [cfgForm, setCfgForm] = useState(null);
+    useEffect(() => { if (subtab === 'settings') setCfgForm(cfg); }, [subtab]);
+    const approve = async (row) => { try { await adminApproveWalletManualFunding(row, adminUid, adminEmail); toast('Approved \u2014 wallet credited', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    const reject = async (row) => { const reason = prompt('Reason for rejection:'); if (reason === null) return; try { await adminRejectWalletManualFunding(row, reason, adminUid, adminEmail); toast('Rejected', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    const saveCfg = async () => { try { await saveWalletConfig(cfgForm); toast('Wallet settings saved', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    return React.createElement("div", null,
+        React.createElement("h2", { className: "font-display text-lg font-bold mb-3 flex items-center gap-2" }, React.createElement("i", { className: "fa-solid fa-wallet text-brand-600" }), "Wallet"),
+        React.createElement("div", { className: "flex gap-2 mb-4" }, [['manual', 'Manual fundings'], ['settings', 'Settings']].map(([k, l]) => React.createElement("button", { key: k, onClick: () => setSubtab(k), className: "px-3 py-1.5 rounded-full text-xs font-semibold " + (subtab === k ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, l))),
+        subtab === 'manual' && React.createElement("div", null,
+            React.createElement("div", { className: "flex gap-2 mb-3" }, ['pending', 'approved', 'rejected', 'all'].map(f => React.createElement("button", { key: f, onClick: () => setFilter(f), className: "px-3 py-1 rounded-full text-xs font-semibold " + (filter === f ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, f))),
+            fundings.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No manual fundings in this filter."),
+            fundings.map(row => React.createElement("div", { key: row.id, className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3 mb-2" },
+                React.createElement("div", { className: "flex items-center justify-between mb-2" },
+                    React.createElement("div", null,
+                        React.createElement("p", { className: "font-semibold text-sm" }, formatNaira(row.amount)),
+                        React.createElement("p", { className: "text-xs text-slate-400" }, row.uid)),
+                    React.createElement("span", { className: "text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-ink-700 shrink-0" }, row.status)),
+                row.receiptURL && React.createElement("img", { src: row.receiptURL, onClick: () => openLightbox([row.receiptURL], 0), className: "w-28 h-20 object-cover rounded-lg cursor-zoom-in mb-2" }),
+                row.rejectionReason && React.createElement("p", { className: "text-xs text-red-500 mb-2" }, "Rejected: ", row.rejectionReason),
+                row.status === 'pending' && React.createElement("div", { className: "flex gap-2" },
+                    React.createElement("button", { onClick: () => approve(row), className: "flex-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg py-1.5 text-xs font-semibold" }, "Approve"),
+                    React.createElement("button", { onClick: () => reject(row), className: "flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-1.5 text-xs font-semibold" }, "Reject"))))),
+        subtab === 'settings' && (cfgForm ? React.createElement("div", { className: "max-w-sm space-y-3" },
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Paystack public key"),
+                React.createElement("input", { value: cfgForm.paystackPublicKey, onChange: e => setCfgForm(f => Object.assign({}, f, { paystackPublicKey: e.target.value.trim() })), placeholder: "pk_live_xxxxxxxxxxxx", className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm font-mono" })),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Cost per ad impression (\u20A6)"),
+                React.createElement("input", { type: "number", min: 0, step: "0.1", value: cfgForm.costPerImpressionNaira, onChange: e => setCfgForm(f => Object.assign({}, f, { costPerImpressionNaira: Number(e.target.value) || 0 })), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+                React.createElement("p", { className: "text-[11px] text-slate-400 mt-1" }, "How much of a campaign's budget is deducted each time it's shown to someone in the feed.")),
+            React.createElement("div", { className: "pt-2 border-t border-slate-100 dark:border-ink-700" },
+                React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 mt-3" }, "Manual bank transfer")),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Bank name"),
+                React.createElement("input", { value: cfgForm.bankName, onChange: e => setCfgForm(f => Object.assign({}, f, { bankName: e.target.value })), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" })),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Account number"),
+                React.createElement("input", { value: cfgForm.bankAccountNumber, onChange: e => setCfgForm(f => Object.assign({}, f, { bankAccountNumber: e.target.value.trim() })), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm font-mono" })),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Account name"),
+                React.createElement("input", { value: cfgForm.bankAccountName, onChange: e => setCfgForm(f => Object.assign({}, f, { bankAccountName: e.target.value })), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" })),
             React.createElement("button", { onClick: saveCfg, className: "w-full bg-brand-600 hover:bg-brand-700 text-white rounded-xl py-2.5 text-sm font-semibold" }, "Save settings")) :
             React.createElement("div", { className: "py-10 flex justify-center" }, React.createElement("div", { className: "w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" }))));
 }
