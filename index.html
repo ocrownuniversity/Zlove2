@@ -574,7 +574,7 @@ function ProfilePhotosTab({ uid }) {
     useEffect(() => {
         const unsub = db.collection('posts').where('authorId', '==', uid).limit(500)
             .onSnapshot(snap => {
-                const list = snap.docs.map(d => Object.assign({ id: d.id }, d.data())).filter(p => !p.hiddenByAdmin && !p.groupId && (p.images || []).length > 0);
+                const list = snap.docs.map(d => Object.assign({ id: d.id }, d.data())).filter(p => !p.hiddenByAdmin && !p.groupId && !p.isAd && (p.images || []).length > 0);
                 list.sort((a, b) => { var ta = a.createdAt && a.createdAt.toMillis ? a.createdAt.toMillis() : 0; var tb = b.createdAt && b.createdAt.toMillis ? b.createdAt.toMillis() : 0; return tb - ta; });
                 setPosts(list);
             }, () => setPosts([]));
@@ -4695,7 +4695,7 @@ function HomeFeed({ go }) {
         // this is what keeps a private group's posts from ever leaking into everyone's home feed.
         const unsub = db.collection('posts').orderBy('createdAt', 'desc').limit(30)
             .onSnapshot(snap => setPosts(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))
-                .filter(p => !p.hiddenByAdmin && !p.groupId)));
+                .filter(p => !p.hiddenByAdmin && !p.groupId && !p.isAd)));
         return unsub;
     }, []);
     useEffect(() => {
@@ -5131,8 +5131,10 @@ function ProfileScreen({ uid, go }) {
         const unsub = db.collection('posts').where('authorId', '==', uid).limit(50)
             .onSnapshot(snap => {
             // Group posts are excluded here too — same reasoning as HomeFeed — so a private
-            // group's posts never leak onto a member's public profile timeline.
-            const list = snap.docs.map(d => (Object.assign({ id: d.id }, d.data()))).filter(p => !p.hiddenByAdmin && !p.groupId);
+            // group's posts never leak onto a member's public profile timeline. Sponsored posts
+            // (isAd) are excluded too — they only ever show as a labelled "Sponsored" slot in
+            // the home feed via AdSlot, never as a plain, unbadged post on the profile.
+            const list = snap.docs.map(d => (Object.assign({ id: d.id }, d.data()))).filter(p => !p.hiddenByAdmin && !p.groupId && !p.isAd);
             list.sort((a, b) => { var _a, _b; return (((_a = b.createdAt) === null || _a === void 0 ? void 0 : _a.toMillis) ? b.createdAt.toMillis() : 0) - (((_b = a.createdAt) === null || _b === void 0 ? void 0 : _b.toMillis) ? a.createdAt.toMillis() : 0); });
             setPosts(list);
         });
