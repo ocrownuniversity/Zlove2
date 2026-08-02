@@ -4218,6 +4218,13 @@ function PostCard({ post, go, groupCtx, autoOpenComments }) {
                 React.createElement("i", { className: "fa-solid fa-arrow-down-to-line text-slate-400" }))),
         post.poll && React.createElement("div", { className: "px-3 sm:px-4 mb-2" }, React.createElement(PollBlock, { post: post })),
         post.gameScore && React.createElement("div", { className: "px-3 sm:px-4" }, React.createElement(GameScoreCard, { post: post, go: go })),
+        post.datingInvite && React.createElement("div", { className: "px-3 sm:px-4 mb-2" },
+            React.createElement("div", { className: "bg-gradient-to-r from-rose-500 to-brand-600 rounded-xl p-4 text-white flex items-center gap-3" },
+                React.createElement("i", { className: "fa-solid fa-heart text-2xl shrink-0" }),
+                React.createElement("div", { className: "flex-1 min-w-0" },
+                    React.createElement("p", { className: "font-bold text-sm" }, "Blueface Dating"),
+                    React.createElement("p", { className: "text-xs text-white/85" }, "Find genuine matches near you.")),
+                React.createElement("button", { onClick: () => go({ name: 'dating' }), className: "shrink-0 bg-white text-rose-600 text-xs font-bold px-3 py-2 rounded-full" }, "Join now"))),
         React.createElement("div", { className: "px-3 sm:px-4" },
             post.sharedPostId && React.createElement(SharedPostPreview, { postId: post.sharedPostId, go: go }),
             post.sharedGroupId && React.createElement(SharedGroupPreview, { groupId: post.sharedGroupId, go: go }),
@@ -4764,7 +4771,7 @@ function SearchScreen({ go, route }) {
                 React.createElement("div", { className: "space-y-2" }, friendUsers.map(u => React.createElement(PersonRow, { key: u.id, u: u })))))))));
 }
 /* ============================== NOTIFICATIONS ============================== */
-const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', reply: 'replied to your comment', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group',
+const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', reply: 'replied to your comment', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group', dating_invite: 'invited you to join Blueface Dating',
     kyc_approved: 'Your Page KYC verification was approved', kyc_rejected: 'Your Page KYC verification was rejected',
     followers_milestone: 'Your Page reached 1,000 followers', monetization_eligible: 'Your Page is now eligible for monetization',
     monetization_approved: 'Your Page monetization application was approved', monetization_rejected: 'Your Page monetization application was rejected',
@@ -4809,6 +4816,8 @@ function NotifRow({ n, go }) {
     const openNotif = () => {
         if (n.type === 'message')
             return go({ name: 'chat', chatId: chatIdFor(profile.id, n.fromUserId), otherUid: n.fromUserId });
+        if (n.type === 'dating_invite')
+            return go({ name: 'dating' });
         if (n.type === 'friend_request')
             return go({ name: 'search', tab: 'requests' });
         if (n.postId)
@@ -4881,6 +4890,76 @@ function BookmarksScreen({ go }) {
         posts.map(p => React.createElement(PostCard, { key: p.id, post: p, go: go }))));
 }
 /* ============================== PROFILE ============================== */
+function computeWorkDuration(workStart) {
+    if (!workStart) return '';
+    const parts = workStart.trim().split(/\s+/);
+    if (parts.length < 2) return '';
+    const mIdx = MONTH_NAMES.findIndex(m => m.toLowerCase().startsWith(parts[0].toLowerCase()));
+    const year = parseInt(parts[1], 10);
+    if (mIdx === -1 || isNaN(year)) return '';
+    const start = new Date(year, mIdx, 1);
+    let months = (new Date().getFullYear() - start.getFullYear()) * 12 + (new Date().getMonth() - start.getMonth());
+    if (months < 0) return '';
+    const yrs = Math.floor(months / 12), rem = months % 12;
+    const out = [];
+    if (yrs > 0) out.push(yrs + (yrs === 1 ? ' year' : ' years'));
+    if (rem > 0 || yrs === 0) out.push(rem + (rem === 1 ? ' month' : ' months'));
+    return out.join(', ');
+}
+/* Facebook-style "About" block on a profile: Things in common (other people's profiles only),
+   Personal details, Work, Education, Hobbies, Contact info. Every section is only shown when
+   there's something to show — Facebook doesn't render empty headers, and neither do we. */
+function ProfileDetailsSection({ user, me, isMe, onEdit }) {
+    const commonBits = [];
+    if (!isMe) {
+        if (user.location && me.location && user.location === me.location) commonBits.push(user.location);
+        if (user.hometown && me.hometown && user.hometown === me.hometown && user.hometown !== user.location) commonBits.push(user.hometown);
+    }
+    const hasPersonal = user.location || user.hometown || user.dob;
+    const hasWork = !!user.workplace;
+    const hasEdu = !!user.school;
+    const hasHobbies = (user.hobbies || []).length > 0;
+    const hasContact = !!user.instagramHandle;
+    if (!isMe && !commonBits.length && !hasPersonal && !hasWork && !hasEdu && !hasHobbies && !hasContact) return null;
+    const SectionHeader = (label) => React.createElement("div", { className: "flex items-center justify-between mb-2" },
+        React.createElement("p", { className: "text-base font-bold" }, label),
+        isMe && onEdit && React.createElement("button", { onClick: onEdit, className: "text-slate-400" }, React.createElement("i", { className: "fa-solid fa-pen text-sm" })));
+    return React.createElement("div", { className: "mt-4 pt-4 border-t border-slate-100 dark:border-ink-700 space-y-5" },
+        commonBits.length > 0 && React.createElement("div", { className: "bg-slate-50 dark:bg-ink-700 rounded-xl p-3" },
+            React.createElement("p", { className: "text-sm font-bold flex items-center gap-2 mb-1" }, React.createElement("i", { className: "fa-solid fa-people-arrows text-slate-400" }), "Things in common"),
+            React.createElement("p", { className: "text-sm text-slate-500 dark:text-slate-400" }, "You both added ", commonBits.map((b, i) => React.createElement(React.Fragment, { key: i }, React.createElement("b", null, b), i < commonBits.length - 1 ? ' and ' : '')), ".")),
+        (isMe || hasPersonal) && React.createElement("div", null,
+            SectionHeader("Personal details"),
+            React.createElement("div", { className: "space-y-2.5" },
+                user.location && React.createElement("p", { className: "text-sm flex items-center gap-3" }, React.createElement("i", { className: "fa-solid fa-location-dot text-slate-400 w-4 text-center" }), React.createElement("span", null, "Lives in ", React.createElement("b", null, user.location))),
+                user.hometown && React.createElement("p", { className: "text-sm flex items-center gap-3" }, React.createElement("i", { className: "fa-solid fa-house text-slate-400 w-4 text-center" }), React.createElement("span", null, "From ", React.createElement("b", null, user.hometown))),
+                user.dob && React.createElement("p", { className: "text-sm flex items-center gap-3" }, React.createElement("i", { className: "fa-solid fa-cake-candles text-slate-400 w-4 text-center" }), React.createElement("b", null, formatDobLong(user.dob))),
+                !user.location && !user.hometown && !user.dob && React.createElement("p", { className: "text-xs text-slate-400" }, "Add your city, hometown and birthday.")),
+        ),
+        (isMe || hasWork) && React.createElement("div", null,
+            SectionHeader("Work"),
+            user.workplace ? React.createElement("div", { className: "flex items-start gap-3" },
+                React.createElement("span", { className: "w-9 h-9 rounded-lg bg-slate-100 dark:bg-ink-700 flex items-center justify-center shrink-0" }, React.createElement("i", { className: "fa-solid fa-briefcase text-slate-400" })),
+                React.createElement("div", null,
+                    React.createElement("p", { className: "text-sm font-bold" }, user.workplace),
+                    user.jobTitle && React.createElement("p", { className: "text-sm text-slate-500 dark:text-slate-400" }, user.jobTitle),
+                    user.workStart && React.createElement("p", { className: "text-xs text-slate-400" }, user.workStart, " \u2013 ", user.workCurrent ? 'Present' : 'Ended', computeWorkDuration(user.workStart) && (' \u00B7 ' + computeWorkDuration(user.workStart))))) :
+                React.createElement("p", { className: "text-xs text-slate-400" }, "Add where you work.")),
+        (isMe || hasEdu) && React.createElement("div", null,
+            SectionHeader("Education"),
+            user.school ? React.createElement("div", { className: "flex items-center gap-3" },
+                React.createElement("span", { className: "w-9 h-9 rounded-lg bg-slate-100 dark:bg-ink-700 flex items-center justify-center shrink-0" }, React.createElement("i", { className: "fa-solid fa-graduation-cap text-slate-400" })),
+                React.createElement("p", { className: "text-sm font-bold" }, user.school)) :
+                React.createElement("p", { className: "text-xs text-slate-400" }, "Add your school.")),
+        (isMe || hasHobbies) && React.createElement("div", null,
+            SectionHeader("Hobbies"),
+            hasHobbies ? React.createElement("p", { className: "text-sm flex items-center gap-3" }, React.createElement("i", { className: "fa-solid fa-shapes text-slate-400 w-4 text-center" }), user.hobbies.join(', ')) :
+                React.createElement("p", { className: "text-xs text-slate-400" }, "Add your hobbies.")),
+        (isMe || hasContact) && React.createElement("div", null,
+            SectionHeader("Contact info"),
+            user.instagramHandle ? React.createElement("a", { href: "https://instagram.com/" + user.instagramHandle, target: "_blank", rel: "noopener noreferrer", className: "text-sm flex items-center gap-3 text-brand-600 dark:text-brand-400" }, React.createElement("i", { className: "fa-brands fa-instagram w-4 text-center" }), "@" + user.instagramHandle) :
+                React.createElement("p", { className: "text-xs text-slate-400" }, "Add a social link.")));
+}
 function ProfileScreen({ uid, go }) {
     const { profile: me } = useAuth();
     const toast = useToast();
@@ -4889,6 +4968,7 @@ function ProfileScreen({ uid, go }) {
     const [following, setFollowing] = useState(false);
     const [editing, setEditing] = useState(false);
     const [tab, setTab] = useState('posts');
+    const [showAllFriends, setShowAllFriends] = useState(false);
     const [uploadingAvatar, setUploadingAvatar] = useState(false);
     const [uploadingCover, setUploadingCover] = useState(false);
     const avatarInputRef = useRef();
@@ -4938,7 +5018,7 @@ function ProfileScreen({ uid, go }) {
     }, [uid]);
     const friendships = useFriendships(uid);
     const friendsCount = (friendships || []).filter(f => f.status === 'accepted').length;
-    const friendUids = (friendships || []).filter(f => f.status === 'accepted').map(f => otherUidOfFriendship(f, uid)).slice(0, 9);
+    const friendUids = (friendships || []).filter(f => f.status === 'accepted').map(f => otherUidOfFriendship(f, uid)).slice(0, showAllFriends ? 60 : 9);
     const [friendUsers, setFriendUsers] = useState([]);
     useEffect(() => {
         if (friendUids.length === 0) {
@@ -5062,10 +5142,13 @@ function ProfileScreen({ uid, go }) {
                         React.createElement("i", { className: "fa-regular fa-paper-plane" }))),
                     React.createElement("button", { onClick: toggleBlock, className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center text-sm text-red-500 shrink-0" },
                         React.createElement("i", { className: "fa-solid " + (iBlockedThem ? "fa-user-check" : "fa-ban") })))))),
+                React.createElement(ProfileDetailsSection, { user: user, me: me, isMe: isMe, onEdit: () => setEditing(true) }),
                 friendUsers.length > 0 && (React.createElement("div", { className: "mt-4 pt-4 border-t border-slate-100 dark:border-ink-700" },
                     React.createElement("div", { className: "flex items-center justify-between mb-2" },
                         React.createElement("p", { className: "text-sm font-semibold" }, "Friends"),
-                        React.createElement("p", { className: "text-xs text-slate-400" }, friendsCount + (friendsCount === 1 ? ' friend' : ' friends'))),
+                        React.createElement("div", { className: "flex items-center gap-2" },
+                            React.createElement("p", { className: "text-xs text-slate-400" }, friendsCount + (friendsCount === 1 ? ' friend' : ' friends')),
+                            !showAllFriends && friendsCount > 9 && React.createElement("button", { onClick: () => setShowAllFriends(true), className: "text-xs font-semibold text-brand-600 dark:text-brand-400" }, "See all"))),
                     React.createElement("div", { className: "grid grid-cols-3 gap-2" }, friendUsers.map(fu => (React.createElement("div", { key: fu.id, onClick: () => go({ name: 'profile', uid: fu.id }), className: "cursor-pointer text-center" },
                         React.createElement(Avatar, { user: fu, size: 14 }),
                         React.createElement("p", { className: "text-xs mt-1 truncate" }, fu.displayName || fu.username))))))),
@@ -5077,6 +5160,13 @@ function ProfileScreen({ uid, go }) {
         editing && React.createElement(EditProfileModal, { user: user, onClose: () => setEditing(false) })));
 }
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+function formatDobLong(dob) {
+    if (!dob) return '';
+    const p = dob.split('-');
+    if (p.length !== 3) return dob;
+    const m = MONTH_NAMES[Number(p[1]) - 1];
+    return m ? (Number(p[2]) + ' ' + m + ' ' + p[0]) : dob;
+}
 function DobPicker({ value, onChange }) {
     // Bug this fixes: the old version derived day/month/year purely from `value`, and `value`
     // (the parent's dob string) only ever gets set once ALL THREE are picked — so picking just
@@ -5146,7 +5236,10 @@ function EditProfileModal({ user, onClose }) {
         displayName: user.displayName || '', bio: user.bio || '', location: user.location || '',
         website: user.website || '', occupation: user.occupation || '', gender: user.gender || '',
         dob: user.dob || '', relationshipStatus: user.relationshipStatus || '',
-        phoneNumber: user.phoneNumber || '', state: user.state || '', nationality: user.nationality || ''
+        phoneNumber: user.phoneNumber || '', state: user.state || '', nationality: user.nationality || '',
+        hometown: user.hometown || '', workplace: user.workplace || '', jobTitle: user.jobTitle || '',
+        workStart: user.workStart || '', workCurrent: user.workCurrent !== false,
+        school: user.school || '', hobbies: (user.hobbies || []).join(', '), instagramHandle: user.instagramHandle || ''
     });
     const [photoFile, setPhotoFile] = useState(null);
     const [coverFile, setCoverFile] = useState(null);
@@ -5156,6 +5249,7 @@ function EditProfileModal({ user, onClose }) {
         setBusy(true);
         try {
             const update = Object.assign({}, form);
+            update.hobbies = form.hobbies.split(',').map(h => h.trim()).filter(Boolean);
             if (photoFile) {
                 const compressed = await compressImage(photoFile, 512);
                 const ref = storage.ref(`avatars/${user.id}/photo.jpg`);
@@ -5198,6 +5292,27 @@ function EditProfileModal({ user, onClose }) {
                 ].map(([key, label, type]) => (React.createElement("div", { key: key },
                     React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, label),
                     type === 'textarea' ? (React.createElement("textarea", { value: form[key], onChange: e => set(key, e.target.value), rows: 3, className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" })) : (React.createElement("input", { type: type, value: form[key], onChange: e => set(key, e.target.value), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }))))),
+                React.createElement("div", null,
+                    React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Hometown"),
+                    React.createElement("input", { value: form.hometown, onChange: e => set('hometown', e.target.value), placeholder: "e.g. Ibadan, Nigeria", className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" })),
+                React.createElement("div", { className: "pt-2 border-t border-slate-100 dark:border-ink-700" },
+                    React.createElement("p", { className: "text-xs font-semibold text-slate-500 mb-2 mt-3" }, "Work"),
+                    React.createElement("div", { className: "space-y-2" },
+                        React.createElement("input", { value: form.workplace, onChange: e => set('workplace', e.target.value), placeholder: "Company / employer", className: "w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+                        React.createElement("input", { value: form.jobTitle, onChange: e => set('jobTitle', e.target.value), placeholder: "Position", className: "w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+                        React.createElement("input", { value: form.workStart, onChange: e => set('workStart', e.target.value), placeholder: "Started (e.g. May 2012)", className: "w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+                        React.createElement("label", { className: "flex items-center gap-2 text-xs text-slate-500" },
+                            React.createElement("input", { type: "checkbox", checked: form.workCurrent, onChange: e => set('workCurrent', e.target.checked) }), "I currently work here"))),
+                React.createElement("div", null,
+                    React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Education"),
+                    React.createElement("input", { value: form.school, onChange: e => set('school', e.target.value), placeholder: "School / university", className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" })),
+                React.createElement("div", null,
+                    React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Hobbies"),
+                    React.createElement("input", { value: form.hobbies, onChange: e => set('hobbies', e.target.value), placeholder: "e.g. reading, travelling", className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+                    React.createElement("p", { className: "text-[11px] text-slate-400 mt-1" }, "Separate with commas.")),
+                React.createElement("div", null,
+                    React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Instagram"),
+                    React.createElement("input", { value: form.instagramHandle, onChange: e => set('instagramHandle', e.target.value.replace(/^@/, '')), placeholder: "username (without @)", className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" })),
                 React.createElement("div", null,
                     React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Phone number"),
                     React.createElement("input", { type: "tel", value: form.phoneNumber, onChange: e => set('phoneNumber', e.target.value.replace(/[^0-9+]/g, '')), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" })),
@@ -8500,6 +8615,24 @@ async function rejectJoinRequest(group, uid) {
     db.collection('groups').doc(group.id).update({ pendingCount: FieldValue.increment(-1) }).catch(() => { });
     db.collection('notifications').doc(uid).collection('items').add({ type: 'group_request_rejected', groupId: group.id, read: false, createdAt: FieldValue.serverTimestamp() }).catch(() => { });
 }
+/* Invite an existing Blueface member (someone already on the main website, not necessarily on
+   Dating yet) to check out Dating — just an in-app notification with a link to the Dating tab.
+   For people who aren't Blueface members at all, see DatingInviteSheet's "Invite via link" side,
+   which shares a message + signup link outside the app instead (WhatsApp/SMS/copy/native share). */
+async function inviteToDating(inviterId, inviteeUid) {
+    await db.collection('notifications').doc(inviteeUid).collection('items').add({ type: 'dating_invite', fromUserId: inviterId, read: false, createdAt: FieldValue.serverTimestamp() });
+}
+/* Posts a Dating invite to the member's own timeline — shows up in followers'/friends' feeds
+   like any other post, but PostCard renders it with a "Join Dating" call-to-action instead of
+   normal post actions being the focus. Reaches people who don't check notifications. */
+async function postDatingInvite(uid, text) {
+    const postRef = await db.collection('posts').add({
+        authorId: uid, pageId: null, text: text || '', images: [], bold: false, bgStyle: null, taggedUsers: [], audience: 'public',
+        datingInvite: true, createdAt: FieldValue.serverTimestamp(), likesCount: 0, commentsCount: 0, sharesCount: 0
+    });
+    await db.collection('users').doc(uid).update({ postsCount: FieldValue.increment(1) });
+    return postRef.id;
+}
 async function inviteToGroup(group, inviterId, inviteeUid) {
     await db.collection('groups').doc(group.id).collection('invites').doc(inviteeUid).set({ uid: inviteeUid, invitedBy: inviterId, createdAt: FieldValue.serverTimestamp() });
     db.collection('notifications').doc(inviteeUid).collection('items').add({ type: 'group_invite', fromUserId: inviterId, groupId: group.id, read: false, createdAt: FieldValue.serverTimestamp() }).catch(() => { });
@@ -10281,16 +10414,79 @@ function DatingProfileSetupStep({ dp }) {
 }
 
 /* ================= main feature: Discover / Likes / Matches / Me ================= */
+/* ---- Invite people to Dating ----
+   Two audiences, handled differently:
+   1. Existing Blueface members (friends) — get an in-app notification linking to Dating.
+   2. Anyone else, including people with no Blueface account at all — get a share-able invite
+      message + link they can receive over WhatsApp, SMS, or however the member sends it. */
+function DatingInviteSheet({ onClose }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const [friends, setFriends] = useState(null);
+    const [fq, setFq] = useState('');
+    const [invited, setInvited] = useState({});
+    useEffect(() => {
+        (async () => {
+            const snap = await db.collection('friendships').where('users', 'array-contains', profile.id).where('status', '==', 'accepted').get().catch(() => null);
+            if (!snap) { setFriends([]); return; }
+            const otherIds = snap.docs.map(d => otherUidOfFriendship(d.data(), profile.id));
+            const users = await Promise.all(otherIds.map(uid => db.collection('users').doc(uid).get()));
+            setFriends(users.filter(u => u.exists).map(u => Object.assign({ id: u.id }, u.data())));
+        })();
+    }, [profile.id]);
+    const invite = async (u) => {
+        try { await inviteToDating(profile.id, u.id); setInvited(m => Object.assign({}, m, { [u.id]: true })); }
+        catch (e) { toast(e.message, 'error'); }
+    };
+    const inviteLink = window.location.href.split('#')[0].split('?')[0];
+    const inviteMessage = (profile.displayName || 'A friend') + ' invited you to join Blueface Dating \u2014 find genuine matches near you. Sign up free: ' + inviteLink;
+    const copyMessage = () => { navigator.clipboard && navigator.clipboard.writeText(inviteMessage); toast('Invite message copied', 'success'); };
+    const shareWhatsapp = () => window.open('https://wa.me/?text=' + encodeURIComponent(inviteMessage), '_blank');
+    const shareNative = async () => { if (navigator.share) { try { await navigator.share({ text: inviteMessage }); } catch (e) { } } else copyMessage(); };
+    const [posting, setPosting] = useState(false);
+    const [posted, setPosted] = useState(false);
+    const postToTimeline = async () => {
+        setPosting(true);
+        try {
+            await postDatingInvite(profile.id, (profile.displayName || 'I') + ' just joined Blueface Dating \u2014 come find your match with me! \uD83D\uDC95');
+            setPosted(true);
+            toast('Posted to your timeline!', 'success');
+        } catch (e) { toast(e.message, 'error'); }
+        finally { setPosting(false); }
+    };
+    return React.createElement(BottomSheet, { title: "Invite to Dating", onClose: onClose },
+        React.createElement("div", { className: "px-1 pb-3 mb-3 border-b border-slate-100 dark:border-ink-700" },
+            React.createElement("button", { disabled: posting || posted, onClick: postToTimeline, className: "w-full mb-3 bg-gradient-to-r from-rose-500 to-brand-600 disabled:opacity-60 text-white rounded-xl py-2.5 text-sm font-semibold flex items-center justify-center gap-2" },
+                React.createElement("i", { className: "fa-solid " + (posted ? "fa-check" : "fa-heart") }), posted ? 'Posted to your timeline' : posting ? 'Posting\u2026' : 'Post invite to my timeline'),
+            React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mb-2" }, "Invite anyone \u2014 even if they're not on Blueface"),
+            React.createElement("div", { className: "bg-slate-50 dark:bg-ink-700 rounded-xl p-3 text-sm text-slate-600 dark:text-slate-300 mb-2" }, inviteMessage),
+            React.createElement("div", { className: "flex gap-2" },
+                React.createElement("button", { onClick: shareWhatsapp, className: "flex-1 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl py-2 text-xs font-semibold flex items-center justify-center gap-1.5" }, React.createElement("i", { className: "fa-brands fa-whatsapp" }), "WhatsApp"),
+                React.createElement("button", { onClick: copyMessage, className: "flex-1 bg-slate-100 dark:bg-ink-700 rounded-xl py-2 text-xs font-semibold flex items-center justify-center gap-1.5" }, React.createElement("i", { className: "fa-regular fa-copy" }), "Copy"),
+                navigator.share && React.createElement("button", { onClick: shareNative, className: "flex-1 bg-slate-100 dark:bg-ink-700 rounded-xl py-2 text-xs font-semibold flex items-center justify-center gap-1.5" }, React.createElement("i", { className: "fa-solid fa-share-nodes" }), "Share"))),
+        React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 px-1" }, "Invite friends already on Blueface"),
+        React.createElement("input", { autoFocus: true, value: fq, onChange: e => setFq(e.target.value), placeholder: "Search friends\u2026", className: "w-full px-3 py-2 rounded-full bg-slate-50 dark:bg-ink-700 text-sm mb-2 mx-1 focus:outline-none" }),
+        friends === null && React.createElement("p", { className: "text-center text-sm text-slate-400 py-6" }, "Loading\u2026"),
+        friends && friends.length === 0 && React.createElement("p", { className: "text-center text-sm text-slate-400 py-6" }, "No friends yet \u2014 use the invite link above instead."),
+        friends && friends.filter(u => !fq.trim() || (u.displayName || u.username || '').toLowerCase().includes(fq.toLowerCase())).map(u => React.createElement("div", { key: u.id, className: "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-ink-700" },
+            React.createElement(Avatar, { user: u, size: 9 }),
+            React.createElement("span", { className: "text-sm font-semibold flex-1 truncate" }, u.displayName || u.username),
+            React.createElement("button", { disabled: !!invited[u.id], onClick: () => invite(u), className: "text-xs font-semibold px-3 py-1.5 rounded-full " + (invited[u.id] ? "bg-slate-100 dark:bg-ink-700 text-slate-400" : "bg-brand-600 hover:bg-brand-700 text-white") }, invited[u.id] ? 'Invited' : 'Invite'))));
+}
+
 function DatingHomeScreen({ dp, go }) {
     const { profile } = useAuth();
     const [tab, setTab] = useState('discover');
+    const [inviteOpen, setInviteOpen] = useState(false);
     const likes = useDatingLikesReceived(profile.id);
     const matches = useDatingMatches(profile.id);
     const TABS = [['discover', 'Discover', 'fa-compass'], ['suggested', 'Suggested', 'fa-wand-magic-sparkles'], ['members', 'Members', 'fa-users'], ['likes', 'Likes', 'fa-heart'], ['matches', 'Matches', 'fa-comments'], ['me', 'My profile', 'fa-user']];
     return React.createElement("div", null,
         React.createElement("div", { className: "flex items-center justify-between mb-3" },
             React.createElement("h1", { className: "font-display text-xl font-bold flex items-center" }, "Dating", dp.verified && React.createElement(DatingVerifiedBadge, null)),
-            React.createElement("span", { className: "text-xs bg-rose-100 text-rose-600 px-2.5 py-1 rounded-full font-semibold" }, "Beta")),
+            React.createElement("div", { className: "flex items-center gap-2" },
+                React.createElement("button", { onClick: () => setInviteOpen(true), className: "text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-100 dark:bg-ink-700 flex items-center gap-1.5" }, React.createElement("i", { className: "fa-solid fa-user-plus" }), "Invite"),
+                React.createElement("span", { className: "text-xs bg-rose-100 text-rose-600 px-2.5 py-1 rounded-full font-semibold" }, "Beta"))),
         React.createElement("div", { className: "flex bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 mb-4 overflow-x-auto" },
             TABS.map(([k, l, icon]) => React.createElement("button", { key: k, onClick: () => setTab(k), className: "flex-1 px-3 py-3 text-sm font-semibold border-b-2 whitespace-nowrap flex items-center justify-center gap-1.5 " + (tab === k ? "border-brand-600 text-brand-600" : "border-transparent text-slate-400") },
                 React.createElement("i", { className: "fa-solid " + icon }), l,
@@ -10301,7 +10497,8 @@ function DatingHomeScreen({ dp, go }) {
         tab === 'members' && React.createElement(DatingMembersTab, { me: dp }),
         tab === 'likes' && React.createElement(DatingLikesTab, { me: dp, likes: likes }),
         tab === 'matches' && React.createElement(DatingMatchesTab, { matches: matches, go: go }),
-        tab === 'me' && React.createElement(DatingMeTab, { dp: dp }));
+        tab === 'me' && React.createElement(DatingMeTab, { dp: dp }),
+        inviteOpen && React.createElement(DatingInviteSheet, { onClose: () => setInviteOpen(false) }));
 }
 
 function DatingFiltersSheet({ filters, onApply, onClose }) {
