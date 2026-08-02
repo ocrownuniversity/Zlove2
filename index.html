@@ -3138,7 +3138,7 @@ function MainApp({ route, setRoute }) {
                 route.name === 'listing' && React.createElement(ListingDetailScreen, { id: route.id, go: go }),
                 route.name === 'listingForm' && React.createElement(ListingFormScreen, { id: route.id, go: go }),
                 route.name === 'messages' && React.createElement(ChatListScreen, { go: go }),
-                route.name === 'chat' && React.createElement(ChatWindow, { chatId: route.chatId, otherUid: route.otherUid, go: go }),
+                route.name === 'chat' && React.createElement(ChatWindow, { chatId: route.chatId, otherUid: route.otherUid, pageId: route.pageId, go: go }),
                 route.name === 'notifications' && React.createElement(NotificationsScreen, { go: go }),
                 route.name === 'bookmarks' && React.createElement(BookmarksScreen, { go: go }),
                 route.name === 'post' && React.createElement(PostDetailScreen, { id: route.id, go: go, openComments: route.openComments }),
@@ -5120,7 +5120,7 @@ function ProfileScreen({ uid, go }) {
                 React.createElement("p", { className: "text-slate-400 text-sm" },
                     "@",
                     user.username),
-                React.createElement("div", { className: "flex gap-5 mt-3 text-sm" },
+                React.createElement("div", { className: "flex gap-5 mt-3 text-sm font-bold" },
                     React.createElement("span", null,
                         React.createElement("b", null, user.postsCount || 0),
                         " ",
@@ -5138,7 +5138,7 @@ function ProfileScreen({ uid, go }) {
                         " ",
                         React.createElement("span", { className: "text-slate-400" }, "Following"))),
                 user.bio && React.createElement("p", { className: "text-sm mt-3 leading-relaxed" }, user.bio),
-                React.createElement("div", { className: "flex flex-wrap gap-x-4 gap-y-1.5 mt-2 text-xs text-slate-500 dark:text-slate-400" },
+                React.createElement("div", { className: "flex flex-wrap gap-x-4 gap-y-1.5 mt-2 text-xs text-slate-500 dark:text-slate-400 font-bold" },
                     user.occupation && React.createElement("span", null,
                         React.createElement("i", { className: "fa-solid fa-briefcase mr-1" }),
                         user.occupation),
@@ -5692,7 +5692,7 @@ function PageProfileScreen({ id, go }) {
                 React.createElement("div", { className: "flex flex-col gap-2" },
                     React.createElement("div", { className: "flex flex-wrap items-center gap-2" },
                         React.createElement(PageFollowButton, { page: page, className: "flex-1 min-w-[140px] rounded-lg py-2.5 text-sm font-bold" }),
-                        React.createElement("button", { onClick: () => go({ name: 'chat', chatId: chatIdFor(me.id, page.ownerId), otherUid: page.ownerId }), className: "bg-slate-100 dark:bg-ink-700 rounded-lg w-11 h-11 flex items-center justify-center shrink-0", title: "Message" }, React.createElement("i", { className: "fa-solid fa-message" })),
+                        React.createElement("button", { onClick: () => go({ name: 'chat', chatId: chatIdFor(me.id, page.ownerId), otherUid: page.ownerId, pageId: id }), className: "bg-slate-100 dark:bg-ink-700 rounded-lg w-11 h-11 flex items-center justify-center shrink-0", title: "Message" }, React.createElement("i", { className: "fa-solid fa-message" })),
                         isOwner && React.createElement("div", { className: "relative shrink-0" },
                             React.createElement("button", { onClick: () => setMenuOpen(v => !v), className: "bg-slate-100 dark:bg-ink-700 rounded-lg w-11 h-11 flex items-center justify-center", title: "Manage Page" }, React.createElement("i", { className: "fa-solid fa-briefcase" })),
                             menuOpen && React.createElement("div", { className: "absolute right-0 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-600 z-10 w-56" },
@@ -7214,11 +7214,12 @@ function MessageBubble({ message, isMe, otherUid, otherUser, showAvatar, menuOpe
                 isMe && message.type === 'text' && React.createElement("button", { onClick: () => { onEdit(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Edit"),
                 React.createElement("button", { onClick: () => { onDelete(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Delete for me"))))));
 }
-function ChatWindow({ chatId, otherUid, go }) {
+function ChatWindow({ chatId, otherUid, pageId, go }) {
     var _a;
     const { profile } = useAuth();
     const toast = useToast();
     const [otherUser, setOtherUser] = useState(null);
+    const [pageInfo, setPageInfo] = useState(pageId ? undefined : null);
     const [chatDoc, setChatDoc] = useState(null);
     const [messages, setMessages] = useState(null);
     const [text, setText] = useState('');
@@ -7242,6 +7243,11 @@ function ChatWindow({ chatId, otherUid, go }) {
     const docInputRef = useRef();
     const [chatReady, setChatReady] = useState(false);
     useEffect(() => { const unsub = db.collection('users').doc(otherUid).onSnapshot(s => setOtherUser(s.exists ? Object.assign({ id: s.id }, s.data()) : null)); return unsub; }, [otherUid]);
+    useEffect(() => {
+        if (!pageId) { setPageInfo(null); return; }
+        const unsub = db.collection('fanPages').doc(pageId).onSnapshot(s => setPageInfo(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setPageInfo(null));
+        return unsub;
+    }, [pageId]);
     // Root cause of "stuck on Loading": the chat/chatMembers docs were only ever created
     // inside sendChatMessage(), but ChatWindow attaches its listeners as soon as it's opened
     // (e.g. from the profile "Message" button), before any message has been sent. If the chat
@@ -7417,34 +7423,36 @@ function ChatWindow({ chatId, otherUid, go }) {
         else
             await db.collection('chats').doc(chatId).collection('messages').doc(m.id).update({ [key]: emoji });
     };
-    if (!otherUser)
+    if (!otherUser || pageInfo === undefined)
         return React.createElement("div", { className: "p-6" },
             React.createElement(PostSkeleton, null));
+    const displayIdentity = pageId && pageInfo ? pageInfo : otherUser;
+    const identityRoute = pageId && pageInfo ? { name: 'page', id: pageId } : { name: 'profile', uid: otherUid };
     const visibleMessages = (messages || []).filter(m => !(m.deletedFor || []).includes(profile.id));
     return (React.createElement("div", { className: "flex flex-col bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 md:rounded-2xl overflow-hidden h-[calc(100dvh-7.25rem)] md:h-[calc(100vh-2rem)]" },
         React.createElement("div", { className: "flex items-center gap-3 px-3 py-2.5 border-b border-slate-100 dark:border-ink-700 shrink-0" },
             React.createElement("button", { onClick: () => go({ name: 'messages' }), className: "text-[#0866FF] w-8 h-8 flex items-center justify-center md:hidden" },
                 React.createElement("i", { className: "fa-solid fa-arrow-left" })),
-            React.createElement("div", { className: "relative cursor-pointer", onClick: () => go({ name: 'profile', uid: otherUid }) },
-                React.createElement(Avatar, { user: otherUser, size: 9 }),
-                isUserOnline(otherUser) && React.createElement("span", { className: "absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-white dark:border-ink-800" })),
-            React.createElement("div", { className: "flex-1 min-w-0 cursor-pointer", onClick: () => go({ name: 'profile', uid: otherUid }) },
-                React.createElement("p", { className: "font-semibold text-sm truncate" }, otherUser.displayName),
-                React.createElement("p", { className: "text-xs text-slate-400 truncate" }, ((_a = chatDoc === null || chatDoc === void 0 ? void 0 : chatDoc.typing) === null || _a === void 0 ? void 0 : _a[otherUid]) ? React.createElement("span", { className: "text-[#0866FF]" }, "typing\u2026") : lastSeenLabel(otherUser))),
-            React.createElement("button", { className: "text-[#0866FF] w-9 h-9 rounded-full hover:bg-[#0866FF]/10 flex items-center justify-center" },
+            React.createElement("div", { className: "relative cursor-pointer", onClick: () => go(identityRoute) },
+                React.createElement(Avatar, { user: displayIdentity, size: 9 }),
+                !pageId && isUserOnline(otherUser) && React.createElement("span", { className: "absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-white dark:border-ink-800" })),
+            React.createElement("div", { className: "flex-1 min-w-0 cursor-pointer", onClick: () => go(identityRoute) },
+                React.createElement("p", { className: "font-semibold text-sm truncate" }, displayIdentity.displayName),
+                React.createElement("p", { className: "text-xs text-slate-400 truncate" }, pageId ? "Page \u00B7 messages are received by the Page owner" : (((_a = chatDoc === null || chatDoc === void 0 ? void 0 : chatDoc.typing) === null || _a === void 0 ? void 0 : _a[otherUid]) ? React.createElement("span", { className: "text-[#0866FF]" }, "typing\u2026") : lastSeenLabel(otherUser)))),
+            !pageId && React.createElement("button", { className: "text-[#0866FF] w-9 h-9 rounded-full hover:bg-[#0866FF]/10 flex items-center justify-center" },
                 React.createElement("i", { className: "fa-solid fa-phone" })),
-            React.createElement("button", { className: "text-[#0866FF] w-9 h-9 rounded-full hover:bg-[#0866FF]/10 flex items-center justify-center" },
+            !pageId && React.createElement("button", { className: "text-[#0866FF] w-9 h-9 rounded-full hover:bg-[#0866FF]/10 flex items-center justify-center" },
                 React.createElement("i", { className: "fa-solid fa-video" }))),
         React.createElement("div", { className: "flex-1 overflow-y-auto px-4 py-4 space-y-1 bg-white dark:bg-ink-800" },
             messages === null && React.createElement("p", { className: "text-sm text-slate-400 text-center" }, "Loading\u2026"),
             (messages === null || messages === void 0 ? void 0 : messages.length) === 0 && (React.createElement("div", { className: "text-center text-slate-400 py-10" },
                 React.createElement("div", { className: "flex justify-center" },
-                    React.createElement(Avatar, { user: otherUser, size: 16 })),
-                React.createElement("p", { className: "mt-3 font-semibold text-sm text-slate-600 dark:text-slate-300" }, otherUser.displayName),
+                    React.createElement(Avatar, { user: displayIdentity, size: 16 })),
+                React.createElement("p", { className: "mt-3 font-semibold text-sm text-slate-600 dark:text-slate-300" }, displayIdentity.displayName),
                 React.createElement("p", { className: "text-xs mt-1" }, "Say hello to start the conversation \uD83D\uDC4B"))),
             visibleMessages.map((m, i) => (React.createElement(React.Fragment, { key: m.id },
                 React.createElement(DateSeparator, { prev: visibleMessages[i - 1], curr: m }),
-                React.createElement(MessageBubble, { message: m, isMe: m.senderId === profile.id, otherUid: otherUid, otherUser: otherUser, showAvatar: !visibleMessages[i + 1] || visibleMessages[i + 1].senderId !== m.senderId, menuOpen: activeMenuId === m.id, setMenuOpen: (v) => setActiveMenuId(v ? m.id : null), onReply: () => setReplyTo(m), onForward: () => setForwardMsg(m), onCopy: () => copyText(m), onEdit: () => { setEditingMessage(m); setText(m.text || ''); }, onDelete: () => deleteForMe(m), onReact: (e) => react(m, e) })))),
+                React.createElement(MessageBubble, { message: m, isMe: m.senderId === profile.id, otherUid: otherUid, otherUser: displayIdentity, showAvatar: !visibleMessages[i + 1] || visibleMessages[i + 1].senderId !== m.senderId, menuOpen: activeMenuId === m.id, setMenuOpen: (v) => setActiveMenuId(v ? m.id : null), onReply: () => setReplyTo(m), onForward: () => setForwardMsg(m), onCopy: () => copyText(m), onEdit: () => { setEditingMessage(m); setText(m.text || ''); }, onDelete: () => deleteForMe(m), onReact: (e) => react(m, e) })))),
             React.createElement("div", { ref: bottomRef })),
         blocked && (React.createElement("div", { className: "px-4 py-2 text-xs text-center text-red-500 bg-red-50 dark:bg-red-900/20 shrink-0" }, iBlockedThem ? "You've blocked this user." : "You can't reply to this conversation.")),
         (replyTo || editingMessage) && (React.createElement("div", { className: "flex items-center justify-between px-4 py-2 border-t border-slate-100 dark:border-ink-700 bg-slate-50 dark:bg-ink-700 shrink-0" },
