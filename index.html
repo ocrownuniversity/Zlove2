@@ -976,6 +976,17 @@ function usePendingAdCount() {
     }, []);
     return count;
 }
+// Live count of marketplace listings awaiting review, shown as a badge on the Super Admin
+// "Marketplace" tab — mirrors usePendingAdCount() above.
+function usePendingListingCount() {
+    const [count, setCount] = useState(0);
+    useEffect(() => {
+        const unsub = db.collection('listings').where('status', '==', 'pending')
+            .onSnapshot(snap => setCount(snap.size), () => setCount(0));
+        return unsub;
+    }, []);
+    return count;
+}
 // Live follow status for the signed-in user against one Page. Reads a single doc
 // (uid_pageId) rather than the whole pageFollows-for-this-page query, so every button on
 // the site (page profile, timeline posts, Page cards) stays in sync the instant a follow
@@ -1110,9 +1121,16 @@ async function uploadListingImages(sellerId, files) {
 async function createListing(sellerId, fields, files) {
     const images = await uploadListingImages(sellerId, files);
     const doc = await db.collection('listings').add(Object.assign({}, fields, {
-        sellerId, images, status: 'active', featured: false, sponsored: false, promotionStatus: 'none',
+        sellerId, images, status: 'pending', featured: false, sponsored: false, promotionStatus: 'none',
         createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp()
     }));
+    // Notify the admin immediately, same as ad campaigns, so a new listing doesn't sit
+    // unreviewed — the "pending" queue in the admin Marketplace tab already existed but had
+    // nothing pointing admins at it.
+    db.collection('notifications').doc(SUPER_ADMIN_UID).collection('items').add({
+        type: 'listing_pending', fromUserId: sellerId, listingId: doc.id, title: fields.title || '',
+        read: false, createdAt: FieldValue.serverTimestamp()
+    }).catch(() => { });
     return doc.id;
 }
 async function updateListing(listingId, sellerId, fields, existingImages, newFiles) {
@@ -4716,12 +4734,88 @@ function PeopleYouMayKnow({ go }) {
         "See all");
     return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-lg border border-slate-200 dark:border-ink-700 p-3 mb-2 -mx-2 sm:mx-0 sm:rounded-2xl" }, header, grid, seeAll);
 }
+// Live feed of recently-listed, approved (status:'active') marketplace items, used to weave
+// products into the home timeline — same idea as ReelsStrip's data feeding TimelineReelCard,
+// just for Marketplace. Sold/pending/removed listings never enter the timeline.
+function useRecentTimelineListings() {
+    const [rows, setRows] = useState(null);
+    useEffect(() => {
+        const unsub = db.collection('listings').where('status', '==', 'active').orderBy('createdAt', 'desc').limit(30)
+            .onSnapshot(snap => setRows(snap.docs.map(d => Object.assign({ id: d.id }, d.data()))), () => setRows([]));
+        return unsub;
+    }, []);
+    return rows;
+}
+/* Renders one marketplace listing inline in the home timeline, styled to match a normal post
+   card (author row, image, caption) so it reads as part of the feed rather than a separate
+   widget — with a WhatsApp button and a direct in-app Message button to the seller, plus a
+   link through to the full listing. */
+function ListingFeedCard({ listing, go }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const [seller, setSeller] = useState(null);
+    const [favCount, setFavCount] = useState(0);
+    const [favorited, setFavorited] = useState(false);
+    const [busy, setBusy] = useState(false);
+    useEffect(() => {
+        const unsub = db.collection('users').doc(listing.sellerId).onSnapshot(s => setSeller(s.exists ? Object.assign({ id: s.id }, s.data()) : null));
+        return unsub;
+    }, [listing.sellerId]);
+    useEffect(() => {
+        const unsub = db.collection('listings').doc(listing.id).collection('favorites').onSnapshot(snap => {
+            setFavCount(snap.size);
+            setFavorited(snap.docs.some(d => d.id === profile.id));
+        }, () => { });
+        return unsub;
+    }, [listing.id, profile.id]);
+    const isOwner = listing.sellerId === profile.id;
+    const openListing = () => go({ name: 'listing', id: listing.id });
+    const toggleFav = async () => {
+        setBusy(true);
+        try { await toggleListingFavorite(listing.id, profile.id, favorited); }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    const messageSeller = async () => {
+        try {
+            const chatId = await ensureChat(profile.id, listing.sellerId);
+            await sendChatMessage(profile.id, chatId, listing.sellerId, { type: 'text', text: `Hi! I'm interested in "${listing.title}" (${formatNaira(listing.price)}).` });
+            go({ name: 'chat', chatId, otherUid: listing.sellerId });
+        } catch (e) { toast(e.message, 'error'); }
+    };
+    const whatsappHref = listing.whatsappNumber ? ("https://wa.me/" + listing.whatsappNumber.replace(/[^\d]/g, '') + "?text=" + encodeURIComponent(`Hi! I'm interested in "${listing.title}" (${formatNaira(listing.price)}).`)) : null;
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-lg sm:rounded-2xl mb-2 overflow-hidden" },
+        React.createElement("div", { className: "flex items-center gap-3 px-3 sm:px-4 py-3" },
+            React.createElement("div", { className: "flex items-center gap-3 cursor-pointer min-w-0 flex-1", onClick: () => go({ name: 'profile', uid: listing.sellerId }) },
+                React.createElement(Avatar, { user: seller, size: 10 }),
+                React.createElement("div", { className: "min-w-0" },
+                    React.createElement("div", { className: "flex items-center gap-1.5" },
+                        React.createElement("span", { className: "font-semibold text-sm truncate" }, seller ? seller.displayName : '\u2026'),
+                        React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 dark:text-emerald-400 px-1.5 py-0.5 rounded flex items-center gap-1 shrink-0" }, React.createElement("i", { className: "fa-solid fa-store" }), "Marketplace")),
+                    React.createElement("span", { className: "text-[11px] text-slate-400" }, timeAgo(listing.createdAt)))),
+            React.createElement("button", { onClick: openListing, className: "text-slate-400 shrink-0" }, React.createElement("i", { className: "fa-solid fa-ellipsis" }))),
+        (listing.images || []).length > 0 && React.createElement("img", { src: listing.images[0], loading: "lazy", onClick: () => openLightbox(listing.images, 0), className: "w-full max-h-[420px] object-cover cursor-zoom-in" }),
+        React.createElement("div", { className: "px-3 sm:px-4 pt-3" },
+            React.createElement("p", { className: "text-lg font-display font-bold" }, formatNaira(listing.price)),
+            React.createElement("p", { className: "text-sm font-semibold mb-1 cursor-pointer", onClick: openListing }, listing.title),
+            listing.description && React.createElement(ExpandableText, { text: listing.description, limit: 140, className: "text-sm text-slate-600 dark:text-slate-300 mb-2" })),
+        React.createElement("div", { className: "flex items-center gap-2 px-3 sm:px-4 pb-3 pt-1" },
+            React.createElement("button", { onClick: toggleFav, disabled: busy, className: "flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold " + (favorited ? "bg-red-50 text-red-500 dark:bg-red-900/20" : "bg-slate-100 dark:bg-ink-700") },
+                React.createElement("i", { className: (favorited ? "fa-solid" : "fa-regular") + " fa-heart" }), favCount || ''),
+            !isOwner && whatsappHref && React.createElement("a", { href: whatsappHref, target: "_blank", rel: "noopener", className: "flex-1 flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold px-3 py-2 rounded-full" },
+                React.createElement("i", { className: "fa-brands fa-whatsapp" }), "WhatsApp"),
+            !isOwner && React.createElement("button", { onClick: messageSeller, className: "flex-1 flex items-center justify-center gap-1.5 bg-slate-100 dark:bg-ink-700 hover:bg-slate-200 dark:hover:bg-ink-600 text-xs font-bold px-3 py-2 rounded-full" },
+                React.createElement("i", { className: "fa-solid fa-message" }), "Message"),
+            React.createElement("button", { onClick: openListing, className: "flex-1 flex items-center justify-center gap-1.5 bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold px-3 py-2 rounded-full" },
+                "View", React.createElement("i", { className: "fa-solid fa-arrow-right text-[10px]" }))));
+}
 function HomeFeed({ go }) {
     const { profile } = useAuth();
     const [posts, setPosts] = useState(null);
     const [reels, setReels] = useState(null);
     const [refreshing, setRefreshing] = useState(false);
     const activeCampaigns = useActiveAdCampaigns();
+    const listings = useRecentTimelineListings();
     // The sponsored slot for this feed session is decided ONCE (not on every Firestore snapshot
     // update, which fires repeatedly as posts/reels sync) so it can't flicker in and then get
     // silently dropped again before the user ever sees it. `decidedRef` guards against choosing
@@ -4773,16 +4867,17 @@ function HomeFeed({ go }) {
                 .filter(r => !r.hiddenByAdmin && (r.privacy === 'public' || r.authorId === profile.id))), () => setReels([]));
         return unsub;
     }, [profile.id]);
-    // Merge posts and reels into a single chronological timeline, exactly like Instagram/
-    // Facebook do, instead of keeping reels siloed to the strip above. Admin-pinned posts
-    // still float to the top; reels don't currently support a home-feed "pin" (their `pinned`
-    // flag means "pinned to profile", a different feature) so they're excluded from that check.
+    // Merge posts, reels, and marketplace listings into a single chronological timeline, exactly
+    // like Instagram/Facebook do, instead of keeping them siloed to separate strips/tabs.
+    // Admin-pinned posts still float to the top; reels/listings don't currently support a
+    // home-feed "pin" so they're excluded from that check.
     const items = useMemo(() => {
         if (posts === null && reels === null)
             return null;
         const merged = [
             ...(posts || []).map(p => ({ kind: 'post', data: p })),
             ...(reels || []).map(r => ({ kind: 'reel', data: r })),
+            ...(listings || []).map(l => ({ kind: 'listing', data: l })),
         ];
         merged.sort((a, b) => {
             const pinA = a.kind === 'post' && a.data.pinned ? 1 : 0;
@@ -4800,7 +4895,7 @@ function HomeFeed({ go }) {
             return withAds;
         }
         return merged;
-    }, [posts, reels, adSlot]);
+    }, [posts, reels, listings, adSlot]);
     return (React.createElement("div", null,
         React.createElement(PostTriggerBar, { go: go }),
         React.createElement(ReelsStrip, { go: go }),
@@ -4816,7 +4911,9 @@ function HomeFeed({ go }) {
                 ? React.createElement(PostCard, { key: 'p-' + it.data.id, post: it.data, go: go })
                 : it.kind === 'ad'
                     ? React.createElement(AdSlot, { key: 'ad-' + it.data.id, campaign: it.data, go: go, onUnavailable: handleAdUnavailable })
-                    : React.createElement(TimelineReelCard, { key: 'r-' + it.data.id, reel: it.data, go: go });
+                    : it.kind === 'listing'
+                        ? React.createElement(ListingFeedCard, { key: 'l-' + it.data.id, listing: it.data, go: go })
+                        : React.createElement(TimelineReelCard, { key: 'r-' + it.data.id, reel: it.data, go: go });
             return React.createElement(React.Fragment, null,
                 items.slice(0, cutoff).map(renderItem),
                 React.createElement(PeopleYouMayKnow, { go: go }),
@@ -4928,7 +5025,7 @@ function SearchScreen({ go, route }) {
                 React.createElement("div", { className: "space-y-2" }, friendUsers.map(u => React.createElement(PersonRow, { key: u.id, u: u })))))))));
 }
 /* ============================== NOTIFICATIONS ============================== */
-const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', reply: 'replied to your comment', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', ad_campaign_pending: 'submitted a new ad campaign for review', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group', dating_invite: 'invited you to join Blueface Dating', friend_birthday: '\uD83C\uDF82 is celebrating a birthday today \u2014 wish them well!',
+const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', reply: 'replied to your comment', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', ad_campaign_pending: 'submitted a new ad campaign for review', listing_pending: 'submitted a new marketplace listing for review', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group', dating_invite: 'invited you to join Blueface Dating', friend_birthday: '\uD83C\uDF82 is celebrating a birthday today \u2014 wish them well!',
     kyc_approved: 'Your Page KYC verification was approved', kyc_rejected: 'Your Page KYC verification was rejected',
     followers_milestone: 'Your Page reached 1,000 followers', monetization_eligible: 'Your Page is now eligible for monetization',
     monetization_approved: 'Your Page monetization application was approved', monetization_rejected: 'Your Page monetization application was rejected',
@@ -6334,6 +6431,7 @@ function SuperAdminApp({ theme, setTheme }) {
     const pendingNameChangeCount = usePendingPageNameChangeCount();
     const pendingDatingKycCount = usePendingDatingKycCount();
     const pendingAdCount = usePendingAdCount();
+    const pendingListingCount = usePendingListingCount();
     const SA_TABS = [
         { key: 'dashboard', label: 'Dashboard', icon: 'fa-gauge-high' },
         { key: 'users', label: 'Users', icon: 'fa-users' },
@@ -6345,7 +6443,7 @@ function SuperAdminApp({ theme, setTheme }) {
         { key: 'monetization', label: 'Monetization', icon: 'fa-sack-dollar' },
         { key: 'ads', label: 'Ads' + (pendingAdCount ? ' (' + pendingAdCount + ')' : ''), icon: 'fa-bullhorn' },
         { key: 'wallet', label: 'Wallet', icon: 'fa-wallet' },
-        { key: 'marketplace', label: 'Marketplace', icon: 'fa-store' },
+        { key: 'marketplace', label: 'Marketplace' + (pendingListingCount ? ' (' + pendingListingCount + ')' : ''), icon: 'fa-store' },
         { key: 'reports', label: 'Reports', icon: 'fa-flag' },
         { key: 'announcements', label: 'Announcements', icon: 'fa-bullhorn' },
         { key: 'settings', label: 'Site Settings', icon: 'fa-gear' },
@@ -7899,6 +7997,7 @@ function ListingFormScreen({ id, go }) {
     const [price, setPrice] = useState('');
     const [condition, setCondition] = useState('used');
     const [location, setLocation] = useState('');
+    const [whatsappNumber, setWhatsappNumber] = useState('');
     const [existingImages, setExistingImages] = useState([]);
     const [newFiles, setNewFiles] = useState([]);
     const [newPreviews, setNewPreviews] = useState([]);
@@ -7924,6 +8023,7 @@ function ListingFormScreen({ id, go }) {
             setPrice(String(d.price));
             setCondition(d.condition);
             setLocation(d.location);
+            setWhatsappNumber(d.whatsappNumber || '');
             setExistingImages(d.images || []);
             setLoaded(true);
         });
@@ -7953,7 +8053,7 @@ function ListingFormScreen({ id, go }) {
         }
         setSaving(true);
         try {
-            const fields = { title: title.trim(), description: description.trim(), category, price: Number(price), condition, location: location.trim() };
+            const fields = { title: title.trim(), description: description.trim(), category, price: Number(price), condition, location: location.trim(), whatsappNumber: whatsappNumber.trim() || null };
             if (id) {
                 await updateListing(id, profile.id, fields, existingImages, newFiles);
                 toast('Listing updated', 'success');
@@ -7994,6 +8094,8 @@ function ListingFormScreen({ id, go }) {
             React.createElement("input", { value: price, onChange: e => setPrice(e.target.value.replace(/[^0-9]/g, '')), inputMode: "numeric", placeholder: "Price (\u20A6)", className: "w-full px-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" }),
             React.createElement("div", { className: "flex gap-2" }, [['new', 'New'], ['used', 'Used']].map(([k, l]) => React.createElement("button", { key: k, onClick: () => setCondition(k), className: "flex-1 py-2.5 rounded-xl text-sm font-semibold border " + (condition === k ? "bg-brand-600 text-white border-brand-600" : "border-slate-200 dark:border-ink-700 text-slate-500") }, l))),
             React.createElement("input", { value: location, onChange: e => setLocation(e.target.value), placeholder: "Location (e.g. Ibadan, Oyo State)", className: "w-full px-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" }),
+            React.createElement("input", { type: "tel", value: whatsappNumber, onChange: e => setWhatsappNumber(e.target.value), placeholder: "WhatsApp number (optional, e.g. +234\u2026)", className: "w-full px-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" }),
+            React.createElement("p", { className: "text-[11px] text-slate-400 -mt-2" }, "Shown as a WhatsApp button on this listing so buyers can reach you directly."),
             React.createElement("button", { onClick: submit, disabled: saving, className: "w-full py-3 rounded-xl bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white font-semibold text-sm" }, saving ? 'Saving\u2026' : (id ? 'Save Changes' : 'Submit Listing')))));
 }
 function OfferRow({ offer, listing, go }) {
@@ -8143,6 +8245,9 @@ function ListingDetailScreen({ id, go }) {
             React.createElement("button", { onClick: contactSeller, className: "flex-1 py-3 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-sm font-semibold" },
                 React.createElement("i", { className: "fa-regular fa-paper-plane mr-1.5" }),
                 "Contact Seller"),
+            listing.whatsappNumber && React.createElement("a", { href: "https://wa.me/" + listing.whatsappNumber.replace(/[^\d]/g, '') + "?text=" + encodeURIComponent(`Hi! I'm interested in "${listing.title}" (${formatNaira(listing.price)}).`), target: "_blank", rel: "noopener", className: "flex-1 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-semibold text-center" },
+                React.createElement("i", { className: "fa-brands fa-whatsapp mr-1.5" }),
+                "WhatsApp"),
             React.createElement("button", { onClick: () => setShowOfferForm(v => !v), className: "flex-1 py-3 rounded-xl bg-slate-100 dark:bg-ink-700 text-sm font-semibold" }, "Make Offer"))),
         showOfferForm && !isOwner && (React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700 mb-3" },
             React.createElement("input", { value: offerAmount, onChange: e => setOfferAmount(e.target.value.replace(/[^0-9]/g, '')), inputMode: "numeric", placeholder: "Your offer (\u20A6)", className: "w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-ink-700 text-sm mb-2" }),
