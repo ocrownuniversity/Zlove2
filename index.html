@@ -552,6 +552,52 @@ function ImageLightbox() {
         images.length > 1 && React.createElement("div", { className: "absolute bottom-4 left-1/2 -translate-x-1/2 text-white/80 text-xs font-semibold bg-white/10 px-3 py-1 rounded-full" }, (index + 1) + " / " + images.length),
         React.createElement("p", { className: "absolute bottom-4 right-4 text-white/40 text-[11px] hidden sm:block" }, "Scroll or pinch to zoom \u00b7 double-click to reset"));
 }
+/* Groups a flat list of {url, createdAt} photo entries into month/year sections, newest first —
+   same grouping style Facebook uses in a profile's Photos tab. */
+function groupPhotosByMonth(flat) {
+    const groups = [];
+    let currentKey = null, currentGroup = null;
+    flat.forEach(item => {
+        const d = item.createdAt && item.createdAt.toDate ? item.createdAt.toDate() : (item.createdAt ? new Date(item.createdAt) : null);
+        const key = d ? (d.getFullYear() + '-' + d.getMonth()) : 'unknown';
+        const label = d ? d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }) : 'Date unknown';
+        if (key !== currentKey) { currentGroup = { key, label, items: [] }; groups.push(currentGroup); currentKey = key; }
+        currentGroup.items.push(Object.assign({}, item, { _date: d }));
+    });
+    return groups;
+}
+/* "All my photos" grid for a profile — every image from every post the person has ever shared
+   (their public timeline, not group posts), newest first, grouped by month with the upload date
+   shown on each thumbnail. Tapping a photo opens the full-screen lightbox at that photo. */
+function ProfilePhotosTab({ uid }) {
+    const [posts, setPosts] = useState(undefined);
+    useEffect(() => {
+        const unsub = db.collection('posts').where('authorId', '==', uid).limit(500)
+            .onSnapshot(snap => {
+                const list = snap.docs.map(d => Object.assign({ id: d.id }, d.data())).filter(p => !p.hiddenByAdmin && !p.groupId && (p.images || []).length > 0);
+                list.sort((a, b) => { var ta = a.createdAt && a.createdAt.toMillis ? a.createdAt.toMillis() : 0; var tb = b.createdAt && b.createdAt.toMillis ? b.createdAt.toMillis() : 0; return tb - ta; });
+                setPosts(list);
+            }, () => setPosts([]));
+        return unsub;
+    }, [uid]);
+    if (posts === undefined) return React.createElement("div", { className: "py-16 flex justify-center" }, React.createElement("div", { className: "w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" }));
+    const flat = [];
+    posts.forEach(p => (p.images || []).forEach(url => flat.push({ url, createdAt: p.createdAt, postId: p.id })));
+    if (flat.length === 0) return React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "No photos yet.");
+    const allUrls = flat.map(f => f.url);
+    const groups = groupPhotosByMonth(flat);
+    let runningIndex = 0;
+    return React.createElement("div", { className: "space-y-5" }, groups.map(g => {
+        const startIndex = runningIndex;
+        runningIndex += g.items.length;
+        return React.createElement("div", { key: g.key },
+            React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mb-2" }, g.label),
+            React.createElement("div", { className: "grid grid-cols-3 gap-1.5" }, g.items.map((item, i) => React.createElement("div", { key: item.postId + '_' + i, className: "relative aspect-square" },
+                React.createElement("img", { src: item.url, onClick: () => openLightbox(allUrls, startIndex + i), loading: "lazy", className: "w-full h-full object-cover rounded-lg cursor-zoom-in" }),
+                item._date && React.createElement("span", { className: "absolute bottom-1 right-1 text-[9px] leading-none text-white bg-black/55 px-1.5 py-1 rounded" }, item._date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }))))));
+    }));
+}
+
 // Small "with @a, @b" line shown under an author's name when a post/comment tags people.
 function TaggedLine({ users, go }) {
     if (!(users === null || users === void 0 ? void 0 : users.length))
@@ -4953,8 +4999,6 @@ function ProfileScreen({ uid, go }) {
     if (!user)
         return React.createElement(PostSkeleton, null);
     const isMe = uid === me.id;
-    const photoPosts = posts.filter(p => { var _a; return ((_a = p.images) === null || _a === void 0 ? void 0 : _a.length) > 0; });
-    const shownPosts = tab === 'photos' ? photoPosts : posts;
     return (React.createElement("div", null,
         React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 overflow-hidden mb-4" },
             React.createElement("div", { className: "h-44 md:h-56 bg-gradient-to-r from-brand-500 to-brand-700 relative" },
@@ -5028,7 +5072,8 @@ function ProfileScreen({ uid, go }) {
             React.createElement("div", { className: "flex border-t border-slate-100 dark:border-ink-700" }, [['posts', 'Posts'], ['reels', 'Reels'], ['photos', 'Photos'], ['listings', 'Listings' + (sellerListings.length ? ' (' + sellerListings.length + ')' : '')]].map(([k, l]) => (React.createElement("button", { key: k, onClick: () => setTab(k), className: "flex-1 py-3 text-sm font-semibold border-b-2 " + (tab === k ? "border-brand-600 text-brand-600" : "border-transparent text-slate-400") }, l))))),
         tab === 'listings' ? (sellerListings.length === 0 ? React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "No active listings.") : React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-3" }, sellerListings.map(l => React.createElement(ProductCard, { key: l.id, listing: l, go: go })))) :
         tab === 'reels' ? React.createElement(ReelsGrid, { authorId: uid, isMe: isMe, go: go }) :
-        shownPosts.length === 0 ? (React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, tab === 'photos' ? 'No photos yet.' : 'No posts yet.')) : shownPosts.map(p => React.createElement(PostCard, { key: p.id, post: p, go: go })),
+        tab === 'photos' ? React.createElement(ProfilePhotosTab, { uid: uid }) :
+        posts.length === 0 ? (React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "No posts yet.")) : posts.map(p => React.createElement(PostCard, { key: p.id, post: p, go: go })),
         editing && React.createElement(EditProfileModal, { user: user, onClose: () => setEditing(false) })));
 }
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -9605,6 +9650,26 @@ async function uploadDatingPhoto(uid, file, slot) {
 async function deleteDatingPhotoFile(uid, slot) {
     await storage.ref(`datingPhotos/${uid}/photo_${slot}.jpg`).delete().catch(() => { });
 }
+/* ---- Photo gallery — separate from the 6 main profile photos. Every member can add extra
+   photos here (up to DATING_GALLERY_MAX) and any other member viewing their profile can browse
+   the full gallery. ---- */
+const DATING_GALLERY_MAX = 20;
+async function uploadDatingGalleryPhoto(uid, file, onProgress) {
+    const blob = await compressImage(file, 1600, 0.85);
+    const path = `datingGallery/${uid}/${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
+    const ref = storage.ref(path);
+    await new Promise((resolve, reject) => {
+        const task = ref.put(blob, { contentType: 'image/jpeg' });
+        task.on('state_changed', s => onProgress && onProgress(Math.round((s.bytesTransferred / s.totalBytes) * 100)), reject, resolve);
+    });
+    const url = await ref.getDownloadURL();
+    await db.collection('datingProfiles').doc(uid).update({ gallery: FieldValue.arrayUnion(url) });
+    return url;
+}
+async function removeDatingGalleryPhoto(uid, url) {
+    await db.collection('datingProfiles').doc(uid).update({ gallery: FieldValue.arrayRemove(url) });
+    try { await storage.refFromURL(url).delete(); } catch (e) { /* already gone — fine */ }
+}
 async function saveDatingProfile(uid, fields) {
     await db.collection('datingProfiles').doc(uid).set(Object.assign({}, fields, { profileComplete: true, updatedAt: FieldValue.serverTimestamp() }), { merge: true });
 }
@@ -10296,7 +10361,8 @@ function DatingProfileDetailSheet({ person, onClose, onLike, onPass, isMatched }
                     canWhatsapp && person.whatsapp && React.createElement("a", { href: "https://wa.me/" + person.whatsapp.replace(/[^\d]/g, ''), target: "_blank", rel: "noopener", className: "flex items-center text-sm text-emerald-600 font-semibold" }, React.createElement("i", { className: "fa-brands fa-whatsapp mr-2 w-4" }), person.whatsapp)),
                 !isMatched && (person.phone || person.whatsapp) && !canPhone && !canWhatsapp && React.createElement("p", { className: "text-xs text-slate-400 mb-3" }, React.createElement("i", { className: "fa-solid fa-lock mr-1.5" }), "Contact info unlocks after you match."),
                 person.createdAt && React.createElement("p", { className: "text-[11px] text-slate-400 mb-3" }, "Member since ", datingMemberSinceLabel(person.createdAt)),
-                (onLike || onPass) && React.createElement("div", { className: "flex gap-3 mb-2" },
+                React.createElement(DatingGallerySection, { uid: person.id, gallery: person.gallery, editable: false }),
+                (onLike || onPass) && React.createElement("div", { className: "flex gap-3 mb-2 mt-4" },
                     onPass && React.createElement("button", { onClick: () => { onPass(); onClose(); }, className: "flex-1 bg-slate-100 dark:bg-ink-700 rounded-xl py-3 font-semibold" }, React.createElement("i", { className: "fa-solid fa-xmark mr-2" }), "Pass"),
                     onLike && React.createElement("button", { onClick: () => { onLike(); onClose(); }, className: "flex-1 bg-rose-500 hover:bg-rose-600 text-white rounded-xl py-3 font-semibold" }, React.createElement("i", { className: "fa-solid fa-heart mr-2" }), "Like")),
                 React.createElement("button", { onClick: () => setReportOpen(true), className: "w-full text-center text-xs text-red-500 font-semibold py-2" }, "Report this profile")),
@@ -10451,6 +10517,45 @@ function DatingMatchesTab({ matches, go }) {
     }));
 }
 
+/* Photo gallery grid. Pass `editable: true` (only ever on your own DatingMeTab) to get an
+   "Add photo" tile and a remove button on every photo; otherwise it's a view-only grid that
+   opens the lightbox — this is what other members see on someone else's profile. */
+function DatingGallerySection({ uid, gallery, editable }) {
+    const toast = useToast();
+    const [uploading, setUploading] = useState(false);
+    const [progress, setProgress] = useState(0);
+    const fileRef = useRef();
+    const list = gallery || [];
+    if (!editable && list.length === 0) return null;
+    const addPhoto = async (file) => {
+        if (!file) return;
+        if (list.length >= DATING_GALLERY_MAX) { toast('Gallery is full (max ' + DATING_GALLERY_MAX + ' photos)', 'error'); return; }
+        setUploading(true);
+        setProgress(0);
+        try { await uploadDatingGalleryPhoto(uid, file, setProgress); }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setUploading(false); setProgress(0); }
+    };
+    const removePhoto = async (url) => {
+        if (!confirm('Remove this photo from your gallery?')) return;
+        try { await removeDatingGalleryPhoto(uid, url); }
+        catch (e) { toast(e.message, 'error'); }
+    };
+    return React.createElement("div", { className: "mt-5" },
+        React.createElement("div", { className: "flex items-center justify-between mb-2" },
+            React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide" }, "Gallery"),
+            editable && React.createElement("span", { className: "text-[11px] text-slate-400" }, list.length + " / " + DATING_GALLERY_MAX)),
+        React.createElement("div", { className: "grid grid-cols-3 gap-1.5" },
+            list.map((url, i) => React.createElement("div", { key: url, className: "relative aspect-square" },
+                React.createElement("img", { src: url, onClick: () => openLightbox(list, i), className: "w-full h-full object-cover rounded-lg cursor-zoom-in" }),
+                editable && React.createElement("button", { onClick: () => removePhoto(url), className: "absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 text-white text-xs flex items-center justify-center" }, React.createElement("i", { className: "fa-solid fa-xmark" })))),
+            editable && list.length < DATING_GALLERY_MAX && React.createElement("label", { className: "aspect-square rounded-lg border-2 border-dashed border-slate-200 dark:border-ink-600 flex items-center justify-center cursor-pointer text-slate-400" },
+                uploading ? React.createElement("div", { className: "w-5 h-5 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" }) : React.createElement("i", { className: "fa-solid fa-plus" }),
+                React.createElement("input", { ref: fileRef, type: "file", accept: "image/*", hidden: true, onChange: e => { addPhoto(e.target.files[0]); e.target.value = ''; } }))),
+        !editable && list.length === 0 && React.createElement("p", { className: "text-xs text-slate-400" }, "No extra photos yet."),
+        uploading && React.createElement("div", { className: "w-full h-1 bg-slate-100 dark:bg-ink-700 rounded-full overflow-hidden mt-2" }, React.createElement("div", { className: "h-full bg-brand-600 transition-all", style: { width: progress + '%' } })));
+}
+
 function DatingMeTab({ dp }) {
     const { profile } = useAuth();
     const toast = useToast();
@@ -10502,6 +10607,8 @@ function DatingMeTab({ dp }) {
                 React.createElement("div", { className: "h-full bg-brand-600 rounded-full transition-all", style: { width: completion + '%' } }))),
 
         React.createElement("button", { onClick: () => setEditing(true), className: "w-full mt-4 bg-brand-600 hover:bg-brand-700 text-white rounded-xl py-2.5 text-sm font-semibold" }, "Edit profile"),
+
+        React.createElement(DatingGallerySection, { uid: profile.id, gallery: dp.gallery, editable: true }),
 
         React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mt-6 mb-2" }, "Verification"),
         React.createElement("div", { className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl divide-y divide-slate-100 dark:divide-ink-700" },
