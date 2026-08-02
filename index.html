@@ -4692,6 +4692,22 @@ function HomeFeed({ go }) {
     const [reels, setReels] = useState(null);
     const [refreshing, setRefreshing] = useState(false);
     const activeCampaigns = useActiveAdCampaigns();
+    // The sponsored slot for this feed session is decided ONCE (not on every Firestore snapshot
+    // update, which fires repeatedly as posts/reels sync) so it can't flicker in and then get
+    // silently dropped again before the user ever sees it. `decidedRef` guards against choosing
+    // more than once per mount; the cap itself is what governs whether an ad is chosen at all.
+    const [adSlot, setAdSlot] = useState(null);
+    const adDecidedRef = useRef(false);
+    useEffect(() => {
+        if (adDecidedRef.current || activeCampaigns.length === 0) return;
+        const { lastShownAt, rotationCount } = getAdFrequencyState();
+        if (Date.now() - lastShownAt >= AD_MIN_INTERVAL_MS) {
+            const campaign = activeCampaigns[rotationCount % activeCampaigns.length];
+            setAdSlot({ kind: 'ad', data: campaign });
+            markAdSlotShown(rotationCount);
+            adDecidedRef.current = true;
+        }
+    }, [activeCampaigns]);
     useEffect(() => {
         // Group posts are deliberately excluded from the global timeline — they only ever show
         // inside that group's own Posts tab. Besides matching how Groups behave on Facebook,
@@ -4727,22 +4743,16 @@ function HomeFeed({ go }) {
                 return pinB - pinA;
             return millisOf(b.data.createdAt) - millisOf(a.data.createdAt);
         });
-        // Insert at most ONE sponsored slot per timeline load, and only if at least 20 minutes
-        // have passed since this device last saw an ad — a real frequency cap, not a position-
-        // based repeat. Rotates through active campaigns so the same ad doesn't show twice in a
-        // row. Placed a few items down so it reads as part of the timeline rather than a banner.
-        if (activeCampaigns.length > 0) {
-            const { lastShownAt, rotationCount } = getAdFrequencyState();
-            if (Date.now() - lastShownAt >= AD_MIN_INTERVAL_MS) {
-                const campaign = activeCampaigns[rotationCount % activeCampaigns.length];
-                const withAds = merged.slice();
-                const insertAt = Math.min(4, withAds.length);
-                withAds.splice(insertAt, 0, { kind: 'ad', data: campaign, _rotationCount: rotationCount });
-                return withAds;
-            }
+        // Insert the sponsored slot decided above (if any) a few items down so it reads as part
+        // of the timeline rather than a banner. The cap/rotation decision already happened once
+        // in the effect above — this just places it, so re-renders can't flicker it away.
+        if (adSlot) {
+            const withAds = merged.slice();
+            withAds.splice(Math.min(4, withAds.length), 0, adSlot);
+            return withAds;
         }
         return merged;
-    }, [posts, reels, activeCampaigns]);
+    }, [posts, reels, adSlot]);
     return (React.createElement("div", null,
         React.createElement(PostTriggerBar, { go: go }),
         React.createElement(ReelsStrip, { go: go }),
@@ -4757,7 +4767,7 @@ function HomeFeed({ go }) {
             const renderItem = it => it.kind === 'post'
                 ? React.createElement(PostCard, { key: 'p-' + it.data.id, post: it.data, go: go })
                 : it.kind === 'ad'
-                    ? React.createElement(AdSlot, { key: 'ad-' + it.data.id, campaign: it.data, go: go, rotationCount: it._rotationCount })
+                    ? React.createElement(AdSlot, { key: 'ad-' + it.data.id, campaign: it.data, go: go })
                     : React.createElement(TimelineReelCard, { key: 'r-' + it.data.id, reel: it.data, go: go });
             return React.createElement(React.Fragment, null,
                 items.slice(0, cutoff).map(renderItem),
@@ -11644,7 +11654,7 @@ function useActiveAdCampaigns() {
    being promoted, or the sponsored post created for this campaign) and hands it to PostCard
    with `sponsored` set, so every interaction — like, comment, share, save — works exactly like
    a normal post for free. */
-function AdSlot({ campaign, go, rotationCount }) {
+function AdSlot({ campaign, go }) {
     const [post, setPost] = useState(undefined);
     const cfg = useWalletConfig();
     useEffect(() => {
@@ -11652,9 +11662,6 @@ function AdSlot({ campaign, go, rotationCount }) {
         const unsub = db.collection('posts').doc(campaign.postId).onSnapshot(s => setPost(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setPost(null));
         return unsub;
     }, [campaign.postId]);
-    // Starts the 20-minute frequency-cap window the moment this slot actually mounts in the
-    // feed (not merely when it's computed), so the cap tracks what the user really saw.
-    useEffect(() => { markAdSlotShown(rotationCount || 0); }, []);
     if (!post) return null;
     const sponsored = Object.assign({}, campaign, { costPerImpression: cfg.costPerImpressionNaira });
     return React.createElement(PostCard, { post: post, go: go, sponsored: sponsored });
