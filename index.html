@@ -4293,9 +4293,12 @@ function PostCard({ post, go, groupCtx, autoOpenComments, sponsored }) {
                     React.createElement("p", { className: "text-xs text-white/85" }, "Find genuine matches near you.")),
                 React.createElement("button", { onClick: () => go({ name: 'dating' }), className: "shrink-0 bg-white text-rose-600 text-xs font-bold px-3 py-2 rounded-full" }, "Join now"))),
         sponsored && React.createElement("div", { className: "px-3 sm:px-4 mb-2" },
-            React.createElement("button", { onClick: handleAdCtaClick, className: "w-full flex items-center justify-between bg-slate-50 dark:bg-ink-700 border border-slate-200 dark:border-ink-600 rounded-xl px-4 py-2.5" },
-                React.createElement("span", { className: "text-xs text-slate-500 truncate" }, (() => { try { return new URL(sponsored.destinationUrl).hostname; } catch (e) { return sponsored.destinationUrl; } })()),
-                React.createElement("span", { className: "shrink-0 bg-brand-600 text-white text-xs font-bold px-3 py-1.5 rounded-full ml-2" }, sponsored.ctaLabel || 'Learn More'))),
+            React.createElement("button", { onClick: handleAdCtaClick, className: "w-full flex items-center justify-between gap-3 bg-gradient-to-r from-slate-50 to-slate-100 dark:from-ink-700 dark:to-ink-800 border border-slate-200 dark:border-ink-600 rounded-2xl px-4 py-3 shadow-sm hover:shadow-md transition-shadow" },
+                React.createElement("span", { className: "min-w-0 text-left" },
+                    React.createElement("span", { className: "block text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500" }, (() => { try { return new URL(sponsored.destinationUrl).hostname.replace(/^www\./, ''); } catch (e) { return sponsored.destinationUrl; } })()),
+                    React.createElement("span", { className: "block text-sm font-semibold text-slate-700 dark:text-slate-200 truncate" }, sponsored.ctaLabel || 'Learn More')),
+                React.createElement("span", { className: "shrink-0 flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold px-4 py-2 rounded-full transition-colors" },
+                    sponsored.ctaLabel || 'Learn More', React.createElement("i", { className: "fa-solid fa-arrow-right text-[10px]" })))),
         React.createElement("div", { className: "px-3 sm:px-4" },
             post.sharedPostId && React.createElement(SharedPostPreview, { postId: post.sharedPostId, go: go }),
             post.sharedGroupId && React.createElement(SharedGroupPreview, { groupId: post.sharedGroupId, go: go }),
@@ -4724,18 +4727,19 @@ function HomeFeed({ go }) {
                 return pinB - pinA;
             return millisOf(b.data.createdAt) - millisOf(a.data.createdAt);
         });
-        // Sprinkle one sponsored slot every 5 timeline items, Facebook-style, cycling through
-        // whatever active campaigns are available so no single ad dominates the feed.
+        // Insert at most ONE sponsored slot per timeline load, and only if at least 20 minutes
+        // have passed since this device last saw an ad — a real frequency cap, not a position-
+        // based repeat. Rotates through active campaigns so the same ad doesn't show twice in a
+        // row. Placed a few items down so it reads as part of the timeline rather than a banner.
         if (activeCampaigns.length > 0) {
-            const withAds = [];
-            merged.forEach((it, i) => {
-                withAds.push(it);
-                if ((i + 1) % 5 === 0) {
-                    const campaign = activeCampaigns[Math.floor(i / 5) % activeCampaigns.length];
-                    withAds.push({ kind: 'ad', data: campaign });
-                }
-            });
-            return withAds;
+            const { lastShownAt, rotationCount } = getAdFrequencyState();
+            if (Date.now() - lastShownAt >= AD_MIN_INTERVAL_MS) {
+                const campaign = activeCampaigns[rotationCount % activeCampaigns.length];
+                const withAds = merged.slice();
+                const insertAt = Math.min(4, withAds.length);
+                withAds.splice(insertAt, 0, { kind: 'ad', data: campaign, _rotationCount: rotationCount });
+                return withAds;
+            }
         }
         return merged;
     }, [posts, reels, activeCampaigns]);
@@ -4753,7 +4757,7 @@ function HomeFeed({ go }) {
             const renderItem = it => it.kind === 'post'
                 ? React.createElement(PostCard, { key: 'p-' + it.data.id, post: it.data, go: go })
                 : it.kind === 'ad'
-                    ? React.createElement(AdSlot, { key: 'ad-' + it.data.id, campaign: it.data, go: go })
+                    ? React.createElement(AdSlot, { key: 'ad-' + it.data.id, campaign: it.data, go: go, rotationCount: it._rotationCount })
                     : React.createElement(TimelineReelCard, { key: 'r-' + it.data.id, reel: it.data, go: go });
             return React.createElement(React.Fragment, null,
                 items.slice(0, cutoff).map(renderItem),
@@ -11601,6 +11605,25 @@ function useAllAdCampaigns(active) {
     }, [active]);
     return rows;
 }
+/* Frequency capping: a device should never see more than one sponsored feed slot within any
+   20-minute window, and consecutive ads should rotate through the active campaigns rather than
+   repeating the same one. State is kept in localStorage (per-device, not per-session) so the
+   cap survives refreshes and app restarts, same as real ad platforms enforce frequency caps. */
+const AD_MIN_INTERVAL_MS = 20 * 60 * 1000;
+function getAdFrequencyState() {
+    try {
+        return {
+            lastShownAt: Number(localStorage.getItem('bf_ad_last_shown_at')) || 0,
+            rotationCount: Number(localStorage.getItem('bf_ad_rotation_count')) || 0,
+        };
+    } catch (e) { return { lastShownAt: 0, rotationCount: 0 }; }
+}
+function markAdSlotShown(rotationCount) {
+    try {
+        localStorage.setItem('bf_ad_last_shown_at', String(Date.now()));
+        localStorage.setItem('bf_ad_rotation_count', String(rotationCount + 1));
+    } catch (e) { /* localStorage unavailable (private mode, etc.) — cap just won't persist */ }
+}
 /* Feed-facing: live 'active' campaigns only, synced lazily so 'approved' campaigns whose start
    date just arrived (or 'active' ones that just ran out of budget/date) flip promptly. */
 function useActiveAdCampaigns() {
@@ -11621,7 +11644,7 @@ function useActiveAdCampaigns() {
    being promoted, or the sponsored post created for this campaign) and hands it to PostCard
    with `sponsored` set, so every interaction — like, comment, share, save — works exactly like
    a normal post for free. */
-function AdSlot({ campaign, go }) {
+function AdSlot({ campaign, go, rotationCount }) {
     const [post, setPost] = useState(undefined);
     const cfg = useWalletConfig();
     useEffect(() => {
@@ -11629,6 +11652,9 @@ function AdSlot({ campaign, go }) {
         const unsub = db.collection('posts').doc(campaign.postId).onSnapshot(s => setPost(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setPost(null));
         return unsub;
     }, [campaign.postId]);
+    // Starts the 20-minute frequency-cap window the moment this slot actually mounts in the
+    // feed (not merely when it's computed), so the cap tracks what the user really saw.
+    useEffect(() => { markAdSlotShown(rotationCount || 0); }, []);
     if (!post) return null;
     const sponsored = Object.assign({}, campaign, { costPerImpression: cfg.costPerImpressionNaira });
     return React.createElement(PostCard, { post: post, go: go, sponsored: sponsored });
