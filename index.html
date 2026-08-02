@@ -9411,11 +9411,15 @@ const DATING_WEIGHT_OPTIONS_KG = Array.from({ length: 121 }, (_, i) => 30 + i); 
 function cmToFeetInches(cm) { const totalIn = Math.round(cm / 2.54); const ft = Math.floor(totalIn / 12); const inch = totalIn % 12; return ft + "'" + inch + '"'; }
 
 /* ---- config (fee + Paystack public key), admin-editable ---- */
+const DATING_CFG_DEFAULTS = {
+    feeNaira: 1000, paystackPublicKey: '', chatFeeNaira: 500, chatUnlockDays: 7,
+    bankName: '', bankAccountNumber: '', bankAccountName: ''
+};
 function useDatingConfig() {
-    const [cfg, setCfg] = useState({ feeNaira: 1000, paystackPublicKey: '' });
+    const [cfg, setCfg] = useState(DATING_CFG_DEFAULTS);
     useEffect(() => {
         const unsub = db.collection('settings').doc('dating').onSnapshot(s => {
-            setCfg(Object.assign({ feeNaira: 1000, paystackPublicKey: '' }, s.exists ? s.data() : {}));
+            setCfg(Object.assign({}, DATING_CFG_DEFAULTS, s.exists ? s.data() : {}));
         }, () => { });
         return unsub;
     }, []);
@@ -9455,6 +9459,93 @@ async function recordDatingPayment(uid, amountNaira, reference) {
     await db.collection('datingPayments').add({ uid, amount: amountNaira, reference, status: 'success', paidAt: FieldValue.serverTimestamp() });
     await db.collection('datingProfiles').doc(uid).set({ paid: true, paidAt: FieldValue.serverTimestamp(), paymentReference: reference }, { merge: true });
 }
+/* Chat access is sold per match (per lady), not as a blanket unlock — a male member who pays to
+   chat with one match still has to pay separately for any other match. Each subscription lasts
+   `days` (7 by default) from the moment of payment, after which he needs to renew for that match. */
+async function recordDatingChatSubscription(matchId, uid, amountNaira, reference, days) {
+    const expiresAt = new Date(Date.now() + (days || 7) * 24 * 60 * 60 * 1000);
+    await db.collection('datingPayments').add({ uid, matchId, amount: amountNaira, reference, status: 'success', purpose: 'dating_chat_unlock', paidAt: FieldValue.serverTimestamp() });
+    await db.collection('datingMatches').doc(matchId).set({
+        chatSubscriptions: { [uid]: { expiresAt, paidAt: FieldValue.serverTimestamp(), reference } }
+    }, { merge: true });
+}
+/* Female members can always chat, for free. Male members need an unexpired per-match chat
+   subscription — one payment only unlocks chat with that one match, and only for `days`. */
+function canSendDatingChat(myDatingProfile, match) {
+    if (!myDatingProfile) return false;
+    if (myDatingProfile.gender !== 'Male') return true;
+    if (!match) return false;
+    const sub = (match.chatSubscriptions || {})[myDatingProfile.id];
+    if (!sub || !sub.expiresAt) return false;
+    const expiresAt = sub.expiresAt.toDate ? sub.expiresAt.toDate() : new Date(sub.expiresAt);
+    return expiresAt.getTime() > Date.now();
+}
+
+/* ---- Manual (bank transfer) payments — an alternative to Paystack. The member pays into the
+   company account and uploads a receipt; nothing is unlocked until an admin reviews it in the
+   Dating admin panel and approves it. ---- */
+function uploadDatingReceipt(uid, file, onProgress) {
+    const isImage = (file.type || '').startsWith('image/');
+    const prep = isImage ? compressImage(file, 1600, 0.85) : Promise.resolve(file);
+    return prep.then(blob => {
+        const ext = isImage ? 'jpg' : (file.name ? file.name.split('.').pop() : 'dat');
+        const path = `dating-receipts/${uid}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+        const ref = storage.ref(path);
+        return new Promise((resolve, reject) => {
+            const task = ref.put(blob, { contentType: isImage ? 'image/jpeg' : (file.type || 'application/octet-stream') });
+            task.on('state_changed', s => onProgress && onProgress(Math.round((s.bytesTransferred / s.totalBytes) * 100)), reject, () => resolve());
+        }).then(() => ref.getDownloadURL());
+    });
+}
+/* purpose: 'dating_chat_unlock' (needs matchId + matchName) or 'dating_call_unlock' */
+async function submitDatingManualPayment(uid, { purpose, matchId, matchName, amountNaira, receiptURL }) {
+    await db.collection('datingManualPayments').add({
+        uid, purpose, matchId: matchId || null, matchName: matchName || null, amount: amountNaira,
+        receiptURL, status: 'pending', submittedAt: FieldValue.serverTimestamp()
+    });
+}
+function useDatingManualPayments(statusFilter) {
+    const [rows, setRows] = useState([]);
+    useEffect(() => {
+        if (statusFilter === undefined) { setRows([]); return; }
+        let q = db.collection('datingManualPayments').orderBy('submittedAt', 'desc').limit(300);
+        const unsub = q.onSnapshot(snap => {
+            let list = snap.docs.map(d => Object.assign({ id: d.id }, d.data()));
+            if (statusFilter && statusFilter !== 'all') list = list.filter(r => r.status === statusFilter);
+            setRows(list);
+        }, () => setRows([]));
+        return unsub;
+    }, [statusFilter]);
+    return rows;
+}
+/* Lets a member (and the paywall sheet) know if they already have a receipt awaiting review,
+   so they aren't prompted to submit a duplicate one. */
+function useMyPendingDatingManualPayment(uid, purpose, matchId) {
+    const [row, setRow] = useState(undefined);
+    useEffect(() => {
+        if (!uid) { setRow(null); return; }
+        let q = db.collection('datingManualPayments').where('uid', '==', uid).where('purpose', '==', purpose).where('status', '==', 'pending');
+        const unsub = q.onSnapshot(snap => {
+            const docs = snap.docs.map(d => Object.assign({ id: d.id }, d.data()));
+            setRow(docs.find(r => (matchId ? r.matchId === matchId : true)) || null);
+        }, () => setRow(null));
+        return unsub;
+    }, [uid, purpose, matchId]);
+    return row;
+}
+async function adminApproveDatingManualPayment(row, chatUnlockDays, adminUid, adminEmail) {
+    if (row.purpose === 'dating_chat_unlock') {
+        await recordDatingChatSubscription(row.matchId, row.uid, row.amount, 'manual:' + row.id, chatUnlockDays);
+    } else if (row.purpose === 'dating_call_unlock') {
+        await db.collection('datingPayments').add({ uid: row.uid, amount: row.amount, reference: 'manual:' + row.id, status: 'success', purpose: 'dating_call_unlock', paidAt: FieldValue.serverTimestamp() });
+        await db.collection('datingProfiles').doc(row.uid).set({ paid: true, paidAt: FieldValue.serverTimestamp(), paymentReference: 'manual:' + row.id }, { merge: true });
+    }
+    await db.collection('datingManualPayments').doc(row.id).update({ status: 'approved', reviewedAt: FieldValue.serverTimestamp(), reviewedBy: adminUid, reviewedByEmail: adminEmail || null });
+}
+async function adminRejectDatingManualPayment(row, reason, adminUid, adminEmail) {
+    await db.collection('datingManualPayments').doc(row.id).update({ status: 'rejected', rejectionReason: reason || '', reviewedAt: FieldValue.serverTimestamp(), reviewedBy: adminUid, reviewedByEmail: adminEmail || null });
+}
+
 function launchDatingPaystack({ email, amountNaira, publicKey, metadata, onSuccess, onClose }) {
     if (typeof PaystackPop === 'undefined') { throw new Error('Payment service failed to load. Check your connection and try again.'); }
     if (!publicKey) { throw new Error('Payments are not configured yet. Please contact support.'); }
@@ -9801,6 +9892,50 @@ function DatingGenderStep({ dp }) {
         React.createElement("div", { className: "flex gap-3" }, DATING_GENDERS.map(g => React.createElement("button", { key: g, disabled: busy, onClick: () => choose(g), className: "flex-1 bg-white dark:bg-ink-800 border border-slate-200 dark:border-ink-700 rounded-xl py-4 font-semibold hover:border-brand-500" }, g))));
 }
 
+/* Reusable "pay by bank transfer" panel embedded in both payment sheets: shows the company
+   account details, lets the member upload a receipt, and reflects pending-review state. Nothing
+   is unlocked here — an admin has to approve the receipt in the Dating admin panel first. */
+function DatingBankTransferPanel({ cfg, uid, purpose, matchId, matchName, amountNaira, onSubmitted }) {
+    const toast = useToast();
+    const pending = useMyPendingDatingManualPayment(uid, purpose, matchId);
+    const [file, setFile] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const [progress, setProgress] = useState(0);
+    const copy = (val) => { if (navigator.clipboard) navigator.clipboard.writeText(val); toast('Copied', 'success'); };
+    const submit = async () => {
+        if (!file) { toast('Please attach your payment receipt', 'error'); return; }
+        setBusy(true);
+        setProgress(0);
+        try {
+            const receiptURL = await uploadDatingReceipt(uid, file, setProgress);
+            await submitDatingManualPayment(uid, { purpose, matchId, matchName, amountNaira, receiptURL });
+            toast('Receipt submitted \u2014 awaiting admin approval', 'success');
+            onSubmitted && onSubmitted();
+        } catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); setProgress(0); }
+    };
+    if (pending === undefined) return React.createElement("div", { className: "py-6 flex justify-center" }, React.createElement("div", { className: "w-5 h-5 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" }));
+    if (pending) {
+        return React.createElement("div", { className: "text-sm bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 rounded-lg p-3 text-left" },
+            React.createElement("i", { className: "fa-solid fa-clock mr-1.5" }), "Your receipt is under review. Access unlocks automatically once an admin approves it.");
+    }
+    if (!cfg.bankAccountNumber) {
+        return React.createElement("p", { className: "text-xs text-amber-600 bg-amber-50 dark:bg-amber-900/20 rounded-lg p-2" }, "Bank transfer isn't set up yet. An admin needs to add account details in the Dating admin panel.");
+    }
+    return React.createElement("div", { className: "text-left space-y-2.5" },
+        React.createElement("div", { className: "bg-slate-50 dark:bg-ink-700 rounded-xl p-3 text-sm space-y-1.5" },
+            cfg.bankName && React.createElement("div", { className: "flex justify-between" }, React.createElement("span", { className: "text-slate-400" }, "Bank"), React.createElement("span", { className: "font-semibold" }, cfg.bankName)),
+            React.createElement("div", { className: "flex justify-between items-center" }, React.createElement("span", { className: "text-slate-400" }, "Account number"),
+                React.createElement("button", { onClick: () => copy(cfg.bankAccountNumber), className: "font-semibold" }, cfg.bankAccountNumber, " ", React.createElement("i", { className: "fa-regular fa-copy text-xs ml-1" }))),
+            cfg.bankAccountName && React.createElement("div", { className: "flex justify-between" }, React.createElement("span", { className: "text-slate-400" }, "Account name"), React.createElement("span", { className: "font-semibold" }, cfg.bankAccountName))),
+        React.createElement("p", { className: "text-xs text-slate-400" }, "Transfer \u20A6" + Number(amountNaira || 0).toLocaleString() + ", then upload your payment receipt below."),
+        React.createElement("label", { className: "block w-full text-center border border-dashed border-slate-300 dark:border-ink-600 rounded-lg py-3 text-xs text-slate-500 cursor-pointer" },
+            React.createElement("i", { className: "fa-solid fa-receipt mr-1.5" }), file ? file.name : 'Choose receipt (image or PDF)',
+            React.createElement("input", { type: "file", accept: "image/*,application/pdf", hidden: true, onChange: e => setFile(e.target.files[0]) })),
+        busy && React.createElement("div", { className: "w-full h-1.5 bg-slate-100 dark:bg-ink-700 rounded-full overflow-hidden" }, React.createElement("div", { className: "h-full bg-brand-600 transition-all", style: { width: progress + '%' } })),
+        React.createElement("button", { disabled: busy || !file, onClick: submit, className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl py-2.5 text-sm font-semibold" }, busy ? 'Uploading\u2026' : 'Submit receipt for review'));
+}
+
 /* Shown to a male member the first time he tries to start a voice/video call with a match
    he hasn't paid to unlock calling with yet. Female members and already-paid male members
    never see this — see canStartDatingCall(). */
@@ -9808,6 +9943,7 @@ function DatingCallPaymentSheet({ cfg, callLabel, onClose, onPaid }) {
     const { profile, firebaseUser } = useAuth();
     const toast = useToast();
     const [busy, setBusy] = useState(false);
+    const [method, setMethod] = useState('card');
     const pay = () => {
         setBusy(true);
         try {
@@ -9830,9 +9966,14 @@ function DatingCallPaymentSheet({ cfg, callLabel, onClose, onPaid }) {
         React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm p-6 text-center", onClick: e => e.stopPropagation() },
             React.createElement("i", { className: "fa-solid fa-naira-sign text-4xl text-brand-500 mb-4" }),
             React.createElement("h2", { className: "font-display text-xl font-bold mb-2" }, "Unlock voice & video calls"),
-            React.createElement("p", { className: "text-sm text-slate-500 dark:text-slate-400 mb-6" }, "You matched \u2014 nice! To start a ", callLabel, " with this match, male members pay a one-time fee of ", React.createElement("b", null, "\u20A6" + Number(cfg.feeNaira || 0).toLocaleString()), ". This unlocks calling with every match for good \u2014 no recurring charges."),
-            !cfg.paystackPublicKey && React.createElement("p", { className: "text-xs text-amber-600 bg-amber-50 dark:bg-amber-900/20 rounded-lg p-2 mb-4" }, "Payments aren't configured yet. An admin needs to add a Paystack public key in the Dating admin panel."),
-            React.createElement("button", { disabled: busy, onClick: pay, className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl py-3 font-semibold" }, busy ? 'Processing\u2026' : 'Pay \u20A6' + Number(cfg.feeNaira || 0).toLocaleString() + ' with Paystack'),
+            React.createElement("p", { className: "text-sm text-slate-500 dark:text-slate-400 mb-4" }, "You matched \u2014 nice! To start a ", callLabel, " with this match, male members pay a one-time fee of ", React.createElement("b", null, "\u20A6" + Number(cfg.feeNaira || 0).toLocaleString()), ". This unlocks calling with every match for good \u2014 no recurring charges."),
+            React.createElement("div", { className: "flex gap-2 mb-4" },
+                React.createElement("button", { onClick: () => setMethod('card'), className: "flex-1 py-1.5 rounded-full text-xs font-semibold " + (method === 'card' ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, "Pay by card"),
+                React.createElement("button", { onClick: () => setMethod('bank'), className: "flex-1 py-1.5 rounded-full text-xs font-semibold " + (method === 'bank' ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, "Bank transfer")),
+            method === 'card' ? React.createElement(React.Fragment, null,
+                !cfg.paystackPublicKey && React.createElement("p", { className: "text-xs text-amber-600 bg-amber-50 dark:bg-amber-900/20 rounded-lg p-2 mb-4" }, "Payments aren't configured yet. An admin needs to add a Paystack public key in the Dating admin panel."),
+                React.createElement("button", { disabled: busy, onClick: pay, className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl py-3 font-semibold" }, busy ? 'Processing\u2026' : 'Pay \u20A6' + Number(cfg.feeNaira || 0).toLocaleString() + ' with Paystack')) :
+                React.createElement(DatingBankTransferPanel, { cfg: cfg, uid: profile.id, purpose: "dating_call_unlock", amountNaira: cfg.feeNaira, onSubmitted: onClose }),
             React.createElement("button", { onClick: onClose, className: "w-full mt-2 text-sm text-slate-500 dark:text-slate-400 py-2 font-semibold" }, "Not now")));
 }
 /* Female members can always call. Male members can call once they've paid the call-unlock fee. */
@@ -9840,6 +9981,48 @@ function canStartDatingCall(myDatingProfile) {
     if (!myDatingProfile) return false;
     if (myDatingProfile.gender !== 'Male') return true;
     return !!myDatingProfile.paid;
+}
+
+/* Shown to a male member when he tries to chat with a match he either hasn't paid to chat with yet,
+   or whose 7-day chat subscription for that specific match has expired. This unlock is per match —
+   paying here does not unlock chat with any other match, and a fresh payment is required every
+   `chatUnlockDays` to keep chatting with the same match. Female members never see this. */
+function DatingChatPaymentSheet({ cfg, matchId, matchName, onClose, onPaid }) {
+    const { profile, firebaseUser } = useAuth();
+    const toast = useToast();
+    const [busy, setBusy] = useState(false);
+    const [method, setMethod] = useState('card');
+    const pay = () => {
+        setBusy(true);
+        try {
+            launchDatingPaystack({
+                email: firebaseUser.email, amountNaira: cfg.chatFeeNaira, publicKey: cfg.paystackPublicKey,
+                metadata: { uid: profile.id, matchId, purpose: 'dating_chat_unlock' },
+                onSuccess: async (response) => {
+                    try {
+                        await recordDatingChatSubscription(matchId, profile.id, cfg.chatFeeNaira, response.reference, cfg.chatUnlockDays);
+                        toast('Payment successful \u2014 chat unlocked for ' + (cfg.chatUnlockDays || 7) + ' days!', 'success');
+                        onPaid();
+                    } catch (e) { toast(e.message, 'error'); }
+                    finally { setBusy(false); }
+                },
+                onClose: () => setBusy(false)
+            });
+        } catch (e) { toast(e.message, 'error'); setBusy(false); }
+    };
+    return React.createElement("div", { className: "fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center", onClick: onClose },
+        React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm p-6 text-center", onClick: e => e.stopPropagation() },
+            React.createElement("i", { className: "fa-solid fa-naira-sign text-4xl text-brand-500 mb-4" }),
+            React.createElement("h2", { className: "font-display text-xl font-bold mb-2" }, "Unlock chat with ", matchName),
+            React.createElement("p", { className: "text-sm text-slate-500 dark:text-slate-400 mb-4" }, "Male members pay ", React.createElement("b", null, "\u20A6" + Number(cfg.chatFeeNaira || 0).toLocaleString()), " to chat with a match for ", cfg.chatUnlockDays || 7, " days. This unlocks chat with ", matchName, " only \u2014 you'll need a new subscription to chat with any other match, and to keep chatting with ", matchName, " after it expires."),
+            React.createElement("div", { className: "flex gap-2 mb-4" },
+                React.createElement("button", { onClick: () => setMethod('card'), className: "flex-1 py-1.5 rounded-full text-xs font-semibold " + (method === 'card' ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, "Pay by card"),
+                React.createElement("button", { onClick: () => setMethod('bank'), className: "flex-1 py-1.5 rounded-full text-xs font-semibold " + (method === 'bank' ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, "Bank transfer")),
+            method === 'card' ? React.createElement(React.Fragment, null,
+                !cfg.paystackPublicKey && React.createElement("p", { className: "text-xs text-amber-600 bg-amber-50 dark:bg-amber-900/20 rounded-lg p-2 mb-4" }, "Payments aren't configured yet. An admin needs to add a Paystack public key in the Dating admin panel."),
+                React.createElement("button", { disabled: busy, onClick: pay, className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl py-3 font-semibold" }, busy ? 'Processing\u2026' : 'Pay \u20A6' + Number(cfg.chatFeeNaira || 0).toLocaleString() + ' with Paystack')) :
+                React.createElement(DatingBankTransferPanel, { cfg: cfg, uid: profile.id, purpose: "dating_chat_unlock", matchId: matchId, matchName: matchName, amountNaira: cfg.chatFeeNaira, onSubmitted: onClose }),
+            React.createElement("button", { onClick: onClose, className: "w-full mt-2 text-sm text-slate-500 dark:text-slate-400 py-2 font-semibold" }, "Not now")));
 }
 
 function DatingKycStep({ dp }) {
@@ -10369,6 +10552,7 @@ function DatingChatScreen({ matchId, go }) {
     const [reportOpen, setReportOpen] = useState(false);
     const [profileOpen, setProfileOpen] = useState(false);
     const [callGateType, setCallGateType] = useState(null); // 'voice' | 'video' | null — drives the pay-to-unlock sheet
+    const [chatGateOpen, setChatGateOpen] = useState(false); // drives the pay-to-chat sheet (male members only, per match)
     const [attachOpen, setAttachOpen] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [progress, setProgress] = useState(0);
@@ -10389,8 +10573,12 @@ function DatingChatScreen({ matchId, go }) {
         db.collection('datingProfiles').doc(otherId).onSnapshot(s => setOther(s.exists ? Object.assign({ id: s.id }, s.data()) : null));
     }, [match]);
     useEffect(() => { var _a; (_a = bottomRef.current) === null || _a === void 0 ? void 0 : _a.scrollIntoView({ behavior: 'smooth' }); }, [msgs.length]);
-    const send = async () => { if (!text.trim()) return; const t = text.trim(); setText(''); try { await sendDatingMessage(matchId, profile.id, { type: 'text', text: t }); } catch (e) { toast(e.message, 'error'); } };
+    const chatUnlocked = canSendDatingChat(myDp, match);
+    const chatExpiresAt = match && myDp && myDp.gender === 'Male' && (match.chatSubscriptions || {})[myDp.id] && (match.chatSubscriptions || {})[myDp.id].expiresAt
+        ? ((match.chatSubscriptions[myDp.id].expiresAt.toDate ? match.chatSubscriptions[myDp.id].expiresAt.toDate() : new Date(match.chatSubscriptions[myDp.id].expiresAt))) : null;
+    const send = async () => { if (!text.trim()) return; if (!chatUnlocked) { setChatGateOpen(true); return; } const t = text.trim(); setText(''); try { await sendDatingMessage(matchId, profile.id, { type: 'text', text: t }); } catch (e) { toast(e.message, 'error'); } };
     const uploadAndSend = async (file, type) => {
+        if (!chatUnlocked) { setChatGateOpen(true); return; }
         const maxSizes = { image: 15 * 1024 * 1024, video: 100 * 1024 * 1024, audio: 20 * 1024 * 1024 };
         if (file.size > maxSizes[type]) { toast('File exceeds the size limit for ' + type, 'error'); return; }
         setUploading(true);
@@ -10403,6 +10591,7 @@ function DatingChatScreen({ matchId, go }) {
         finally { setUploading(false); setProgress(0); }
     };
     const startRecording = async () => {
+        if (!chatUnlocked) { setChatGateOpen(true); return; }
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             const rec = new MediaRecorder(stream);
@@ -10466,7 +10655,12 @@ function DatingChatScreen({ matchId, go }) {
         uploading && (React.createElement("div", { className: "px-3 pt-2 shrink-0" },
             React.createElement("div", { className: "w-full h-1.5 bg-slate-100 dark:bg-ink-700 rounded-full overflow-hidden" },
                 React.createElement("div", { className: "h-full bg-brand-600 transition-all", style: { width: progress + '%' } })))),
-        React.createElement("div", { className: "p-2.5 border-t border-slate-100 dark:border-ink-700 relative" },
+        !chatUnlocked && myDp && myDp.gender === 'Male' && (React.createElement("div", { className: "p-2.5 border-t border-slate-100 dark:border-ink-700" },
+            React.createElement("button", { onClick: () => setChatGateOpen(true), className: "w-full bg-brand-600 hover:bg-brand-700 text-white rounded-xl py-3 text-sm font-semibold flex items-center justify-center gap-2" },
+                React.createElement("i", { className: "fa-solid fa-lock" }), "Pay \u20A6" + Number(cfg.chatFeeNaira || 0).toLocaleString() + " to chat with " + other.displayName + " for " + (cfg.chatUnlockDays || 7) + " days"))),
+        chatUnlocked && myDp && myDp.gender === 'Male' && chatExpiresAt && (React.createElement("p", { className: "text-[11px] text-center text-slate-400 pt-1.5" },
+            "Chat unlocked until ", chatExpiresAt.toLocaleDateString())),
+        chatUnlocked && React.createElement("div", { className: "p-2.5 border-t border-slate-100 dark:border-ink-700 relative" },
             attachOpen && (React.createElement("div", { className: "absolute bottom-14 left-2.5 bg-white dark:bg-ink-700 border border-slate-100 dark:border-ink-600 rounded-xl shadow-lg p-2 flex gap-2 z-20" },
                 React.createElement("button", { onClick: () => { imageInputRef.current.click(); setAttachOpen(false); }, className: "flex flex-col items-center gap-1 px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-ink-600 rounded-lg" },
                     React.createElement("i", { className: "fa-solid fa-image text-brand-600" }), "Photo"),
@@ -10492,6 +10686,11 @@ function DatingChatScreen({ matchId, go }) {
             cfg: cfg, callLabel: callGateType === 'video' ? 'video call' : 'voice call',
             onClose: () => setCallGateType(null),
             onPaid: () => { const t = callGateType; setCallGateType(null); startCall(t); }
+        }),
+        chatGateOpen && React.createElement(DatingChatPaymentSheet, {
+            cfg: cfg, matchId: matchId, matchName: other.displayName,
+            onClose: () => setChatGateOpen(false),
+            onPaid: () => setChatGateOpen(false)
         }));
 }
 
@@ -10504,9 +10703,12 @@ function DatingAdminPanel({ adminUid, adminEmail }) {
     const [profiles, setProfiles] = useState([]);
     const [userSearch, setUserSearch] = useState('');
     const [payments, setPayments] = useState([]);
+    const [manualFilter, setManualFilter] = useState('pending');
     const [cfgForm, setCfgForm] = useState(null);
+    const cfg = useDatingConfig();
     const toast = useToast();
-    const SUB = [['overview', 'Overview'], ['kyc', 'KYC review'], ['users', 'Users'], ['payments', 'Payments'], ['settings', 'Fee & Paystack']];
+    const manualPayments = useDatingManualPayments(subtab === 'manual' ? manualFilter : undefined);
+    const SUB = [['overview', 'Overview'], ['kyc', 'KYC review'], ['users', 'Users'], ['payments', 'Payments'], ['manual', 'Manual payments'], ['settings', 'Fee & Paystack']];
     useEffect(() => {
         if (subtab !== 'overview') return;
         (async () => {
@@ -10539,11 +10741,13 @@ function DatingAdminPanel({ adminUid, adminEmail }) {
     }, [subtab]);
     useEffect(() => {
         if (subtab !== 'settings') return;
-        db.collection('settings').doc('dating').get().then(s => setCfgForm(Object.assign({ feeNaira: 1000, paystackPublicKey: '' }, s.exists ? s.data() : {}))).catch(() => setCfgForm({ feeNaira: 1000, paystackPublicKey: '' }));
+        db.collection('settings').doc('dating').get().then(s => setCfgForm(Object.assign({}, DATING_CFG_DEFAULTS, s.exists ? s.data() : {}))).catch(() => setCfgForm(DATING_CFG_DEFAULTS));
     }, [subtab]);
     const approve = async (k) => { try { await adminApproveDatingKyc(k, adminUid, adminEmail); toast('KYC approved', 'success'); } catch (e) { toast(e.message, 'error'); } };
     const reject = async (k) => { const reason = prompt('Reason for rejection (shown to the user):'); if (reason === null) return; try { await adminRejectDatingKyc(k, adminUid, adminEmail, reason); toast('KYC rejected', 'success'); } catch (e) { toast(e.message, 'error'); } };
     const saveCfg = async () => { try { await saveDatingConfig(cfgForm); toast('Dating settings saved', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    const approveManual = async (row) => { try { await adminApproveDatingManualPayment(row, cfg.chatUnlockDays, adminUid, adminEmail); toast('Approved \u2014 access unlocked for the member', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    const rejectManual = async (row) => { const reason = prompt('Reason for rejection (shown to the user):'); if (reason === null) return; try { await adminRejectDatingManualPayment(row, reason, adminUid, adminEmail); toast('Rejected', 'success'); } catch (e) { toast(e.message, 'error'); } };
     const filteredKyc = kycApps.filter(k => kycFilter === 'all' || k.status === kycFilter);
     const filteredUsers = profiles.filter(p => !userSearch || (p.displayName || '').toLowerCase().includes(userSearch.toLowerCase()) || p.id.includes(userSearch));
 
@@ -10597,12 +10801,41 @@ function DatingAdminPanel({ adminUid, adminEmail }) {
             React.createElement("div", { className: "space-y-1.5" }, payments.map(p => React.createElement("div", { key: p.id, className: "flex items-center justify-between bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-lg px-3 py-2 text-sm" },
                 React.createElement("span", { className: "truncate" }, p.uid), React.createElement("span", { className: "font-semibold" }, "\u20A6" + Number(p.amount || 0).toLocaleString()), React.createElement("span", { className: "text-xs text-slate-400" }, p.reference))))),
 
+        subtab === 'manual' && React.createElement("div", null,
+            React.createElement("div", { className: "flex gap-2 mb-3" }, ['pending', 'approved', 'rejected', 'all'].map(f => React.createElement("button", { key: f, onClick: () => setManualFilter(f), className: "px-3 py-1 rounded-full text-xs font-semibold " + (manualFilter === f ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, f))),
+            manualPayments.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No manual payment receipts in this filter."),
+            manualPayments.map(row => React.createElement("div", { key: row.id, className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3 mb-2" },
+                React.createElement("div", { className: "flex items-center justify-between mb-2" },
+                    React.createElement("div", null,
+                        React.createElement("p", { className: "font-semibold text-sm" }, row.purpose === 'dating_chat_unlock' ? ('Chat unlock \u2014 ' + (row.matchName || row.matchId)) : 'Voice/video call unlock'),
+                        React.createElement("p", { className: "text-xs text-slate-400" }, row.uid, " \u00B7 \u20A6" + Number(row.amount || 0).toLocaleString())),
+                    React.createElement("span", { className: "text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-ink-700 shrink-0" }, row.status)),
+                row.receiptURL && React.createElement("img", { src: row.receiptURL, onClick: () => openLightbox(row.receiptURL), className: "w-28 h-20 object-cover rounded-lg cursor-zoom-in mb-2" }),
+                row.rejectionReason && React.createElement("p", { className: "text-xs text-red-500 mb-2" }, "Rejected: ", row.rejectionReason),
+                row.status === 'pending' && React.createElement("div", { className: "flex gap-2" },
+                    React.createElement("button", { onClick: () => approveManual(row), className: "flex-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg py-1.5 text-xs font-semibold" }, "Approve"),
+                    React.createElement("button", { onClick: () => rejectManual(row), className: "flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-1.5 text-xs font-semibold" }, "Reject"))))),
+
         subtab === 'settings' && (cfgForm ? React.createElement("div", { className: "max-w-sm space-y-3" },
             React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Male call-unlock fee (\u20A6)"),
                 React.createElement("input", { type: "number", min: 0, value: cfgForm.feeNaira, onChange: e => setCfgForm(f => Object.assign({}, f, { feeNaira: Number(e.target.value) || 0 })), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" })),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Male chat subscription fee, per match (\u20A6)"),
+                React.createElement("input", { type: "number", min: 0, value: cfgForm.chatFeeNaira, onChange: e => setCfgForm(f => Object.assign({}, f, { chatFeeNaira: Number(e.target.value) || 0 })), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+                React.createElement("p", { className: "text-[11px] text-slate-400 mt-1" }, "Charged to male members to chat with one match. It only unlocks that match \u2014 a second match needs its own subscription \u2014 and expires after the number of days below. Female members always chat for free.")),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Chat subscription length (days)"),
+                React.createElement("input", { type: "number", min: 1, value: cfgForm.chatUnlockDays, onChange: e => setCfgForm(f => Object.assign({}, f, { chatUnlockDays: Number(e.target.value) || 7 })), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" })),
             React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Paystack public key"),
                 React.createElement("input", { value: cfgForm.paystackPublicKey, onChange: e => setCfgForm(f => Object.assign({}, f, { paystackPublicKey: e.target.value.trim() })), placeholder: "pk_live_xxxxxxxxxxxx", className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm font-mono" }),
                 React.createElement("p", { className: "text-[11px] text-slate-400 mt-1" }, "Find this in your Paystack dashboard under Settings \u2192 API Keys & Webhooks. Only the public key goes here \u2014 never paste your secret key into this app.")),
+            React.createElement("div", { className: "pt-2 border-t border-slate-100 dark:border-ink-700" },
+                React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 mt-3" }, "Manual bank transfer"),
+                React.createElement("p", { className: "text-[11px] text-slate-400 mb-2" }, "Shown to members as an alternative to Paystack. They transfer to this account, upload a receipt, and you approve it under the \"Manual payments\" tab.")),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Bank name"),
+                React.createElement("input", { value: cfgForm.bankName, onChange: e => setCfgForm(f => Object.assign({}, f, { bankName: e.target.value })), placeholder: "e.g. GTBank", className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" })),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Account number"),
+                React.createElement("input", { value: cfgForm.bankAccountNumber, onChange: e => setCfgForm(f => Object.assign({}, f, { bankAccountNumber: e.target.value.trim() })), placeholder: "0123456789", className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm font-mono" })),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Account name"),
+                React.createElement("input", { value: cfgForm.bankAccountName, onChange: e => setCfgForm(f => Object.assign({}, f, { bankAccountName: e.target.value })), placeholder: "Company account name", className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" })),
             React.createElement("button", { onClick: saveCfg, className: "w-full bg-brand-600 hover:bg-brand-700 text-white rounded-xl py-2.5 text-sm font-semibold" }, "Save settings")) :
             React.createElement("div", { className: "py-10 flex justify-center" }, React.createElement("div", { className: "w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" }))));
 }
