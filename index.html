@@ -3450,6 +3450,27 @@ function PostTriggerBar({ go }) {
             React.createElement("i", { className: "fa-solid fa-image text-lg" }))));
 }
 /* ============================== CREATE POST (full page, Facebook-style) ============================== */
+// Same colourful icon-badge treatment as the app's Menu tiles, cycled across whatever stat
+// cards are on screen (page/reel Insights, earnings, etc.) instead of every card looking like
+// identical flat white boxes.
+const STAT_CARD_COLORS = [
+    { bg: 'bg-blue-100 dark:bg-blue-900/30', text: 'text-blue-600 dark:text-blue-400' },
+    { bg: 'bg-rose-100 dark:bg-rose-900/30', text: 'text-rose-600 dark:text-rose-400' },
+    { bg: 'bg-emerald-100 dark:bg-emerald-900/30', text: 'text-emerald-600 dark:text-emerald-400' },
+    { bg: 'bg-violet-100 dark:bg-violet-900/30', text: 'text-violet-600 dark:text-violet-400' },
+    { bg: 'bg-amber-100 dark:bg-amber-900/30', text: 'text-amber-600 dark:text-amber-400' },
+    { bg: 'bg-sky-100 dark:bg-sky-900/30', text: 'text-sky-600 dark:text-sky-400' },
+    { bg: 'bg-fuchsia-100 dark:bg-fuchsia-900/30', text: 'text-fuchsia-600 dark:text-fuchsia-400' },
+    { bg: 'bg-orange-100 dark:bg-orange-900/30', text: 'text-orange-600 dark:text-orange-400' },
+];
+function StatCard({ label, value, icon, index }) {
+    const c = STAT_CARD_COLORS[(index || 0) % STAT_CARD_COLORS.length];
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-4 shadow-sm" },
+        icon && React.createElement("div", { className: "w-11 h-11 rounded-xl flex items-center justify-center mb-3 " + c.bg },
+            React.createElement("i", { className: "fa-solid " + icon + " " + c.text })),
+        React.createElement("p", { className: "text-2xl font-display font-bold" }, value),
+        React.createElement("p", { className: "text-xs text-slate-400 mt-0.5" }, label));
+}
 const AUDIENCE_OPTIONS = [
     { id: 'public', label: 'Public', icon: 'fa-earth-africa' },
     { id: 'friends', label: 'Friends', icon: 'fa-user-group' },
@@ -4969,6 +4990,8 @@ function ProfileScreen({ uid, go }) {
     const [editing, setEditing] = useState(false);
     const [tab, setTab] = useState('posts');
     const [showAllFriends, setShowAllFriends] = useState(false);
+    const [otherMenuOpen, setOtherMenuOpen] = useState(false);
+    const [reportProfileOpen, setReportProfileOpen] = useState(false);
     const [uploadingAvatar, setUploadingAvatar] = useState(false);
     const [uploadingCover, setUploadingCover] = useState(false);
     const avatarInputRef = useRef();
@@ -5138,10 +5161,15 @@ function ProfileScreen({ uid, go }) {
                         React.createElement("i", { className: "fa-solid fa-arrow-right-from-bracket" })))) : (React.createElement("div", { className: "flex items-center gap-2 flex-wrap" },
                     React.createElement(FriendActionButton, { meId: me.id, otherId: uid }),
                     React.createElement("button", { onClick: toggleFollow, className: "rounded-xl py-2.5 px-3 text-sm font-semibold " + (following ? "bg-slate-100 dark:bg-ink-700" : "bg-slate-100 dark:bg-ink-700") }, following ? 'Following' : 'Follow'),
-                    !theyBlockedMe && !iBlockedThem && (React.createElement("button", { onClick: () => go({ name: 'chat', chatId: chatIdFor(me.id, uid), otherUid: uid }), className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center text-sm shrink-0" },
-                        React.createElement("i", { className: "fa-regular fa-paper-plane" }))),
-                    React.createElement("button", { onClick: toggleBlock, className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center text-sm text-red-500 shrink-0" },
-                        React.createElement("i", { className: "fa-solid " + (iBlockedThem ? "fa-user-check" : "fa-ban") })))))),
+                    !theyBlockedMe && !iBlockedThem && (React.createElement("button", { onClick: () => go({ name: 'chat', chatId: chatIdFor(me.id, uid), otherUid: uid }), className: "bg-slate-100 dark:bg-ink-700 rounded-xl py-2.5 px-4 text-sm font-semibold flex items-center gap-2 shrink-0" },
+                        React.createElement("i", { className: "fa-regular fa-paper-plane" }), "Message")),
+                    React.createElement("div", { className: "relative shrink-0" },
+                        React.createElement("button", { onClick: () => setOtherMenuOpen(o => !o), className: "bg-slate-100 dark:bg-ink-700 rounded-xl w-11 h-11 flex items-center justify-center text-sm text-slate-500" },
+                            React.createElement("i", { className: "fa-solid fa-ellipsis" })),
+                        otherMenuOpen && (React.createElement("div", { className: "absolute right-0 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-600 z-10 w-48" },
+                            React.createElement("button", { onClick: () => { setOtherMenuOpen(false); toggleBlock(); }, className: "w-full text-left px-4 py-2.5 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, iBlockedThem ? 'Unblock' : 'Block'),
+                            React.createElement("button", { onClick: () => { setOtherMenuOpen(false); setReportProfileOpen(true); }, className: "w-full text-left px-4 py-2.5 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600 border-t border-slate-100 dark:border-ink-600" }, "Report profile")))))))),
+                reportProfileOpen && React.createElement(ReportReasonSheet, { targetType: "user", targetId: uid, targetOwnerId: uid, onClose: () => setReportProfileOpen(false) }),
                 React.createElement(ProfileDetailsSection, { user: user, me: me, isMe: isMe, onEdit: () => setEditing(true) }),
                 friendUsers.length > 0 && (React.createElement("div", { className: "mt-4 pt-4 border-t border-slate-100 dark:border-ink-700" },
                     React.createElement("div", { className: "flex items-center justify-between mb-2" },
@@ -5769,15 +5797,10 @@ function PageAnalyticsScreen({ id, go }) {
         React.createElement("button", { onClick: () => go({ name: 'page', id }), className: "text-sm text-slate-400 mb-3" }, React.createElement("i", { className: "fa-solid fa-arrow-left mr-1.5" }), "Back to Page"),
         React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, page.displayName, " \u00B7 Insights"),
         React.createElement("p", { className: "text-sm text-slate-400 mb-5" }, "Analytics for your Page."),
-        React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-3 mb-6" }, cards.map(([label, val, icon]) => (React.createElement("div", { key: label, className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-4" },
-            React.createElement("i", { className: "fa-solid " + icon + " text-brand-500 mb-2" }),
-            React.createElement("p", { className: "text-2xl font-display font-bold" }, val),
-            React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, label))))),
+        React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-3 mb-6" }, cards.map(([label, val, icon], i) => React.createElement(StatCard, { key: label, label: label, value: val, icon: icon, index: i }))),
         page.monetizationStatus === 'approved' && React.createElement(React.Fragment, null,
             React.createElement("h3", { className: "font-display text-base font-bold mb-3" }, "Earnings (USD)"),
-            React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-3 mb-6" }, earningsCards.map(([label, val]) => (React.createElement("div", { key: label, className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-4" },
-                React.createElement("p", { className: "text-xl font-display font-bold" }, val),
-                React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, label))))),
+            React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-3 mb-6" }, earningsCards.map(([label, val], i) => React.createElement(StatCard, { key: label, label: label, value: val, icon: "fa-sack-dollar", index: i }))),
             React.createElement("div", { className: "grid sm:grid-cols-2 gap-3 mb-6" },
                 React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-4" },
                     React.createElement("p", { className: "text-sm font-semibold mb-2" }, "Top Performing Posts"),
@@ -8409,10 +8432,7 @@ function ReelAnalyticsScreen({ go, route }) {
         React.createElement("button", { onClick: () => go({ name: 'reels' }), className: "text-sm text-slate-400 mb-3" }, React.createElement("i", { className: "fa-solid fa-arrow-left mr-1.5" }), "Back to Reels"),
         React.createElement("h2", { className: "font-display text-xl font-bold mb-1" }, "Reels Insights"),
         React.createElement("p", { className: "text-sm text-slate-400 mb-5" }, "Live analytics for your reels."),
-        React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-3 mb-6" }, cards.map(([label, val, icon]) => (React.createElement("div", { key: label, className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-4" },
-            React.createElement("i", { className: "fa-solid " + icon + " text-brand-500 mb-2" }),
-            React.createElement("p", { className: "text-2xl font-display font-bold" }, val),
-            React.createElement("p", { className: "text-xs text-slate-400 mt-1" }, label))))),
+        React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-3 mb-6" }, cards.map(([label, val, icon], i) => React.createElement(StatCard, { key: label, label: label, value: val, icon: icon, index: i }))),
         React.createElement("div", { className: "space-y-2" }, reels.map(r => React.createElement("div", { key: r.id, className: "flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-2.5" },
             React.createElement("div", { onClick: () => go({ name: 'reels', reelId: r.id }), className: "w-12 h-20 rounded-lg overflow-hidden bg-slate-200 dark:bg-ink-700 shrink-0 cursor-pointer" }, r.thumbURL && React.createElement("img", { src: r.thumbURL, className: "w-full h-full object-cover" })),
             React.createElement("div", { className: "flex-1 min-w-0" },
