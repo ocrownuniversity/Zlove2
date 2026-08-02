@@ -3173,6 +3173,7 @@ function MainApp({ route, setRoute }) {
                 route.name === 'chat' && React.createElement(ChatWindow, { chatId: route.chatId, otherUid: route.otherUid, pageId: route.pageId, go: go }),
                 route.name === 'notifications' && React.createElement(NotificationsScreen, { go: go }),
                 route.name === 'bookmarks' && React.createElement(BookmarksScreen, { go: go }),
+                route.name === 'birthdays' && React.createElement(BirthdaysScreen, { go: go }),
                 route.name === 'post' && React.createElement(PostDetailScreen, { id: route.id, go: go, openComments: route.openComments }),
                 route.name === 'profile' && React.createElement(ProfileScreen, { uid: route.uid, go: go }),
                 route.name === 'myPages' && React.createElement(MyPagesScreen, { go: go }),
@@ -3206,7 +3207,7 @@ const MENU_TILES = [
     { key: 'pages', label: 'Pages', icon: 'fa-flag', route: { name: 'myPages' } },
     { key: 'saved', label: 'Saved', icon: 'fa-bookmark', route: { name: 'bookmarks' } },
     { key: 'memories', label: 'Memories', icon: 'fa-clock-rotate-left', route: null },
-    { key: 'birthdays', label: 'Birthdays', icon: 'fa-gift', route: null },
+    { key: 'birthdays', label: 'Birthdays', icon: 'fa-gift', route: { name: 'birthdays' } },
     { key: 'events', label: 'Events', icon: 'fa-calendar-days', route: null },
     { key: 'adCentre', label: 'Ad Centre', icon: 'fa-bullhorn', route: null },
     { key: 'feeds', label: 'Feeds', icon: 'fa-table-cells-large', route: null },
@@ -4949,6 +4950,59 @@ function BookmarksScreen({ go }) {
         posts === null && React.createElement(PostSkeleton, null),
         (posts === null || posts === void 0 ? void 0 : posts.length) === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "Nothing saved yet."), posts === null || posts === void 0 ? void 0 :
         posts.map(p => React.createElement(PostCard, { key: p.id, post: p, go: go }))));
+}
+/* ============================== BIRTHDAYS ============================== */
+function BirthdaysScreen({ go }) {
+    const { profile } = useAuth();
+    const friendships = useFriendships(profile.id);
+    const [friends, setFriends] = useState(null);
+    const friendIds = useMemo(() => (friendships || []).filter(f => f.status === 'accepted').map(f => otherUidOfFriendship(f, profile.id)), [JSON.stringify(friendships), profile.id]);
+    useEffect(() => {
+        if (friendships === null) return; // friendships still loading
+        if (friendIds.length === 0) { setFriends([]); return; }
+        let cancelled = false;
+        (async () => {
+            const docs = await Promise.all(friendIds.map(id => db.collection('users').doc(id).get().catch(() => null)));
+            if (cancelled) return;
+            setFriends(docs.filter(d => d && d.exists).map(d => Object.assign({ id: d.id }, d.data())));
+        })();
+        return () => { cancelled = true; };
+    }, [JSON.stringify(friendIds), friendships === null]);
+    const withBdays = useMemo(() => {
+        if (!friends) return [];
+        const now = new Date();
+        const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        return friends.filter(f => f.dob).map(f => {
+            const parts = f.dob.split('-'); // stored 'YYYY-MM-DD'
+            const month = Number(parts[1]), day = Number(parts[2]);
+            let next = new Date(now.getFullYear(), month - 1, day);
+            if (next < todayMidnight) next = new Date(now.getFullYear() + 1, month - 1, day);
+            const daysUntil = Math.round((next - todayMidnight) / 86400000);
+            return Object.assign({}, f, { _daysUntil: daysUntil, _month: month, _day: day });
+        }).sort((a, b) => a._daysUntil - b._daysUntil);
+    }, [friends]);
+    const todayList = withBdays.filter(f => f._daysUntil === 0);
+    const upcoming = withBdays.filter(f => f._daysUntil > 0 && f._daysUntil <= 30);
+    const loading = friends === null;
+    const Row = (f) => React.createElement("div", { key: f.id, className: "flex items-center gap-3 bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3" },
+        React.createElement(Avatar, { user: f, size: 12, onClick: () => go({ name: 'profile', uid: f.id }) }),
+        React.createElement("div", { className: "flex-1 min-w-0 cursor-pointer", onClick: () => go({ name: 'profile', uid: f.id }) },
+            React.createElement("p", { className: "font-semibold text-sm truncate" }, f.displayName || f.username || 'Blueface user'),
+            React.createElement("p", { className: "text-xs text-slate-400" }, f._daysUntil === 0 ? 'Today' : (f._daysUntil === 1 ? 'Tomorrow' : MONTH_NAMES[f._month - 1] + ' ' + f._day))),
+        React.createElement("button", { onClick: () => go({ name: 'profile', uid: f.id }), className: "shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full " + (f._daysUntil === 0 ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, f._daysUntil === 0 ? 'Wish' : 'View'));
+    return React.createElement("div", null,
+        React.createElement("h2", { className: "font-display text-lg font-bold mb-4" }, "Birthdays"),
+        loading && React.createElement(PostSkeleton, null),
+        !loading && todayList.length === 0 && upcoming.length === 0 && React.createElement("div", { className: "text-center py-16 text-slate-400" },
+            React.createElement("i", { className: "fa-solid fa-cake-candles text-4xl mb-3" }),
+            React.createElement("p", null, "No birthdays coming up in the next 30 days."),
+            React.createElement("p", { className: "text-xs mt-1" }, "Friends need to add their date of birth on their profile to show up here.")),
+        todayList.length > 0 && React.createElement("div", { className: "mb-5" },
+            React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mb-2" }, "\uD83C\uDF82 Today"),
+            React.createElement("div", { className: "space-y-2" }, todayList.map(Row))),
+        upcoming.length > 0 && React.createElement("div", null,
+            React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mb-2" }, "Upcoming"),
+            React.createElement("div", { className: "space-y-2" }, upcoming.map(Row))));
 }
 /* ============================== PROFILE ============================== */
 function computeWorkDuration(workStart) {
