@@ -964,6 +964,18 @@ function usePendingDatingKycCount() {
     }, []);
     return count;
 }
+// Live count of ad campaigns awaiting review, shown as a badge on the Super Admin "Ads" tab so
+// admins notice a freshly-submitted campaign right away instead of it sitting unreviewed —
+// paired with the notification sent to the admin in createAdCampaign().
+function usePendingAdCount() {
+    const [count, setCount] = useState(0);
+    useEffect(() => {
+        const unsub = db.collection('adCampaigns').where('status', '==', 'pending')
+            .onSnapshot(snap => setCount(snap.size), () => setCount(0));
+        return unsub;
+    }, []);
+    return count;
+}
 // Live follow status for the signed-in user against one Page. Reads a single doc
 // (uid_pageId) rather than the whole pageFollows-for-this-page query, so every button on
 // the site (page profile, timeline posts, Page cards) stays in sync the instant a follow
@@ -4094,6 +4106,19 @@ function PostCard({ post, go, groupCtx, autoOpenComments, sponsored }) {
         recordAdClick(sponsored.id).catch(() => { });
         window.open(sponsored.destinationUrl, '_blank', 'noopener');
     };
+    // Every ad runs from a Page (see createAdCampaign), so "Message" opens a normal in-app chat
+    // with that Page's owner — same thread a visitor would land on from the Page profile itself.
+    const handleAdWhatsappClick = () => {
+        if (!sponsored) return;
+        recordAdClick(sponsored.id).catch(() => { });
+        const digits = (sponsored.whatsappNumber || '').replace(/[^\d]/g, '');
+        window.open('https://wa.me/' + digits + '?text=' + encodeURIComponent("Hi, I'm interested in \"" + sponsored.title + "\""), '_blank', 'noopener');
+    };
+    const handleAdMessageClick = () => {
+        if (!sponsored || !profile) return;
+        recordAdClick(sponsored.id).catch(() => { });
+        if (go) go({ name: 'chat', chatId: chatIdFor(profile.id, sponsored.advertiserId), otherUid: sponsored.advertiserId, pageId: sponsored.pageId });
+    };
     const [author, setAuthor] = useState(null);
     const [myReaction, setMyReaction] = useState(null); // reaction key the signed-in user picked, or null
     const [reactions, setReactions] = useState([]); // [{uid, type}] — every reaction on this post, live
@@ -4298,7 +4323,12 @@ function PostCard({ post, go, groupCtx, autoOpenComments, sponsored }) {
                     React.createElement("span", { className: "block text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500" }, (() => { try { return new URL(sponsored.destinationUrl).hostname.replace(/^www\./, ''); } catch (e) { return sponsored.destinationUrl; } })()),
                     React.createElement("span", { className: "block text-sm font-semibold text-slate-700 dark:text-slate-200 truncate" }, sponsored.ctaLabel || 'Learn More')),
                 React.createElement("span", { className: "shrink-0 flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold px-4 py-2 rounded-full transition-colors" },
-                    sponsored.ctaLabel || 'Learn More', React.createElement("i", { className: "fa-solid fa-arrow-right text-[10px]" })))),
+                    sponsored.ctaLabel || 'Learn More', React.createElement("i", { className: "fa-solid fa-arrow-right text-[10px]" }))),
+            React.createElement("div", { className: "flex gap-2 mt-2" },
+                sponsored.whatsappNumber && React.createElement("button", { onClick: handleAdWhatsappClick, className: "flex-1 flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold px-3 py-2 rounded-full transition-colors" },
+                    React.createElement("i", { className: "fa-brands fa-whatsapp" }), "WhatsApp"),
+                React.createElement("button", { onClick: handleAdMessageClick, className: "flex-1 flex items-center justify-center gap-1.5 bg-slate-100 dark:bg-ink-700 hover:bg-slate-200 dark:hover:bg-ink-600 text-slate-700 dark:text-slate-200 text-xs font-bold px-3 py-2 rounded-full transition-colors" },
+                    React.createElement("i", { className: "fa-solid fa-message" }), "Message"))),
         React.createElement("div", { className: "px-3 sm:px-4" },
             post.sharedPostId && React.createElement(SharedPostPreview, { postId: post.sharedPostId, go: go }),
             post.sharedGroupId && React.createElement(SharedGroupPreview, { groupId: post.sharedGroupId, go: go }),
@@ -4898,7 +4928,7 @@ function SearchScreen({ go, route }) {
                 React.createElement("div", { className: "space-y-2" }, friendUsers.map(u => React.createElement(PersonRow, { key: u.id, u: u })))))))));
 }
 /* ============================== NOTIFICATIONS ============================== */
-const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', reply: 'replied to your comment', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group', dating_invite: 'invited you to join Blueface Dating', friend_birthday: '\uD83C\uDF82 is celebrating a birthday today \u2014 wish them well!',
+const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', reply: 'replied to your comment', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', ad_campaign_pending: 'submitted a new ad campaign for review', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group', dating_invite: 'invited you to join Blueface Dating', friend_birthday: '\uD83C\uDF82 is celebrating a birthday today \u2014 wish them well!',
     kyc_approved: 'Your Page KYC verification was approved', kyc_rejected: 'Your Page KYC verification was rejected',
     followers_milestone: 'Your Page reached 1,000 followers', monetization_eligible: 'Your Page is now eligible for monetization',
     monetization_approved: 'Your Page monetization application was approved', monetization_rejected: 'Your Page monetization application was rejected',
@@ -6303,6 +6333,7 @@ function SuperAdminApp({ theme, setTheme }) {
     const { profile, firebaseUser } = useAuth();
     const pendingNameChangeCount = usePendingPageNameChangeCount();
     const pendingDatingKycCount = usePendingDatingKycCount();
+    const pendingAdCount = usePendingAdCount();
     const SA_TABS = [
         { key: 'dashboard', label: 'Dashboard', icon: 'fa-gauge-high' },
         { key: 'users', label: 'Users', icon: 'fa-users' },
@@ -6312,7 +6343,7 @@ function SuperAdminApp({ theme, setTheme }) {
         { key: 'dating', label: 'Dating' + (pendingDatingKycCount ? ' (' + pendingDatingKycCount + ')' : ''), icon: 'fa-heart' },
         { key: 'pageNameRequests', label: 'Name Change Requests' + (pendingNameChangeCount ? ' (' + pendingNameChangeCount + ')' : ''), icon: 'fa-signature' },
         { key: 'monetization', label: 'Monetization', icon: 'fa-sack-dollar' },
-        { key: 'ads', label: 'Ads', icon: 'fa-bullhorn' },
+        { key: 'ads', label: 'Ads' + (pendingAdCount ? ' (' + pendingAdCount + ')' : ''), icon: 'fa-bullhorn' },
         { key: 'wallet', label: 'Wallet', icon: 'fa-wallet' },
         { key: 'marketplace', label: 'Marketplace', icon: 'fa-store' },
         { key: 'reports', label: 'Reports', icon: 'fa-flag' },
@@ -11509,22 +11540,28 @@ async function syncCampaignStatus(campaign) {
     return Object.assign({}, campaign, patch);
 }
 async function createAdCampaign(uid, fields) {
+    // Ads can only be run from a Page the caller owns, never a personal profile — enforced here
+    // (not just hidden in the UI) so a direct call can't bypass it. The sponsored post/campaign
+    // is always attributed to the Page (see pageId below), matching how "post as Page" already
+    // works in the composer.
+    if (!fields.pageId) throw new Error('Choose a Page to run this ad from. Only Pages can run ads.');
     const campaignRef = db.collection('adCampaigns').doc();
     let postId = fields.existingPostId || null;
     let mediaURL = fields.mediaURL || null, mediaType = fields.mediaType || null;
     if (fields.mode === 'new') {
         const postRef = await db.collection('posts').add({
-            authorId: uid, text: fields.description || fields.title || '', images: mediaType === 'image' && mediaURL ? [mediaURL] : [],
+            authorId: uid, pageId: fields.pageId, text: fields.description || fields.title || '', images: mediaType === 'image' && mediaURL ? [mediaURL] : [],
             videoURL: mediaType === 'video' ? mediaURL : null, bold: false, bgStyle: null, taggedUsers: [],
             isAd: true, campaignId: campaignRef.id,
             createdAt: FieldValue.serverTimestamp(), likesCount: 0, commentsCount: 0, sharesCount: 0
         });
         postId = postRef.id;
-        await db.collection('users').doc(uid).update({ postsCount: FieldValue.increment(1) }).catch(() => { });
+        await db.collection('fanPages').doc(fields.pageId).update({ postsCount: FieldValue.increment(1) }).catch(() => { });
     }
     await campaignRef.set({
-        advertiserId: uid, mode: fields.mode, postId,
+        advertiserId: uid, pageId: fields.pageId, mode: fields.mode, postId,
         title: fields.title, description: fields.description || '', ctaLabel: fields.ctaLabel, destinationUrl: fields.destinationUrl,
+        whatsappNumber: fields.whatsappNumber || null,
         mediaType, mediaURL,
         budget: fields.budget, spent: 0, impressions: 0, clicks: 0, reach: 0,
         startDate: fields.startDate, endDate: fields.endDate,
@@ -11532,6 +11569,13 @@ async function createAdCampaign(uid, fields) {
         createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp()
     });
     await debitWallet(uid, fields.budget, 'ad_spend', { campaignId: campaignRef.id, description: 'Ad campaign budget — "' + fields.title + '"' });
+    // Notify the admin immediately so a new campaign doesn't sit unreviewed — this is what makes
+    // ads "show on time": review is still required (fraud/abuse guardrail), but the admin is
+    // pinged the moment there's something to review, and sees a live count on the Ads tab.
+    db.collection('notifications').doc(SUPER_ADMIN_UID).collection('items').add({
+        type: 'ad_campaign_pending', fromUserId: uid, campaignId: campaignRef.id,
+        title: fields.title, read: false, createdAt: FieldValue.serverTimestamp()
+    }).catch(() => { });
     return campaignRef.id;
 }
 async function deleteAdCampaign(campaign) {
@@ -11807,7 +11851,7 @@ function AdCentreScreen({ go }) {
         campaigns === null && React.createElement("div", { className: "py-10 flex justify-center" }, React.createElement("div", { className: "w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" })),
         campaigns !== null && filtered.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-10" }, "No campaigns in this filter."),
         filtered.map(c => React.createElement(MyCampaignCard, { key: c.id, campaign: c })),
-        creating && React.createElement(CreateCampaignSheet, { onClose: () => setCreating(false) }));
+        creating && React.createElement(CreateCampaignSheet, { go: go, onClose: () => setCreating(false) }));
 }
 function MyCampaignCard({ campaign }) {
     const toast = useToast();
@@ -11820,7 +11864,7 @@ function MyCampaignCard({ campaign }) {
         React.createElement("div", { className: "flex items-start justify-between gap-2 mb-2" },
             React.createElement("div", { className: "min-w-0" },
                 React.createElement("p", { className: "font-semibold text-sm truncate" }, campaign.title),
-                React.createElement("p", { className: "text-[11px] text-slate-400" }, timeAgo(campaign.createdAt))),
+                React.createElement("p", { className: "text-[11px] text-slate-400" }, timeAgo(campaign.createdAt), campaign.whatsappNumber ? " \u00B7 WhatsApp on" : '')),
             React.createElement("span", { className: "text-[11px] font-bold px-2 py-0.5 rounded-full shrink-0 " + statusColor }, AD_STATUS_LABELS[campaign.status] || campaign.status)),
         campaign.status === 'rejected' && campaign.rejectionReason && React.createElement("p", { className: "text-xs text-red-500 mb-2" }, "Reason: ", campaign.rejectionReason),
         React.createElement("div", { className: "grid grid-cols-4 gap-1.5 text-center mb-2" },
@@ -11834,9 +11878,17 @@ function MyCampaignCard({ campaign }) {
             (campaign.status === 'active' || campaign.status === 'approved') && React.createElement("button", { onClick: doPause, className: "flex-1 bg-slate-100 dark:bg-ink-700 rounded-lg py-1.5 text-xs font-semibold" }, "Pause"),
             campaign.status === 'paused' && React.createElement("button", { onClick: doResume, className: "flex-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg py-1.5 text-xs font-semibold" }, "Resume")));
 }
-function CreateCampaignSheet({ onClose }) {
+function CreateCampaignSheet({ go, onClose }) {
     const { profile } = useAuth();
     const toast = useToast();
+    // Ads run from a Page, never a personal profile — see createAdCampaign(). The advertiser
+    // must own at least one Page and picks which one the campaign posts/appears as.
+    const myFanPages = useMyFanPages(profile.id);
+    const [pageId, setPageId] = useState('');
+    useEffect(() => {
+        if (myFanPages && myFanPages.length && !pageId) setPageId(myFanPages[0].id);
+    }, [myFanPages]);
+    const selectedPage = (myFanPages || []).find(p => p.id === pageId) || null;
     const [mode, setMode] = useState('new');
     const [myPosts, setMyPosts] = useState(null);
     const [existingPostId, setExistingPostId] = useState('');
@@ -11844,6 +11896,7 @@ function CreateCampaignSheet({ onClose }) {
     const [description, setDescription] = useState('');
     const [ctaLabel, setCtaLabel] = useState(AD_CTA_OPTIONS[0]);
     const [destinationUrl, setDestinationUrl] = useState('');
+    const [whatsappNumber, setWhatsappNumber] = useState('');
     const [budget, setBudget] = useState('');
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
@@ -11851,15 +11904,20 @@ function CreateCampaignSheet({ onClose }) {
     const [preview, setPreview] = useState(null);
     const [busy, setBusy] = useState(false);
     const fileRef = useRef();
+    // Prefill the ad's WhatsApp contact from the Page's own phone number the first time a Page
+    // with one is selected, without stomping on anything the advertiser already typed.
     useEffect(() => {
-        if (mode !== 'promote') return;
-        db.collection('posts').where('authorId', '==', profile.id).limit(50).get()
+        if (selectedPage && selectedPage.phone && !whatsappNumber) setWhatsappNumber(selectedPage.phone);
+    }, [pageId]);
+    useEffect(() => {
+        if (mode !== 'promote' || !pageId) { setMyPosts(mode === 'promote' ? [] : null); return; }
+        db.collection('posts').where('pageId', '==', pageId).limit(50).get()
             .then(snap => {
                 const list = snap.docs.map(d => Object.assign({ id: d.id }, d.data())).filter(p => !p.isAd);
                 list.sort((a, b) => millisOf(b.createdAt) - millisOf(a.createdAt));
                 setMyPosts(list);
             }).catch(() => setMyPosts([]));
-    }, [mode, profile.id]);
+    }, [mode, pageId]);
     const onPickFile = (e) => {
         const f = e.target.files && e.target.files[0];
         e.target.value = '';
@@ -11870,6 +11928,7 @@ function CreateCampaignSheet({ onClose }) {
         setPreview(URL.createObjectURL(f));
     };
     const submit = async () => {
+        if (!pageId) { toast('Choose which Page this ad runs from', 'error'); return; }
         if (!title.trim()) { toast('Enter a campaign title', 'error'); return; }
         if (!destinationUrl.trim()) { toast('Enter a destination URL', 'error'); return; }
         if (mode === 'new' && !description.trim() && !file) { toast('Add ad copy or media for your sponsored post', 'error'); return; }
@@ -11889,17 +11948,33 @@ function CreateCampaignSheet({ onClose }) {
                 mediaURL = uploaded.url; mediaType = uploaded.type;
             }
             await createAdCampaign(profile.id, {
-                mode, existingPostId: mode === 'promote' ? existingPostId : null,
+                pageId, mode, existingPostId: mode === 'promote' ? existingPostId : null,
                 title: title.trim(), description: description.trim(), ctaLabel, destinationUrl: destinationUrl.trim(),
+                whatsappNumber: whatsappNumber.trim() || null,
                 mediaURL, mediaType, budget: budgetNum, startDate: startMs, endDate: endMs
             });
             toast('Campaign submitted for review', 'success');
             onClose();
         } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
     };
+    // No Page yet — ads can only run from a Page, so block the form and point them at Page
+    // creation rather than letting them submit as a personal profile.
+    if (myFanPages !== null && myFanPages.length === 0) {
+        return React.createElement("div", { className: "fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center", onClick: onClose },
+            React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-lg p-5 text-center", onClick: e => e.stopPropagation() },
+                React.createElement("i", { className: "fa-solid fa-flag text-3xl text-brand-600 mb-3" }),
+                React.createElement("h3", { className: "font-display font-bold text-lg mb-2" }, "You need a Page to run ads"),
+                React.createElement("p", { className: "text-sm text-slate-400 mb-4" }, "Only Pages can run ads on Blueface \u2014 create a free Page first, then come back here to launch your campaign."),
+                React.createElement("button", { onClick: () => { onClose(); go && go({ name: 'pageForm' }); }, className: "w-full bg-brand-600 hover:bg-brand-700 text-white rounded-xl py-3 font-semibold text-sm mb-2" }, React.createElement("i", { className: "fa-solid fa-plus mr-1.5" }), "Create a Page"),
+                React.createElement("button", { onClick: onClose, className: "w-full text-center text-xs text-slate-400" }, "Cancel")));
+    }
     return React.createElement("div", { className: "fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center", onClick: onClose },
         React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-lg max-h-[92vh] overflow-y-auto p-5", onClick: e => e.stopPropagation() },
             React.createElement("h3", { className: "font-display font-bold text-lg mb-3" }, "Create ad campaign"),
+            myFanPages === null && React.createElement("p", { className: "text-xs text-slate-400 mb-3" }, "Loading your Pages\u2026"),
+            myFanPages && myFanPages.length > 0 && React.createElement("div", { className: "mb-4" },
+                React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Run ad from Page"),
+                React.createElement("select", { value: pageId, onChange: e => { setPageId(e.target.value); setExistingPostId(''); }, className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }, myFanPages.map(p => React.createElement("option", { key: p.id, value: p.id }, p.displayName)))),
             React.createElement("div", { className: "flex gap-2 mb-4" },
                 React.createElement("button", { onClick: () => setMode('new'), className: "flex-1 py-2 rounded-lg text-xs font-semibold " + (mode === 'new' ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, "New sponsored post"),
                 React.createElement("button", { onClick: () => setMode('promote'), className: "flex-1 py-2 rounded-lg text-xs font-semibold " + (mode === 'promote' ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, "Promote existing post")),
@@ -11923,6 +11998,9 @@ function CreateCampaignSheet({ onClose }) {
                     React.createElement("input", { type: "number", min: 500, value: budget, onChange: e => setBudget(e.target.value), placeholder: "5000", className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }))),
             React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Destination URL"),
             React.createElement("input", { value: destinationUrl, onChange: e => setDestinationUrl(e.target.value), placeholder: "https://\u2026", className: "w-full mt-1 mb-3 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+            React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "WhatsApp number (optional)"),
+            React.createElement("input", { type: "tel", value: whatsappNumber, onChange: e => setWhatsappNumber(e.target.value), placeholder: "+234\u2026", className: "w-full mt-1 mb-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+            React.createElement("p", { className: "text-[11px] text-slate-400 mb-3" }, "Shown as a WhatsApp button and a direct \"Message\" button right on the ad, so people can reach you without leaving the app."),
             React.createElement("div", { className: "grid grid-cols-2 gap-3 mb-4" },
                 React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Start date"),
                     React.createElement("input", { type: "date", value: startDate, onChange: e => setStartDate(e.target.value), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" })),
@@ -11934,6 +12012,18 @@ function CreateCampaignSheet({ onClose }) {
 }
 
 /* ============================== ADMIN: ADS & WALLET ============================== */
+// Resolves a Page id to its display name for the admin ad-review list, so admins see "Running
+// from: Acme Store" instead of a raw uid — makes it obvious at a glance this is a Page, not a
+// personal profile, since only Pages can run ads.
+function AdminAdPageLabel({ pageId }) {
+    const [page, setPage] = useState(undefined);
+    useEffect(() => {
+        const unsub = db.collection('fanPages').doc(pageId).onSnapshot(s => setPage(s.exists ? s.data() : null), () => setPage(null));
+        return unsub;
+    }, [pageId]);
+    if (page === undefined) return "Running from: \u2026";
+    return "Running from: " + (page ? page.displayName : 'Unknown Page');
+}
 function AdminAdsPanel({ adminUid, adminEmail }) {
     const toast = useToast();
     const [filter, setFilter] = useState('pending');
@@ -11962,9 +12052,10 @@ function AdminAdsPanel({ adminUid, adminEmail }) {
                 React.createElement("div", { className: "flex items-start justify-between gap-2 mb-2" },
                     React.createElement("div", { className: "min-w-0" },
                         React.createElement("p", { className: "font-semibold text-sm truncate" }, c.title),
-                        React.createElement("p", { className: "text-[11px] text-slate-400 truncate" }, "Advertiser: ", c.advertiserId)),
+                        React.createElement("p", { className: "text-[11px] text-slate-400 truncate" }, c.pageId ? React.createElement(AdminAdPageLabel, { pageId: c.pageId }) : ("Advertiser: " + c.advertiserId))),
                     React.createElement("span", { className: "text-[11px] font-bold px-2 py-0.5 rounded-full shrink-0 " + statusColor }, AD_STATUS_LABELS[c.status] || c.status)),
                 c.description && React.createElement("p", { className: "text-xs text-slate-500 mb-2" }, c.description),
+                c.whatsappNumber && React.createElement("p", { className: "text-[11px] text-emerald-600 mb-2" }, React.createElement("i", { className: "fa-brands fa-whatsapp mr-1" }), c.whatsappNumber),
                 c.mediaURL && (c.mediaType === 'video' ? React.createElement("video", { src: c.mediaURL, controls: true, className: "w-full h-32 object-cover rounded-lg mb-2" }) : React.createElement("img", { src: c.mediaURL, onClick: () => openLightbox([c.mediaURL], 0), className: "w-full h-32 object-cover rounded-lg mb-2 cursor-zoom-in" })),
                 React.createElement("div", { className: "grid grid-cols-4 gap-1.5 text-center mb-2" },
                     [['Budget', formatNaira(c.budget)], ['Spent', formatNaira(c.spent || 0)], ['Impressions', formatCompactCount(c.impressions || 0)], ['Clicks', formatCompactCount(c.clicks || 0)]].map(([l, v]) => React.createElement("div", { key: l, className: "bg-slate-50 dark:bg-ink-700 rounded-lg py-1.5" },
