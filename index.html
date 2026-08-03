@@ -3323,9 +3323,14 @@ function MenuScreen({ go, theme, setTheme }) {
                     React.createElement("button", { onClick: () => soon('Settings'), className: "flex items-center gap-3 py-2 text-left text-sm font-semibold text-slate-600 dark:text-slate-300" },
                         React.createElement("i", { className: "fa-solid fa-user-gear w-5" }),
                         "Account settings"),
-                    React.createElement("button", { onClick: () => soon('Privacy checkup'), className: "flex items-center gap-3 py-2 text-left text-sm font-semibold text-slate-600 dark:text-slate-300" },
-                        React.createElement("i", { className: "fa-solid fa-lock w-5" }),
-                        "Privacy checkup")),
+                    React.createElement("div", { className: "flex items-center justify-between py-2" },
+                        React.createElement("div", { className: "flex items-center gap-3" },
+                            React.createElement("i", { className: "fa-solid fa-pen-to-square w-5 text-slate-600 dark:text-slate-300" }),
+                            React.createElement("div", null,
+                                React.createElement("p", { className: "text-sm font-semibold text-slate-600 dark:text-slate-300" }, "Let others post on your timeline"),
+                                React.createElement("p", { className: "text-[11px] text-slate-400" }, "Birthday wishes and the like, from anyone who isn't blocked"))),
+                        React.createElement("button", { onClick: () => db.collection('users').doc(profile.id).update({ timelinePostsDisabled: !profile.timelinePostsDisabled }).catch(() => toast('Could not update setting', 'error')), className: "w-11 h-6 rounded-full relative transition shrink-0 ml-2 " + (!profile.timelinePostsDisabled ? "bg-brand-600" : "bg-slate-200 dark:bg-ink-600") },
+                            React.createElement("span", { className: "absolute top-0.5 w-5 h-5 bg-white rounded-full transition " + (!profile.timelinePostsDisabled ? "left-[22px]" : "left-0.5") })))),
                 React.createElement(MenuExpandRow, { icon: "fa-circle-question", label: "Help & support", expanded: helpOpen, onToggle: () => setHelpOpen(v => !v) },
                     React.createElement("button", { onClick: () => pages.openPage('help'), className: "flex items-center gap-3 py-2 text-left text-sm font-semibold text-slate-600 dark:text-slate-300" },
                         React.createElement("i", { className: "fa-solid fa-life-ring w-5" }),
@@ -3581,6 +3586,13 @@ function CreatePostScreen({ go, route }) {
     const [showAudiencePicker, setShowAudiencePicker] = useState(false);
     const fileRef = useRef();
     const textareaRef = useRef();
+    const timelineOwnerId = (route === null || route === void 0 ? void 0 : route.timelineOwnerId) || null;
+    const [timelineOwner, setTimelineOwner] = useState(null);
+    useEffect(() => {
+        if (!timelineOwnerId) { setTimelineOwner(null); return; }
+        const unsub = db.collection('users').doc(timelineOwnerId).onSnapshot(s => setTimelineOwner(s.exists ? Object.assign({ id: s.id }, s.data()) : null));
+        return unsub;
+    }, [timelineOwnerId]);
     // Wraps the selected text (or inserts a placeholder at the cursor) in *asterisks*, which
     // formatRichText() renders as bold wherever the post is shown. This is the same syntax users
     // can just type themselves — the button is only a convenience for adding it without typing
@@ -3656,6 +3668,7 @@ function CreatePostScreen({ go, route }) {
             }
             const postRef = await db.collection('posts').add({
                 authorId: profile.id, pageId: postingAs.type === 'page' ? postingAs.page.id : null,
+                timelineOwnerId: timelineOwnerId || null,
                 text: text.trim(), images: imageUrls,
                 bold, bgStyle: imageUrls.length ? null : bgStyle, taggedUsers: tagged, audience,
                 music: music || null, feeling: feeling || null, location: location || null,
@@ -3667,9 +3680,14 @@ function CreatePostScreen({ go, route }) {
             else {
                 await db.collection('users').doc(profile.id).update({ postsCount: FieldValue.increment(1) });
             }
+            if (timelineOwnerId && timelineOwnerId !== profile.id) {
+                db.collection('notifications').doc(timelineOwnerId).collection('items').add({
+                    type: 'timeline_post', fromUserId: profile.id, postId: postRef.id, read: false, createdAt: FieldValue.serverTimestamp()
+                }).catch(() => { });
+            }
             notifyTagged(tagged, profile.id, postRef.id, 'tag');
             toast('Posted!', 'success');
-            go({ name: 'home' });
+            go(timelineOwnerId ? { name: 'profile', uid: timelineOwnerId } : { name: 'home' });
         }
         catch (err) {
             toast(err.message, 'error');
@@ -3685,13 +3703,14 @@ function CreatePostScreen({ go, route }) {
         React.createElement("div", { className: "flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-ink-700 shrink-0" },
             React.createElement("button", { onClick: () => go({ name: 'home' }), className: "text-slate-600 dark:text-slate-300 w-9 h-9 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-ink-800" },
                 React.createElement("i", { className: "fa-solid fa-arrow-left text-lg" })),
-            React.createElement("h2", { className: "font-display font-bold text-lg" }, "Create post"),
+            React.createElement("h2", { className: "font-display font-bold text-lg" }, timelineOwner ? ("On " + (timelineOwner.displayName || timelineOwner.username) + "'s timeline") : "Create post"),
             React.createElement("button", { onClick: submit, disabled: !canPost, className: "text-brand-600 font-bold text-base disabled:opacity-30" }, busy ? 'Posting…' : 'POST')),
         React.createElement("div", { className: "flex-1 overflow-y-auto px-4 py-4" },
+            timelineOwner && timelineOwner.id !== profile.id && React.createElement("p", { className: "text-xs text-slate-400 -mt-1 mb-2" }, "Anyone can see this on ", timelineOwner.displayName || timelineOwner.username, "'s timeline."),
             React.createElement("div", { className: "flex items-center gap-3 mb-4" },
                 React.createElement(Avatar, { user: postingAs.type === 'page' ? postingAs.page : profile, size: 11 }),
                 React.createElement("div", null,
-                    (myPages && myPages.length > 0) ? (React.createElement("button", { onClick: () => setShowIdentityPicker(true), className: "flex items-center gap-1 font-bold text-sm" },
+                    (!timelineOwnerId && myPages && myPages.length > 0) ? (React.createElement("button", { onClick: () => setShowIdentityPicker(true), className: "flex items-center gap-1 font-bold text-sm" },
                         postingAs.type === 'page' ? postingAs.page.displayName : profile.displayName,
                         React.createElement("i", { className: "fa-solid fa-chevron-down text-[10px] text-slate-400 ml-0.5" }))) : (React.createElement("p", { className: "font-bold text-sm" }, profile.displayName)),
                     React.createElement("div", { className: "relative" },
@@ -3702,7 +3721,7 @@ function CreatePostScreen({ go, route }) {
                         showAudiencePicker && (React.createElement("div", { className: "absolute left-0 mt-1 bg-white dark:bg-ink-800 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-700 z-20 w-40" }, AUDIENCE_OPTIONS.map(a => (React.createElement("button", { key: a.id, onClick: () => { setAudience(a.id); setShowAudiencePicker(false); }, className: "w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-ink-700" },
                             React.createElement("i", { className: `fa-solid ${a.icon} w-4 text-slate-400` }),
                             a.label)))))))),
-            showIdentityPicker && React.createElement(PostingAsPicker, { value: postingAs, myPages: myPages || [], profile: profile, onChange: (v) => { setPostingAs(v); setShowIdentityPicker(false); }, onClose: () => setShowIdentityPicker(false) }),
+            !timelineOwnerId && showIdentityPicker && React.createElement(PostingAsPicker, { value: postingAs, myPages: myPages || [], profile: profile, onChange: (v) => { setPostingAs(v); setShowIdentityPicker(false); }, onClose: () => setShowIdentityPicker(false) }),
             bgStyle ? (React.createElement("div", { className: "-mx-4 mb-3" },
                 React.createElement("textarea", { autoFocus: true, value: text, onChange: e => setText(e.target.value), placeholder: "Share a highlight from your day\u2026", className: `w-full resize-none text-white text-2xl font-bold text-center placeholder-white/80 focus:outline-none min-h-[320px] px-8 py-10 ${bgStyleClass(bgStyle)}`, rows: 6 }))) : (React.createElement("div", { className: "mb-1" },
                 React.createElement("textarea", { ref: textareaRef, autoFocus: true, value: text, onChange: e => setText(e.target.value), placeholder: "Share a highlight from your day\u2026", className: "w-full resize-none bg-transparent text-2xl text-slate-500 dark:text-slate-400 focus:outline-none min-h-[160px] " + (bold ? 'font-bold text-slate-900 dark:text-slate-100' : ''), rows: 6 }),
@@ -4152,6 +4171,15 @@ function PostCard({ post, go, groupCtx, autoOpenComments, sponsored }) {
         if (go) go({ name: 'chat', chatId: chatIdFor(profile.id, sponsored.advertiserId), otherUid: sponsored.advertiserId, pageId: sponsored.pageId });
     };
     const [author, setAuthor] = useState(null);
+    // A wall post (see timelineOwnerId, set when someone writes on a friend's timeline) is
+    // authored by one person but shown on another's profile — fetch that owner just to label it,
+    // same idea as the "Posted in X group" line just below.
+    const [timelineOwner, setTimelineOwner] = useState(null);
+    useEffect(() => {
+        if (!post.timelineOwnerId || post.timelineOwnerId === post.authorId) { setTimelineOwner(null); return; }
+        const unsub = db.collection('users').doc(post.timelineOwnerId).onSnapshot(s => setTimelineOwner(s.exists ? Object.assign({ id: s.id }, s.data()) : null));
+        return unsub;
+    }, [post.timelineOwnerId, post.authorId]);
     const [myReaction, setMyReaction] = useState(null); // reaction key the signed-in user picked, or null
     const [reactions, setReactions] = useState([]); // [{uid, type}] — every reaction on this post, live
     const [reactionsListOpen, setReactionsListOpen] = useState(false);
@@ -4294,6 +4322,7 @@ function PostCard({ post, go, groupCtx, autoOpenComments, sponsored }) {
                             React.createElement("i", { className: "fa-solid " + audienceMeta.icon + " text-xs" }),
                             audienceMeta.label)),
                     post.groupId && !groupCtx && React.createElement("button", { onClick: (e) => { e.stopPropagation(); go({ name: 'group', id: post.groupId }); }, className: "text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline flex items-center gap-1 mt-0.5" }, React.createElement("i", { className: "fa-solid fa-people-group text-[10px]" }), "Posted in " + (post.groupName || 'a group')),
+                    timelineOwner && React.createElement("button", { onClick: (e) => { e.stopPropagation(); go({ name: 'profile', uid: timelineOwner.id }); }, className: "text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline flex items-center gap-1 mt-0.5" }, React.createElement("i", { className: "fa-solid fa-pen-to-square text-[10px]" }), "Wrote on " + (timelineOwner.displayName || timelineOwner.username) + "'s timeline"),
                     React.createElement(TaggedLine, { users: post.taggedUsers, go: go }),
                     React.createElement(PostMetaLine, { post: post }),
                     post.music && React.createElement("p", { className: "text-xs text-brand-600 dark:text-brand-400 flex items-center gap-1.5 mt-0.5" }, React.createElement(MusicPlayBadge, { music: post.music, size: 4 }), post.music.title + ' · ' + post.music.artist))),
@@ -5064,7 +5093,7 @@ function SearchScreen({ go, route }) {
                 React.createElement("div", { className: "space-y-2" }, friendUsers.map(u => React.createElement(PersonRow, { key: u.id, u: u })))))))));
 }
 /* ============================== NOTIFICATIONS ============================== */
-const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', reply: 'replied to your comment', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', ad_campaign_pending: 'submitted a new ad campaign for review', listing_created: 'published a new marketplace listing', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group', dating_invite: 'invited you to join Blueface Dating', friend_birthday: '\uD83C\uDF82 is celebrating a birthday today \u2014 wish them well!',
+const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', reply: 'replied to your comment', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', ad_campaign_pending: 'submitted a new ad campaign for review', listing_created: 'published a new marketplace listing', timeline_post: 'wrote something on your timeline', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group', dating_invite: 'invited you to join Blueface Dating', friend_birthday: '\uD83C\uDF82 is celebrating a birthday today \u2014 wish them well!',
     kyc_approved: 'Your Page KYC verification was approved', kyc_rejected: 'Your Page KYC verification was rejected',
     followers_milestone: 'Your Page reached 1,000 followers', monetization_eligible: 'Your Page is now eligible for monetization',
     monetization_approved: 'Your Page monetization application was approved', monetization_rejected: 'Your Page monetization application was rejected',
@@ -5310,7 +5339,6 @@ function ProfileScreen({ uid, go }) {
     const { profile: me } = useAuth();
     const toast = useToast();
     const [user, setUser] = useState(null);
-    const [posts, setPosts] = useState([]);
     const [following, setFollowing] = useState(false);
     const [editing, setEditing] = useState(false);
     const [tab, setTab] = useState('posts');
@@ -5325,6 +5353,8 @@ function ProfileScreen({ uid, go }) {
         const unsub = db.collection('users').doc(uid).onSnapshot(s => setUser(s.exists ? Object.assign({ id: s.id }, s.data()) : null));
         return unsub;
     }, [uid]);
+    const [ownPosts, setOwnPosts] = useState([]);
+    const [wallPosts, setWallPosts] = useState([]);
     useEffect(() => {
         const unsub = db.collection('posts').where('authorId', '==', uid).limit(50)
             .onSnapshot(snap => {
@@ -5333,11 +5363,26 @@ function ProfileScreen({ uid, go }) {
             // (isAd) are excluded too — they only ever show as a labelled "Sponsored" slot in
             // the home feed via AdSlot, never as a plain, unbadged post on the profile.
             const list = snap.docs.map(d => (Object.assign({ id: d.id }, d.data()))).filter(p => !p.hiddenByAdmin && !p.groupId && !p.isAd);
-            list.sort((a, b) => { var _a, _b; return (((_a = b.createdAt) === null || _a === void 0 ? void 0 : _a.toMillis) ? b.createdAt.toMillis() : 0) - (((_b = a.createdAt) === null || _b === void 0 ? void 0 : _b.toMillis) ? a.createdAt.toMillis() : 0); });
-            setPosts(list);
+            setOwnPosts(list);
         });
         return unsub;
     }, [uid]);
+    useEffect(() => {
+        // Posts someone else wrote directly on this person's timeline (see the "Write something
+        // on X's timeline" box below) — a separate query since Firestore can't OR two different
+        // fields in one listener. Kept out of the authorId query above on purpose: without this,
+        // a wall post from a friend would never show up here at all.
+        const unsub = db.collection('posts').where('timelineOwnerId', '==', uid).limit(50)
+            .onSnapshot(snap => setWallPosts(snap.docs.map(d => (Object.assign({ id: d.id }, d.data()))).filter(p => !p.hiddenByAdmin)), () => setWallPosts([]));
+        return unsub;
+    }, [uid]);
+    const posts = useMemo(() => {
+        const byId = new Map();
+        [...ownPosts, ...wallPosts].forEach(p => byId.set(p.id, p));
+        const list = Array.from(byId.values());
+        list.sort((a, b) => { var _a, _b; return (((_a = b.createdAt) === null || _a === void 0 ? void 0 : _a.toMillis) ? b.createdAt.toMillis() : 0) - (((_b = a.createdAt) === null || _b === void 0 ? void 0 : _b.toMillis) ? a.createdAt.toMillis() : 0); });
+        return list;
+    }, [ownPosts, wallPosts]);
     useEffect(() => {
         if (uid === me.id)
             return;
@@ -5511,7 +5556,14 @@ function ProfileScreen({ uid, go }) {
         tab === 'listings' ? (sellerListings.length === 0 ? React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "No active listings.") : React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-3" }, sellerListings.map(l => React.createElement(ProductCard, { key: l.id, listing: l, go: go })))) :
         tab === 'reels' ? React.createElement(ReelsGrid, { authorId: uid, isMe: isMe, go: go }) :
         tab === 'photos' ? React.createElement(ProfilePhotosTab, { uid: uid }) :
-        posts.length === 0 ? (React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "No posts yet.")) : posts.map(p => React.createElement(PostCard, { key: p.id, post: p, go: go })),
+        React.createElement(React.Fragment, null,
+            // Anyone can write on this timeline (birthday wishes and the like) unless the owner
+            // has switched it off in Menu \u2192 Settings & privacy, or either side has blocked the
+            // other \u2014 same gate already used to hide messaging between blocked users.
+            !isMe && !iBlockedThem && !theyBlockedMe && !(user && user.timelinePostsDisabled) && React.createElement("button", { onClick: () => go({ name: 'createPost', timelineOwnerId: uid }), className: "w-full flex items-center gap-3 bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3 mt-3 text-left" },
+                React.createElement(Avatar, { user: me, size: 9 }),
+                React.createElement("span", { className: "flex-1 bg-slate-100 dark:bg-ink-700 rounded-full px-4 py-2 text-sm text-slate-500 dark:text-slate-400" }, "Write something on ", (user && (user.displayName || user.username)) || 'their', "'s timeline\u2026")),
+            posts.length === 0 ? (React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "No posts yet.")) : posts.map(p => React.createElement(PostCard, { key: p.id, post: p, go: go }))),
         editing && React.createElement(EditProfileModal, { user: user, onClose: () => setEditing(false) })));
 }
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
