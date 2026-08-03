@@ -1145,6 +1145,13 @@ async function createListing(sellerId, fields, files) {
         type: 'listing_created', fromUserId: sellerId, listingId: doc.id, title: fields.title || '',
         read: false, createdAt: FieldValue.serverTimestamp()
     }).catch(() => { });
+    // Let the seller's followers know a new product went up, same idea as Facebook surfacing new
+    // Marketplace listings from people you follow via the bell icon.
+    db.collection('follows').where('followingId', '==', sellerId).get()
+        .then(snap => Promise.all(snap.docs.map(d => db.collection('notifications').doc(d.data().followerId).collection('items').add({
+        type: 'new_listing', fromUserId: sellerId, listingId: doc.id, title: fields.title || '', read: false, createdAt: FieldValue.serverTimestamp()
+    }))))
+        .catch(() => { });
     return doc.id;
 }
 async function updateListing(listingId, sellerId, fields, existingImages, newFiles) {
@@ -4482,8 +4489,10 @@ function SharedPostPreview({ postId, go }) {
                 React.createElement("p", { className: "text-[11px] text-slate-400" }, timeAgo(orig.createdAt)),
                 orig.groupId && React.createElement("button", { onClick: (e) => { e.stopPropagation(); go({ name: 'group', id: orig.groupId }); }, className: "text-[11px] font-semibold text-brand-600 dark:text-brand-400 hover:underline flex items-center gap-1 mt-0.5" },
                     React.createElement("i", { className: "fa-solid fa-people-group text-[9px]" }), "Posted in " + (orig.groupName || 'a group')))),
-        orig.text && React.createElement(ExpandableText, { text: orig.text, limit: 160, className: "text-base whitespace-pre-wrap" }),
-        (orig.images || []).length > 0 && React.createElement("div", { className: "bg-slate-100 dark:bg-ink-900 rounded-lg mt-2 overflow-hidden" }, React.createElement("img", { src: orig.images[0], loading: "lazy", onClick: (e) => { e.stopPropagation(); openLightbox(orig.images, 0); }, className: "w-full max-h-64 object-contain mx-auto cursor-zoom-in" })),
+        orig.text && React.createElement(ExpandableText, { text: orig.text, limit: 160, className: (campaign ? "text-base font-semibold" : "text-base") + " whitespace-pre-wrap" }),
+        (orig.images || []).length > 0 && (campaign
+            ? React.createElement("img", { src: orig.images[0], loading: "lazy", onClick: (e) => { e.stopPropagation(); openLightbox(orig.images, 0); }, className: "w-full max-h-[420px] object-cover rounded-lg mt-2 cursor-zoom-in" })
+            : React.createElement("div", { className: "bg-slate-100 dark:bg-ink-900 rounded-lg mt-2 overflow-hidden" }, React.createElement("img", { src: orig.images[0], loading: "lazy", onClick: (e) => { e.stopPropagation(); openLightbox(orig.images, 0); }, className: "w-full max-h-64 object-contain mx-auto cursor-zoom-in" }))),
         campaign && React.createElement("div", { className: "mt-2" },
             React.createElement("button", { onClick: ctaClick, className: "w-full flex items-center justify-between gap-2 bg-slate-50 dark:bg-ink-900 border border-slate-200 dark:border-ink-600 rounded-lg px-3 py-2" },
                 React.createElement("span", { className: "text-xs font-semibold text-slate-600 dark:text-slate-300 truncate" }, campaign.ctaLabel || 'Learn More'),
@@ -5093,7 +5102,7 @@ function SearchScreen({ go, route }) {
                 React.createElement("div", { className: "space-y-2" }, friendUsers.map(u => React.createElement(PersonRow, { key: u.id, u: u })))))))));
 }
 /* ============================== NOTIFICATIONS ============================== */
-const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', reply: 'replied to your comment', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', ad_campaign_pending: 'submitted a new ad campaign for review', listing_created: 'published a new marketplace listing', timeline_post: 'wrote something on your timeline', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group', dating_invite: 'invited you to join Blueface Dating', friend_birthday: '\uD83C\uDF82 is celebrating a birthday today \u2014 wish them well!',
+const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', reply: 'replied to your comment', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', ad_campaign_pending: 'submitted a new ad campaign for review', listing_created: 'published a new marketplace listing', new_listing: 'listed a new product on Marketplace', timeline_post: 'wrote something on your timeline', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group', dating_invite: 'invited you to join Blueface Dating', friend_birthday: '\uD83C\uDF82 is celebrating a birthday today \u2014 wish them well!',
     kyc_approved: 'Your Page KYC verification was approved', kyc_rejected: 'Your Page KYC verification was rejected',
     followers_milestone: 'Your Page reached 1,000 followers', monetization_eligible: 'Your Page is now eligible for monetization',
     monetization_approved: 'Your Page monetization application was approved', monetization_rejected: 'Your Page monetization application was rejected',
@@ -8904,16 +8913,30 @@ function ReelsStrip({ go }) {
     const [reels, setReels] = useState(null);
     useEffect(() => {
         // Note: deliberately NOT chaining .where('privacy','==','public') onto .orderBy('createdAt')
-        // here — that combination needs a Firestore composite index that most projects won't have
+        // here -- that combination needs a Firestore composite index that most projects won't have
         // set up, and Firestore fails that query silently (onSnapshot's error callback fires and we'd
         // show "No reels yet" even when public reels exist). Filtering privacy client-side avoids
         // needing that index at all, matching how the full Reels feed screen already does it.
         const unsub = db.collection('reels').orderBy('createdAt', 'desc').limit(30)
             .onSnapshot(snap => setReels(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))
-                .filter(r => !r.hiddenByAdmin && (r.privacy === 'public' || r.authorId === profile.id))
-                .slice(0, 12)), () => setReels([]));
+                .filter(r => !r.hiddenByAdmin && (r.privacy === 'public' || r.authorId === profile.id))), () => setReels([]));
         return unsub;
     }, [profile.id]);
+    // One tile per person (or Page), like Facebook's story tray, instead of one tile per reel --
+    // with a badge showing how many reels that person has among the recent ones fetched above, so
+    // "1", "3" etc. is visible at a glance instead of the strip filling up with duplicate tiles
+    // from whoever posted the most reels today.
+    const groupedReels = useMemo(() => {
+        if (!reels) return null;
+        const byOwner = new Map();
+        reels.forEach(r => {
+            const ownerKey = r.authorType === 'page' ? r.pageId : r.authorId;
+            if (!ownerKey) return;
+            if (!byOwner.has(ownerKey)) byOwner.set(ownerKey, { ownerKey, isPage: r.authorType === 'page', reel: r, count: 1 });
+            else byOwner.get(ownerKey).count++;
+        });
+        return Array.from(byOwner.values()).slice(0, 12);
+    }, [reels]);
     const TILE = "relative shrink-0 w-[136px] h-[224px] rounded-2xl overflow-hidden cursor-pointer bg-slate-200 dark:bg-ink-800";
     return (React.createElement("div", { className: "mb-2" },
         React.createElement("div", { className: "flex items-center justify-between mb-1.5" },
@@ -8925,14 +8948,15 @@ function ReelsStrip({ go }) {
                 React.createElement("div", { className: "absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/80 to-transparent" }),
                 React.createElement("span", { className: "absolute left-1/2 -translate-x-1/2 bottom-8 w-11 h-11 rounded-full bg-brand-600 text-white flex items-center justify-center text-lg ring-[3px] ring-white dark:ring-ink-900" }, React.createElement("i", { className: "fa-solid fa-plus" })),
                 React.createElement("p", { className: "absolute bottom-2 inset-x-0 text-center text-white text-xs font-semibold px-2" }, "Create a reel")),
-            reels === null && [1, 2, 3].map(i => React.createElement("div", { key: i, className: TILE + " animate-pulse" })),
-            reels !== null && reels.length === 0 && React.createElement("div", { className: "shrink-0 w-[136px] h-[224px] rounded-2xl border border-dashed border-slate-200 dark:border-ink-700 flex items-center justify-center text-center px-3" },
+            groupedReels === null && [1, 2, 3].map(i => React.createElement("div", { key: i, className: TILE + " animate-pulse" })),
+            groupedReels !== null && groupedReels.length === 0 && React.createElement("div", { className: "shrink-0 w-[136px] h-[224px] rounded-2xl border border-dashed border-slate-200 dark:border-ink-700 flex items-center justify-center text-center px-3" },
                 React.createElement("p", { className: "text-xs text-slate-400" }, "No reels yet — be the first to post one")),
-            (reels || []).map(r => React.createElement("div", { key: r.id, onClick: () => go({ name: 'reels', reelId: r.id }), className: TILE },
+            (groupedReels || []).map(g => { const r = g.reel; return React.createElement("div", { key: g.ownerKey, onClick: () => go({ name: 'reels', reelId: r.id }), className: TILE },
                 r.thumbURL ? React.createElement("img", { src: r.thumbURL, className: "w-full h-full object-cover" }) : React.createElement("div", { className: "w-full h-full flex items-center justify-center text-slate-400" }, React.createElement("i", { className: "fa-solid fa-clapperboard text-2xl" })),
                 React.createElement("div", { className: "absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/75 to-transparent" }),
+                React.createElement("span", { className: "absolute top-2 left-2 min-w-[20px] h-5 px-1 rounded-full bg-brand-600 text-white text-[11px] font-bold flex items-center justify-center ring-2 ring-white dark:ring-ink-900" }, g.count),
                 React.createElement("i", { className: "fa-solid fa-play absolute top-2.5 right-2.5 text-white text-sm drop-shadow" }),
-                React.createElement("p", { className: "absolute bottom-2 inset-x-0 text-center text-white text-xs font-semibold px-1" }, formatCount(r.viewsCount || 0), " views"))))));
+                React.createElement("p", { className: "absolute bottom-2 inset-x-0 text-center text-white text-xs font-semibold px-1" }, formatCount(r.viewsCount || 0), " views")); }))));
 }
 /* ============================== GROUPS ==============================
  * Collections used:
