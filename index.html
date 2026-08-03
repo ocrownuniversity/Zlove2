@@ -1123,6 +1123,14 @@ async function uploadCommentImage(postId, uid, file) {
 }
 /* ============================== MARKETPLACE ============================== */
 const MARKETPLACE_CATEGORIES = ['Electronics', 'Phones & Tablets', 'Vehicles', 'Property', 'Fashion', 'Home & Furniture', 'Health & Beauty', 'Jobs', 'Services', 'Food & Agriculture', 'Others'];
+// Common product colours shown as swatches on the listing form, plus a free-text "Other" option
+// so sellers aren't limited to this list. Hex values are just for the little swatch dot in the UI.
+const MARKETPLACE_COLORS = [
+    ['Black', '#111111'], ['White', '#ffffff'], ['Grey', '#9ca3af'], ['Silver', '#cbd5e1'],
+    ['Gold', '#d4af37'], ['Red', '#ef4444'], ['Blue', '#3b82f6'], ['Green', '#22c55e'],
+    ['Yellow', '#eab308'], ['Orange', '#f97316'], ['Purple', '#a855f7'], ['Pink', '#ec4899'],
+    ['Brown', '#92400e'], ['Beige', '#e7d8c9'], ['Multicolor', 'conic-gradient(#ef4444,#eab308,#22c55e,#3b82f6,#a855f7,#ef4444)']
+];
 function formatNaira(n) { return '\u20A6' + Number(n || 0).toLocaleString('en-NG'); }
 async function uploadListingImages(sellerId, files) {
     const urls = [];
@@ -5062,6 +5070,8 @@ function SearchScreen({ go, route }) {
     const [results, setResults] = useState([]);
     const [busy, setBusy] = useState(false);
     const [allUsers, setAllUsers] = useState(null);
+    const [allPages, setAllPages] = useState(null);
+    const [allGroups, setAllGroups] = useState(null);
     const [messaging, setMessaging] = useState(null);
     const [ptab, setPtab] = useState((route === null || route === void 0 ? void 0 : route.tab) || 'suggested');
     const friendships = useFriendships(profile.id);
@@ -5070,6 +5080,18 @@ function SearchScreen({ go, route }) {
     useEffect(() => {
         const unsub = db.collection('users').limit(200)
             .onSnapshot(snap => setAllUsers(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setAllUsers([]));
+        return unsub;
+    }, []);
+    // Live directories of Pages and Groups, so the same search box can surface them alongside
+    // people — matched client-side same as the username search fallback above.
+    useEffect(() => {
+        const unsub = db.collection('fanPages').limit(200)
+            .onSnapshot(snap => setAllPages(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setAllPages([]));
+        return unsub;
+    }, []);
+    useEffect(() => {
+        const unsub = db.collection('groups').limit(300)
+            .onSnapshot(snap => setAllGroups(snap.docs.map(d => (Object.assign({ id: d.id }, d.data()))).filter(g => !g.hiddenByAdmin)), () => setAllGroups([]));
         return unsub;
     }, []);
     useEffect(() => {
@@ -5093,6 +5115,21 @@ function SearchScreen({ go, route }) {
         return () => clearTimeout(handle);
     }, [q]);
     const byId = new Map((allUsers || []).map(u => [u.id, u]));
+    const qNeedle = q.trim().toLowerCase();
+    const pageResults = useMemo(() => {
+        if (!qNeedle || !allPages)
+            return [];
+        return allPages
+            .filter(p => !p.suspended && ((p.displayName || '').toLowerCase().includes(qNeedle) || (p.username || '').toLowerCase().includes(qNeedle) || (p.category || '').toLowerCase().includes(qNeedle)))
+            .slice(0, 20);
+    }, [allPages, qNeedle]);
+    const groupResults = useMemo(() => {
+        if (!qNeedle || !allGroups)
+            return [];
+        return allGroups
+            .filter(g => (g.name || '').toLowerCase().includes(qNeedle) || (g.description || '').toLowerCase().includes(qNeedle) || (g.category || '').toLowerCase().includes(qNeedle))
+            .slice(0, 20);
+    }, [allGroups, qNeedle]);
     const suggestions = (allUsers || [])
         .filter(u => u.id !== profile.id && !u.suspended)
         .filter(u => !(profile.blockedUsers || []).includes(u.id) && !(u.blockedUsers || []).includes(profile.id))
@@ -5139,11 +5176,19 @@ function SearchScreen({ go, route }) {
     return (React.createElement("div", null,
         React.createElement("div", { className: "relative mb-4" },
             React.createElement("i", { className: "fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" }),
-            React.createElement("input", { value: q, onChange: e => setQ(e.target.value), placeholder: "Search by username\u2026", className: "w-full pl-11 pr-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" })),
+            React.createElement("input", { value: q, onChange: e => setQ(e.target.value), placeholder: "Search people, Pages & Groups\u2026", className: "w-full pl-11 pr-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" })),
         busy && React.createElement("p", { className: "text-sm text-slate-400" }, "Searching\u2026"),
-        q.trim() ? (React.createElement("div", { className: "space-y-2" },
-            !busy && results.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-10" }, "No one found with that username."),
-            results.map(u => React.createElement(PersonRow, { key: u.id, u: u })))) : (React.createElement("div", null,
+        q.trim() ? (React.createElement("div", { className: "space-y-4" },
+            !busy && results.length === 0 && pageResults.length === 0 && groupResults.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-10" }, "No people, Pages or Groups found for \u201C" + q.trim() + "\u201D."),
+            results.length > 0 && React.createElement("div", { className: "space-y-2" },
+                React.createElement("p", { className: "text-xs font-bold uppercase tracking-wide text-slate-400" }, "People"),
+                results.map(u => React.createElement(PersonRow, { key: u.id, u: u }))),
+            pageResults.length > 0 && React.createElement("div", { className: "space-y-2" },
+                React.createElement("p", { className: "text-xs font-bold uppercase tracking-wide text-slate-400" }, "Pages"),
+                pageResults.map(p => React.createElement(PageCard, { key: p.id, page: p, go: go }))),
+            groupResults.length > 0 && React.createElement("div", { className: "space-y-2" },
+                React.createElement("p", { className: "text-xs font-bold uppercase tracking-wide text-slate-400" }, "Groups"),
+                groupResults.map(g => React.createElement(GroupCard, { key: g.id, group: g, go: go }))))) : (React.createElement("div", null,
             React.createElement("div", { className: "flex gap-2 mb-4" }, TABS.map(([k, l]) => (React.createElement("button", { key: k, onClick: () => setPtab(k), className: "flex-1 py-2 rounded-full text-xs font-semibold border " + (ptab === k ? "bg-brand-600 text-white border-brand-600" : "border-slate-200 dark:border-ink-700 text-slate-500") }, l)))),
             ptab === 'suggested' && (React.createElement("div", null,
                 allUsers === null && React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026"),
@@ -8153,6 +8198,9 @@ function ListingFormScreen({ id, go }) {
     const [category, setCategory] = useState(MARKETPLACE_CATEGORIES[0]);
     const [price, setPrice] = useState('');
     const [condition, setCondition] = useState('used');
+    const [color, setColor] = useState('');
+    const [customColor, setCustomColor] = useState('');
+    const [brand, setBrand] = useState('');
     const [location, setLocation] = useState('');
     const [whatsappNumber, setWhatsappNumber] = useState('');
     const [existingImages, setExistingImages] = useState([]);
@@ -8179,6 +8227,15 @@ function ListingFormScreen({ id, go }) {
             setCategory(d.category);
             setPrice(String(d.price));
             setCondition(d.condition);
+            const savedColor = d.color || '';
+            if (savedColor && !MARKETPLACE_COLORS.some(([name]) => name === savedColor)) {
+                setColor('Other');
+                setCustomColor(savedColor);
+            }
+            else {
+                setColor(savedColor);
+            }
+            setBrand(d.brand || '');
             setLocation(d.location);
             setWhatsappNumber(d.whatsappNumber || '');
             setExistingImages(d.images || []);
@@ -8210,7 +8267,8 @@ function ListingFormScreen({ id, go }) {
         }
         setSaving(true);
         try {
-            const fields = { title: title.trim(), description: description.trim(), category, price: Number(price), condition, location: location.trim(), whatsappNumber: whatsappNumber.trim() || null };
+            const finalColor = color === 'Other' ? customColor.trim() : color;
+            const fields = { title: title.trim(), description: description.trim(), category, price: Number(price), condition, color: finalColor || null, brand: brand.trim() || null, location: location.trim(), whatsappNumber: whatsappNumber.trim() || null };
             if (id) {
                 await updateListing(id, profile.id, fields, existingImages, newFiles);
                 toast('Listing updated', 'success');
@@ -8250,6 +8308,19 @@ function ListingFormScreen({ id, go }) {
             React.createElement("select", { value: category, onChange: e => setCategory(e.target.value), className: "w-full px-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" }, MARKETPLACE_CATEGORIES.map(c => React.createElement("option", { key: c, value: c }, c))),
             React.createElement("input", { value: price, onChange: e => setPrice(e.target.value.replace(/[^0-9]/g, '')), inputMode: "numeric", placeholder: "Price (\u20A6)", className: "w-full px-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" }),
             React.createElement("div", { className: "flex gap-2" }, [['new', 'New'], ['used', 'Used']].map(([k, l]) => React.createElement("button", { key: k, onClick: () => setCondition(k), className: "flex-1 py-2.5 rounded-xl text-sm font-semibold border " + (condition === k ? "bg-brand-600 text-white border-brand-600" : "border-slate-200 dark:border-ink-700 text-slate-500") }, l))),
+            React.createElement("input", { value: brand, onChange: e => setBrand(e.target.value), placeholder: "Brand (optional, e.g. Samsung, Nike)", className: "w-full px-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" }),
+            React.createElement("div", null,
+                React.createElement("p", { className: "text-xs font-semibold text-slate-500 mb-1.5" }, "Colour"),
+                React.createElement("div", { className: "flex flex-wrap gap-2" },
+                    MARKETPLACE_COLORS.map(([name, swatch]) => React.createElement("button", {
+                        key: name, type: "button", onClick: () => setColor(name), title: name,
+                        className: "relative w-8 h-8 rounded-full border-2 flex items-center justify-center " + (color === name ? "border-brand-600" : "border-slate-200 dark:border-ink-700")
+                    }, React.createElement("span", { className: "w-6 h-6 rounded-full border border-black/10", style: { background: swatch } }), color === name && React.createElement("i", { className: "fa-solid fa-check text-[10px] absolute " + (name === 'White' || name === 'Beige' || name === 'Silver' ? "text-ink-900" : "text-white") }))),
+                    React.createElement("button", {
+                        type: "button", onClick: () => setColor('Other'),
+                        className: "px-3 h-8 rounded-full border text-xs font-semibold " + (color === 'Other' ? "bg-brand-600 text-white border-brand-600" : "border-slate-200 dark:border-ink-700 text-slate-500")
+                    }, "Other")),
+                color === 'Other' && React.createElement("input", { value: customColor, onChange: e => setCustomColor(e.target.value), placeholder: "Enter colour (e.g. Teal)", className: "w-full mt-2 px-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" })),
             React.createElement("input", { value: location, onChange: e => setLocation(e.target.value), placeholder: "Location (e.g. Ibadan, Oyo State)", className: "w-full px-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" }),
             React.createElement("input", { type: "tel", value: whatsappNumber, onChange: e => setWhatsappNumber(e.target.value), placeholder: "WhatsApp number (optional, e.g. +234\u2026)", className: "w-full px-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" }),
             React.createElement("p", { className: "text-[11px] text-slate-400 -mt-2" }, "Shown as a WhatsApp button on this listing so buyers can reach you directly."),
@@ -8386,6 +8457,10 @@ function ListingDetailScreen({ id, go }) {
             React.createElement("div", { className: "flex flex-wrap gap-1.5 text-[11px] text-slate-400 mb-2" },
                 React.createElement("span", { className: "px-2 py-0.5 rounded-full bg-slate-100 dark:bg-ink-700" }, listing.condition === 'new' ? 'Brand New' : 'Used'),
                 React.createElement("span", { className: "px-2 py-0.5 rounded-full bg-slate-100 dark:bg-ink-700" }, listing.category),
+                listing.brand && React.createElement("span", { className: "px-2 py-0.5 rounded-full bg-slate-100 dark:bg-ink-700" }, listing.brand),
+                listing.color && React.createElement("span", { className: "px-2 py-0.5 rounded-full bg-slate-100 dark:bg-ink-700 flex items-center gap-1" },
+                    React.createElement("span", { className: "w-2.5 h-2.5 rounded-full border border-black/10 shrink-0", style: { background: (MARKETPLACE_COLORS.find(([n]) => n === listing.color) || [null, '#94a3b8'])[1] } }),
+                    listing.color),
                 React.createElement("span", { className: "px-2 py-0.5 rounded-full bg-slate-100 dark:bg-ink-700" },
                     React.createElement("i", { className: "fa-solid fa-location-dot mr-1" }),
                     listing.location),
@@ -8725,6 +8800,10 @@ function ReelsFeedScreen({ go, route }) {
     const followingSet = useMyFollowingSet(me.id);
     const friendSet = useMyFriendSet(me.id);
     const scope = route && route.scope;
+    // A "person scope" (tapped into one user's or Page's reels, e.g. from the home strip or their
+    // profile grid) should still flow into more reels once that person's own reels run out, instead
+    // of dead-ending the viewer — everywhere else (the general feed, or "saved") behaves as before.
+    const isPersonScope = !!(scope && (scope.startsWith('user:') || scope.startsWith('page:')));
     useEffect(() => {
         let q = db.collection('reels');
         if (scope && scope.startsWith('user:')) q = q.where('authorId', '==', scope.slice(5));
@@ -8733,6 +8812,14 @@ function ReelsFeedScreen({ go, route }) {
         const unsub = q.onSnapshot(snap => setRaw(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setRaw([]));
         return unsub;
     }, [limitN, scope]);
+    // Extra pool of general reels to continue into after finishing a person-scoped set.
+    const [continueRaw, setContinueRaw] = useState(null);
+    useEffect(() => {
+        if (!isPersonScope) { setContinueRaw(null); return; }
+        const unsub = db.collection('reels').orderBy('createdAt', 'desc').limit(60)
+            .onSnapshot(snap => setContinueRaw(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setContinueRaw([]));
+        return unsub;
+    }, [isPersonScope]);
     // If we deep-linked to a specific reel not present in the current window, fetch it directly.
     const [pinnedReel, setPinnedReel] = useState(null);
     useEffect(() => {
@@ -8777,6 +8864,23 @@ function ReelsFeedScreen({ go, route }) {
     let ordered = useMemo(() => orderedIds.map(id => byId.get(id)).filter(Boolean), [orderedIds, byId]);
     if (pinnedReel && canViewReel(pinnedReel, me.id, followingSet, friendSet) && !ordered.some(r => r.id === pinnedReel.id)) {
         ordered = [pinnedReel, ...ordered];
+    }
+    // Once the viewer has scrolled through everything from this person, keep the feed going with
+    // other people's reels (most engaging first) rather than showing a dead end.
+    const continueVisible = useMemo(() => {
+        if (!isPersonScope || !continueRaw)
+            return [];
+        const ownerField = scope.startsWith('user:') ? 'authorId' : 'pageId';
+        const ownerValue = scope.slice(scope.indexOf(':') + 1);
+        const excludeIds = new Set(ordered.map(r => r.id));
+        return continueRaw
+            .filter(r => canViewReel(r, me.id, followingSet, friendSet))
+            .filter(r => r[ownerField] !== ownerValue)
+            .filter(r => !excludeIds.has(r.id))
+            .sort((a, b) => reelHotScore(b) - reelHotScore(a));
+    }, [isPersonScope, continueRaw, ordered, followingSet, friendSet, me.id, scope]);
+    if (isPersonScope && continueVisible.length > 0) {
+        ordered = [...ordered, ...continueVisible];
     }
     const onScroll = () => {
         const el = containerRef.current;
@@ -9022,7 +9126,7 @@ function ReelsStrip({ go }) {
             groupedReels === null && [1, 2, 3].map(i => React.createElement("div", { key: i, className: TILE + " animate-pulse" })),
             groupedReels !== null && groupedReels.length === 0 && React.createElement("div", { className: "shrink-0 w-[136px] h-[224px] rounded-2xl border border-dashed border-slate-200 dark:border-ink-700 flex items-center justify-center text-center px-3" },
                 React.createElement("p", { className: "text-xs text-slate-400" }, "No reels yet — be the first to post one")),
-            (groupedReels || []).map(g => { const r = g.reel; return React.createElement("div", { key: g.ownerKey, onClick: () => go({ name: 'reels', reelId: r.id }), className: TILE },
+            (groupedReels || []).map(g => { const r = g.reel; return React.createElement("div", { key: g.ownerKey, onClick: () => go({ name: 'reels', reelId: r.id, scope: g.isPage ? ('page:' + g.ownerKey) : ('user:' + g.ownerKey) }), className: TILE },
                 r.thumbURL ? React.createElement("img", { src: r.thumbURL, className: "w-full h-full object-cover" }) : React.createElement("div", { className: "w-full h-full flex items-center justify-center text-slate-400" }, React.createElement("i", { className: "fa-solid fa-clapperboard text-2xl" })),
                 React.createElement("div", { className: "absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/75 to-transparent" }),
                 React.createElement("span", { className: "absolute top-2 left-2 min-w-[20px] h-5 px-1 rounded-full bg-brand-600 text-white text-[11px] font-bold flex items-center justify-center ring-2 ring-white dark:ring-ink-900" }, g.count),
