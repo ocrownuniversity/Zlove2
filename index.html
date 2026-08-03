@@ -4901,15 +4901,19 @@ function ListingFeedCard({ listing, go }) {
             React.createElement("p", { className: "text-lg font-display font-bold" }, formatNaira(listing.price)),
             React.createElement("p", { className: "text-sm font-semibold mb-1 cursor-pointer", onClick: openListing }, listing.title),
             listing.description && React.createElement(ExpandableText, { text: listing.description, limit: 140, className: "text-sm text-slate-600 dark:text-slate-300 mb-2" })),
-        React.createElement("div", { className: "flex items-center gap-2 px-3 sm:px-4 pb-3 pt-1" },
-            React.createElement("button", { onClick: toggleFav, disabled: busy, className: "flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold " + (favorited ? "bg-red-50 text-red-500 dark:bg-red-900/20" : "bg-slate-100 dark:bg-ink-700") },
+        React.createElement("div", { className: "px-3 sm:px-4 pb-3 pt-1" },
+            React.createElement("button", { onClick: toggleFav, disabled: busy, className: "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold mb-2 " + (favorited ? "bg-red-50 text-red-500 dark:bg-red-900/20" : "bg-slate-100 dark:bg-ink-700") },
                 React.createElement("i", { className: (favorited ? "fa-solid" : "fa-regular") + " fa-heart" }), favCount || ''),
-            !isOwner && whatsappHref && React.createElement("a", { href: whatsappHref, target: "_blank", rel: "noopener", className: "flex-1 flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold px-3 py-2 rounded-full" },
-                React.createElement("i", { className: "fa-brands fa-whatsapp" }), "WhatsApp"),
-            !isOwner && React.createElement("button", { onClick: messageSeller, className: "flex-1 flex items-center justify-center gap-1.5 bg-slate-100 dark:bg-ink-700 hover:bg-slate-200 dark:hover:bg-ink-600 text-xs font-bold px-3 py-2 rounded-full" },
-                React.createElement("i", { className: "fa-solid fa-message" }), "Message"),
-            React.createElement("button", { onClick: openListing, className: "flex-1 flex items-center justify-center gap-1.5 bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold px-3 py-2 rounded-full" },
-                "View", React.createElement("i", { className: "fa-solid fa-arrow-right text-[10px]" }))));
+            // A grid (not flex-1) guarantees these three divide the row exactly, so a button can
+            // never overflow off-screen and get silently clipped by the card's overflow-hidden —
+            // which is what was happening to "View" on narrower phones.
+            React.createElement("div", { className: "grid " + (!isOwner && whatsappHref ? "grid-cols-3" : "grid-cols-2") + " gap-2" },
+                !isOwner && whatsappHref && React.createElement("a", { href: whatsappHref, target: "_blank", rel: "noopener", className: "flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold px-2 py-2 rounded-full" },
+                    React.createElement("i", { className: "fa-brands fa-whatsapp" }), "WhatsApp"),
+                !isOwner && React.createElement("button", { onClick: messageSeller, className: "flex items-center justify-center gap-1.5 bg-slate-100 dark:bg-ink-700 hover:bg-slate-200 dark:hover:bg-ink-600 text-xs font-bold px-2 py-2 rounded-full" },
+                    React.createElement("i", { className: "fa-solid fa-message" }), "Message"),
+                React.createElement("button", { onClick: openListing, className: "flex items-center justify-center gap-1.5 bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold px-2 py-2 rounded-full" },
+                    "View", React.createElement("i", { className: "fa-solid fa-arrow-right text-[10px]" })))));
 }
 function HomeFeed({ go }) {
     const { profile } = useAuth();
@@ -8341,14 +8345,14 @@ function ListingDetailScreen({ id, go }) {
                 React.createElement("p", { className: "font-semibold text-sm" }, seller ? seller.displayName : '\u2026'),
                 React.createElement("p", { className: "text-xs text-slate-400" }, "View seller profile & other listings")),
             React.createElement("i", { className: "fa-solid fa-chevron-right text-slate-300" })),
-        !isOwner && listing.status === 'active' && (React.createElement("div", { className: "flex gap-2 mb-3" },
-            React.createElement("button", { onClick: contactSeller, className: "flex-1 py-3 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-sm font-semibold" },
+        !isOwner && listing.status === 'active' && (React.createElement("div", { className: "grid " + (listing.whatsappNumber ? "grid-cols-3" : "grid-cols-2") + " gap-2 mb-3" },
+            React.createElement("button", { onClick: contactSeller, className: "py-3 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-sm font-semibold" },
                 React.createElement("i", { className: "fa-regular fa-paper-plane mr-1.5" }),
                 "Contact Seller"),
-            listing.whatsappNumber && React.createElement("a", { href: "https://wa.me/" + listing.whatsappNumber.replace(/[^\d]/g, '') + "?text=" + encodeURIComponent(`Hi! I'm interested in "${listing.title}" (${formatNaira(listing.price)}).`), target: "_blank", rel: "noopener", className: "flex-1 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-semibold text-center" },
+            listing.whatsappNumber && React.createElement("a", { href: "https://wa.me/" + listing.whatsappNumber.replace(/[^\d]/g, '') + "?text=" + encodeURIComponent(`Hi! I'm interested in "${listing.title}" (${formatNaira(listing.price)}).`), target: "_blank", rel: "noopener", className: "py-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-semibold text-center" },
                 React.createElement("i", { className: "fa-brands fa-whatsapp mr-1.5" }),
                 "WhatsApp"),
-            React.createElement("button", { onClick: () => setShowOfferForm(v => !v), className: "flex-1 py-3 rounded-xl bg-slate-100 dark:bg-ink-700 text-sm font-semibold" }, "Make Offer"))),
+            React.createElement("button", { onClick: () => setShowOfferForm(v => !v), className: "py-3 rounded-xl bg-slate-100 dark:bg-ink-700 text-sm font-semibold" }, "Make Offer"))),
         showOfferForm && !isOwner && (React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700 mb-3" },
             React.createElement("input", { value: offerAmount, onChange: e => setOfferAmount(e.target.value.replace(/[^0-9]/g, '')), inputMode: "numeric", placeholder: "Your offer (\u20A6)", className: "w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-ink-700 text-sm mb-2" }),
             React.createElement("textarea", { value: offerMsg, onChange: e => setOfferMsg(e.target.value), rows: 2, placeholder: "Message (optional)", className: "w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-ink-700 text-sm mb-2 resize-none" }),
