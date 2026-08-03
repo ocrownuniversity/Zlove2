@@ -3260,8 +3260,6 @@ function MainApp({ route, setRoute }) {
                 route.name === 'notifications' && React.createElement(NotificationsScreen, { go: go }),
                 route.name === 'bookmarks' && React.createElement(BookmarksScreen, { go: go }),
                 route.name === 'birthdays' && React.createElement(BirthdaysScreen, { go: go }),
-                route.name === 'memories' && React.createElement(MemoriesScreen, { go: go }),
-                route.name === 'accountSettings' && React.createElement(AccountSettingsScreen, { go: go }),
                 route.name === 'wallet' && React.createElement(WalletScreen, { go: go }),
                 route.name === 'adCentre' && React.createElement(AdCentreScreen, { go: go }),
                 route.name === 'post' && React.createElement(PostDetailScreen, { id: route.id, go: go, openComments: route.openComments }),
@@ -3296,7 +3294,7 @@ const MENU_TILES = [
     { key: 'games', label: 'Games', icon: 'fa-gamepad', route: { name: 'games' } },
     { key: 'pages', label: 'Pages', icon: 'fa-flag', route: { name: 'myPages' } },
     { key: 'saved', label: 'Saved', icon: 'fa-bookmark', route: { name: 'bookmarks' } },
-    { key: 'memories', label: 'Memories', icon: 'fa-clock-rotate-left', route: { name: 'memories' } },
+    { key: 'memories', label: 'Memories', icon: 'fa-clock-rotate-left', route: null },
     { key: 'birthdays', label: 'Birthdays', icon: 'fa-gift', route: { name: 'birthdays' } },
     { key: 'events', label: 'Events', icon: 'fa-calendar-days', route: null },
     { key: 'adCentre', label: 'Ad Centre', icon: 'fa-bullhorn', route: { name: 'adCentre' } },
@@ -3364,7 +3362,7 @@ function MenuScreen({ go, theme, setTheme }) {
                     React.createElement("button", { onClick: () => setTheme(theme === 'dark' ? 'light' : 'dark'), className: "flex items-center gap-3 py-2 text-left text-sm font-semibold text-slate-600 dark:text-slate-300" },
                         React.createElement("i", { className: "fa-solid " + (theme === 'dark' ? 'fa-sun' : 'fa-moon') + " w-5" }),
                         theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'),
-                    React.createElement("button", { onClick: () => go({ name: 'accountSettings' }), className: "flex items-center gap-3 py-2 text-left text-sm font-semibold text-slate-600 dark:text-slate-300" },
+                    React.createElement("button", { onClick: () => soon('Settings'), className: "flex items-center gap-3 py-2 text-left text-sm font-semibold text-slate-600 dark:text-slate-300" },
                         React.createElement("i", { className: "fa-solid fa-user-gear w-5" }),
                         "Account settings"),
                     React.createElement("div", { className: "flex items-center justify-between py-2" },
@@ -3390,94 +3388,6 @@ function MenuScreen({ go, theme, setTheme }) {
                     React.createElement("span", { className: "w-8 h-8 rounded-full bg-slate-100 dark:bg-ink-800 flex items-center justify-center shrink-0" },
                         React.createElement("i", { className: "fa-solid fa-arrow-right-from-bracket text-red-500" })),
                     React.createElement("span", { className: "font-semibold text-[15px] text-red-500" }, "Log Out"))))));
-}
-/* ---- Account settings: profile edit shortcut, email/password, blocked accounts ---- */
-function AccountSettingsScreen({ go }) {
-    const { profile, firebaseUser } = useAuth();
-    const toast = useToast();
-    const [editing, setEditing] = useState(false);
-    const [blockedUsers, setBlockedUsers] = useState(undefined);
-    const [resetBusy, setResetBusy] = useState(false);
-    const [verifyBusy, setVerifyBusy] = useState(false);
-    const blockedIds = profile.blockedUsers || [];
-    useEffect(() => {
-        if (blockedIds.length === 0) { setBlockedUsers([]); return; }
-        let cancelled = false;
-        (async () => {
-            const docs = await Promise.all(blockedIds.map(id => db.collection('users').doc(id).get().catch(() => null)));
-            if (cancelled) return;
-            setBlockedUsers(docs.filter(d => d && d.exists).map(d => Object.assign({ id: d.id }, d.data())));
-        })();
-        return () => { cancelled = true; };
-    }, [JSON.stringify(blockedIds)]);
-    const unblock = async (u) => {
-        try {
-            await db.collection('users').doc(profile.id).update({ blockedUsers: FieldValue.arrayRemove(u.id) });
-            toast('Unblocked ' + (u.displayName || u.username), 'success');
-        }
-        catch (e) {
-            toast(e.message, 'error');
-        }
-    };
-    const sendPasswordReset = async () => {
-        if (!profile.email) { toast('No email on file for this account', 'error'); return; }
-        setResetBusy(true);
-        try {
-            await auth.sendPasswordResetEmail(profile.email);
-            toast('Password reset link sent to ' + profile.email, 'success');
-        }
-        catch (e) {
-            toast(e.message, 'error');
-        }
-        finally {
-            setResetBusy(false);
-        }
-    };
-    const resendVerification = async () => {
-        setVerifyBusy(true);
-        try {
-            await auth.currentUser.sendEmailVerification();
-            toast('Verification email sent to ' + profile.email, 'success');
-        }
-        catch (e) {
-            toast(e.message, 'error');
-        }
-        finally {
-            setVerifyBusy(false);
-        }
-    };
-    const emailVerified = !!(firebaseUser && firebaseUser.emailVerified);
-    const Section = ({ title, children }) => React.createElement("div", { className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-4 mb-3" },
-        React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mb-3" }, title),
-        children);
-    return React.createElement("div", null,
-        React.createElement("div", { className: "flex items-center gap-3 mb-4" },
-            React.createElement("button", { onClick: () => go({ name: 'menu' }) }, React.createElement("i", { className: "fa-solid fa-arrow-left" })),
-            React.createElement("h2", { className: "font-display text-lg font-bold" }, "Account settings")),
-        React.createElement(Section, { title: "Profile" },
-            React.createElement("div", { className: "flex items-center gap-3" },
-                React.createElement(Avatar, { user: profile, size: 12 }),
-                React.createElement("div", { className: "flex-1 min-w-0" },
-                    React.createElement("p", { className: "font-bold text-sm truncate" }, profile.displayName || profile.username),
-                    React.createElement("p", { className: "text-xs text-slate-400 truncate" }, "@", profile.username)),
-                React.createElement("button", { onClick: () => setEditing(true), className: "shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400" }, "Edit profile"))),
-        React.createElement(Section, { title: "Email & password" },
-            React.createElement("div", { className: "flex items-center justify-between mb-3" },
-                React.createElement("div", { className: "min-w-0" },
-                    React.createElement("p", { className: "text-sm font-semibold truncate" }, profile.email || 'No email on file'),
-                    React.createElement("p", { className: "text-[11px] " + (emailVerified ? "text-emerald-500" : "text-amber-500") }, emailVerified ? 'Verified' : 'Not verified')),
-                !emailVerified && profile.email && React.createElement("button", { onClick: resendVerification, disabled: verifyBusy, className: "shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-100 dark:bg-ink-700 disabled:opacity-50" }, verifyBusy ? 'Sending\u2026' : 'Resend link')),
-            React.createElement("button", { onClick: sendPasswordReset, disabled: resetBusy || !profile.email, className: "w-full py-2.5 rounded-xl bg-slate-100 dark:bg-ink-700 text-sm font-semibold disabled:opacity-50" }, resetBusy ? 'Sending\u2026' : 'Send password reset email'),
-            React.createElement("p", { className: "text-[11px] text-slate-400 mt-2" }, "We'll email you a secure link to set a new password.")),
-        React.createElement(Section, { title: "Blocked accounts" },
-            blockedUsers === undefined && React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026"),
-            blockedUsers && blockedUsers.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "You haven't blocked anyone."),
-            blockedUsers && blockedUsers.length > 0 && React.createElement("div", { className: "space-y-2" }, blockedUsers.map(u => React.createElement("div", { key: u.id, className: "flex items-center gap-3" },
-                React.createElement(Avatar, { user: u, size: 9 }),
-                React.createElement("div", { className: "flex-1 min-w-0" },
-                    React.createElement("p", { className: "text-sm font-semibold truncate" }, u.displayName || u.username)),
-                React.createElement("button", { onClick: () => unblock(u), className: "shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-100 dark:bg-ink-700" }, "Unblock"))))),
-        editing && React.createElement(EditProfileModal, { user: profile, onClose: () => setEditing(false) }));
 }
 /* ============================== AVATAR ============================== */
 const PAGE_CATEGORIES = [
@@ -5464,69 +5374,6 @@ function BirthdaysScreen({ go }) {
         upcoming.length > 0 && React.createElement("div", null,
             React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mb-2" }, "Upcoming"),
             React.createElement("div", { className: "space-y-2" }, upcoming.map(Row))));
-}
-/* ============================== MEMORIES ============================== */
-// Facebook-style "On This Day": surfaces the signed-in user's own past posts that were made on
-// today's month/day in a previous year. Falls back to a full year-by-year timeline of their own
-// posts when nothing matches today's date (or while there's simply not enough history yet).
-function MemoriesScreen({ go }) {
-    const { profile } = useAuth();
-    const [posts, setPosts] = useState(undefined);
-    useEffect(() => {
-        const unsub = db.collection('posts').where('authorId', '==', profile.id).limit(500)
-            .onSnapshot(snap => {
-                const list = snap.docs.map(d => Object.assign({ id: d.id }, d.data()))
-                    .filter(p => !p.hiddenByAdmin && !p.groupId && !p.isAd);
-                list.sort((a, b) => millisOf(b.createdAt) - millisOf(a.createdAt));
-                setPosts(list);
-            }, () => setPosts([]));
-        return unsub;
-    }, [profile.id]);
-    const now = new Date();
-    const onThisDay = useMemo(() => {
-        if (!posts) return [];
-        return posts.filter(p => {
-            const ms = millisOf(p.createdAt);
-            if (!ms) return false;
-            const d = new Date(ms);
-            return d.getMonth() === now.getMonth() && d.getDate() === now.getDate() && d.getFullYear() !== now.getFullYear();
-        }).sort((a, b) => millisOf(b.createdAt) - millisOf(a.createdAt));
-    }, [posts]);
-    const byYear = useMemo(() => {
-        if (!posts) return [];
-        const map = new Map();
-        posts.forEach(p => {
-            const ms = millisOf(p.createdAt);
-            const year = ms ? new Date(ms).getFullYear() : 'Undated';
-            if (!map.has(year)) map.set(year, []);
-            map.get(year).push(p);
-        });
-        return Array.from(map.entries()).sort((a, b) => (Number(b[0]) || 0) - (Number(a[0]) || 0));
-    }, [posts]);
-    const yearsAgo = (createdAt) => now.getFullYear() - new Date(millisOf(createdAt)).getFullYear();
-    const loading = posts === undefined;
-    return React.createElement("div", null,
-        React.createElement("div", { className: "flex items-center gap-3 mb-4" },
-            React.createElement("button", { onClick: () => go({ name: 'menu' }) }, React.createElement("i", { className: "fa-solid fa-arrow-left" })),
-            React.createElement("h2", { className: "font-display text-lg font-bold" }, "Memories")),
-        loading && React.createElement(PostSkeleton, null),
-        !loading && posts.length === 0 && React.createElement("div", { className: "text-center py-16 text-slate-400" },
-            React.createElement("i", { className: "fa-solid fa-clock-rotate-left text-4xl mb-3" }),
-            React.createElement("p", null, "No memories yet."),
-            React.createElement("p", { className: "text-xs mt-1" }, "Posts you share will start showing up here on this day in future years.")),
-        !loading && posts.length > 0 && onThisDay.length > 0 && React.createElement("div", { className: "mb-6" },
-            React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mb-2" }, "\uD83D\uDCC5 On This Day"),
-            React.createElement("div", { className: "space-y-3" }, onThisDay.map(p => React.createElement("div", { key: p.id },
-                React.createElement("p", { className: "text-xs font-semibold text-brand-600 dark:text-brand-400 mb-1.5" },
-                    yearsAgo(p.createdAt), " ", yearsAgo(p.createdAt) === 1 ? 'year ago' : 'years ago'),
-                React.createElement(PostCard, { post: p, go: go }))))),
-        !loading && posts.length > 0 && onThisDay.length === 0 && React.createElement("div", { className: "text-center py-8 mb-2 text-slate-400" },
-            React.createElement("i", { className: "fa-solid fa-clock-rotate-left text-3xl mb-2" }),
-            React.createElement("p", { className: "text-sm" }, "No memories from this exact day \u2014 here's your story so far.")),
-        !loading && posts.length > 0 && React.createElement("div", null,
-            byYear.map(([year, yearPosts]) => React.createElement("div", { key: year, className: "mb-6" },
-                React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mb-2" }, year),
-                React.createElement("div", { className: "space-y-3" }, yearPosts.map(p => React.createElement(PostCard, { key: p.id, post: p, go: go })))))));
 }
 /* ============================== PROFILE ============================== */
 function computeWorkDuration(workStart) {
