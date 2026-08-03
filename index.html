@@ -204,6 +204,16 @@ function postAudienceMeta(post) {
     const opt = AUDIENCE_OPTIONS.find(a => a.id === (post.audience || 'public')) || { icon: 'fa-earth-africa', label: 'Public' };
     return { icon: opt.icon, label: opt.label };
 }
+// A destination URL typed without "http://" or "https://" (e.g. "www.example.com") is a
+// RELATIVE link to the browser, not an external one — clicking it just reloads/reopens this
+// same site instead of going to the advertiser's page. This normalizes it once, at the point
+// it's saved, so it can never be stored broken.
+function normalizeUrl(url) {
+    const trimmed = (url || '').trim();
+    if (!trimmed) return '';
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    return 'https://' + trimmed.replace(/^\/+/, '');
+}
 function millisOf(ts) {
     // Safe epoch-ms helper. Handles Firestore Timestamps (.toMillis()) AND plain numbers (e.g.
     // ad campaign startDate/endDate, which are stored as raw epoch-ms, not Timestamps) so date
@@ -4126,7 +4136,7 @@ function PostCard({ post, go, groupCtx, autoOpenComments, sponsored }) {
     const handleAdCtaClick = () => {
         if (!sponsored) return;
         recordAdClick(sponsored.id).catch(() => { });
-        window.open(sponsored.destinationUrl, '_blank', 'noopener');
+        window.open(normalizeUrl(sponsored.destinationUrl), '_blank', 'noopener');
     };
     // Every ad runs from a Page (see createAdCampaign), so "Message" opens a normal in-app chat
     // with that Page's owner — same thread a visitor would land on from the Page profile itself.
@@ -11595,15 +11605,19 @@ const AD_STATUS_LABELS = {
     active: 'Active', paused: 'Paused', completed: 'Completed'
 };
 const AD_CTA_OPTIONS = ['Learn More', 'Shop Now', 'Sign Up', 'Contact Us', 'Book Now', 'Download', 'Get Offer', 'Send Message'];
-function uploadAdCreative(uid, campaignId, file) {
+function uploadAdCreative(uid, campaignId, file, onProgress) {
     const isVideo = (file.type || '').startsWith('video/');
     const prep = isVideo ? Promise.resolve(file) : compressImage(file, 1600, 0.85);
     return prep.then(blob => {
         const ext = isVideo ? (file.name ? file.name.split('.').pop() : 'mp4') : 'jpg';
         const path = `adCreatives/${uid}/${campaignId}/media.${ext}`;
         const ref = storage.ref(path);
-        return ref.put(blob, { contentType: isVideo ? (file.type || 'video/mp4') : 'image/jpeg' })
-            .then(() => ref.getDownloadURL())
+        return new Promise((resolve, reject) => {
+            const task = ref.put(blob, { contentType: isVideo ? (file.type || 'video/mp4') : 'image/jpeg' });
+            task.on('state_changed', snap => {
+                if (onProgress) onProgress(Math.round((snap.bytesTransferred / snap.totalBytes) * 100));
+            }, reject, () => resolve(task.snapshot.ref));
+        }).then(ref2 => ref2.getDownloadURL())
             .then(url => ({ url, type: isVideo ? 'video' : 'image' }));
     });
 }
@@ -11978,6 +11992,7 @@ function CreateCampaignSheet({ go, onClose }) {
     const [file, setFile] = useState(null);
     const [preview, setPreview] = useState(null);
     const [busy, setBusy] = useState(false);
+    const [uploadProgress, setUploadProgress] = useState(null);
     const fileRef = useRef();
     // Prefill the ad's WhatsApp contact from the Page's own phone number the first time a Page
     // with one is selected, without stomping on anything the advertiser already typed.
@@ -12006,6 +12021,8 @@ function CreateCampaignSheet({ go, onClose }) {
         if (!pageId) { toast('Choose which Page this ad runs from', 'error'); return; }
         if (!title.trim()) { toast('Enter a campaign title', 'error'); return; }
         if (!destinationUrl.trim()) { toast('Enter a destination URL', 'error'); return; }
+        const destUrl = normalizeUrl(destinationUrl);
+        try { new URL(destUrl); } catch (e) { toast('That destination URL doesn\'t look valid \u2014 double-check it', 'error'); return; }
         if (mode === 'new' && !description.trim() && !file) { toast('Add ad copy or media for your sponsored post', 'error'); return; }
         if (mode === 'promote' && !existingPostId) { toast('Choose a post to promote', 'error'); return; }
         const budgetNum = Number(budget);
@@ -12015,22 +12032,24 @@ function CreateCampaignSheet({ go, onClose }) {
         const startMs = new Date(startDate).getTime(), endMs = new Date(endDate).getTime();
         if (endMs <= startMs) { toast('End date must be after the start date', 'error'); return; }
         setBusy(true);
+        setUploadProgress(null);
         try {
             let mediaURL = null, mediaType = null;
             if (mode === 'new' && file) {
+                setUploadProgress(0);
                 const tempId = db.collection('adCampaigns').doc().id;
-                const uploaded = await uploadAdCreative(profile.id, tempId, file);
+                const uploaded = await uploadAdCreative(profile.id, tempId, file, setUploadProgress);
                 mediaURL = uploaded.url; mediaType = uploaded.type;
             }
             await createAdCampaign(profile.id, {
                 pageId, mode, existingPostId: mode === 'promote' ? existingPostId : null,
-                title: title.trim(), description: description.trim(), ctaLabel, destinationUrl: destinationUrl.trim(),
+                title: title.trim(), description: description.trim(), ctaLabel, destinationUrl: destUrl,
                 whatsappNumber: whatsappNumber.trim() || null,
                 mediaURL, mediaType, budget: budgetNum, startDate: startMs, endDate: endMs
             });
             toast('Campaign submitted for review', 'success');
             onClose();
-        } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+        } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); setUploadProgress(null); }
     };
     // No Page yet — ads can only run from a Page, so block the form and point them at Page
     // creation rather than letting them submit as a personal profile.
@@ -12082,7 +12101,17 @@ function CreateCampaignSheet({ go, onClose }) {
                 React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "End date"),
                     React.createElement("input", { type: "date", value: endDate, onChange: e => setEndDate(e.target.value), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }))),
             React.createElement("p", { className: "text-[11px] text-slate-400 mb-3" }, "Budget is deducted from your wallet balance (", formatNaira(profile.walletBalance || 0), " available) the moment you submit. It's refunded automatically if rejected, deleted, or left unspent when the campaign ends."),
-            React.createElement("button", { disabled: busy, onClick: submit, className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl py-3 font-semibold text-sm" }, busy ? 'Submitting\u2026' : 'Submit for review'),
+            busy && uploadProgress !== null && React.createElement("div", { className: "mb-3" },
+                React.createElement("div", { className: "flex items-center justify-between text-[11px] text-slate-500 mb-1" },
+                    React.createElement("span", null, "Uploading ", file && file.type.startsWith('video/') ? "video" : "image", "\u2026"),
+                    React.createElement("span", { className: "font-semibold" }, uploadProgress + "%")),
+                React.createElement("div", { className: "w-full h-2 rounded-full bg-slate-100 dark:bg-ink-700 overflow-hidden" },
+                    React.createElement("div", { className: "h-full bg-brand-600 transition-all duration-200", style: { width: uploadProgress + '%' } })),
+                uploadProgress < 100 && React.createElement("p", { className: "text-[10px] text-slate-400 mt-1" }, "Large files can take a while on a slow connection \u2014 keep this open.")),
+            React.createElement("button", { disabled: busy, onClick: submit, className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl py-3 font-semibold text-sm" },
+                busy
+                    ? (uploadProgress !== null ? `Uploading\u2026 ${uploadProgress}%` : 'Submitting\u2026')
+                    : 'Submit for review'),
             React.createElement("button", { onClick: onClose, className: "w-full text-center text-xs text-slate-400 mt-2" }, "Cancel")));
 }
 
