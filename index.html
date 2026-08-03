@@ -996,7 +996,9 @@ function usePendingAdCount() {
 function usePendingListingCount() {
     const [count, setCount] = useState(0);
     useEffect(() => {
-        const unsub = db.collection('listings').where('status', '==', 'pending')
+        // Listings themselves publish instantly (no approval gate) — the real admin queue here is
+        // paid promotion requests waiting on review, so that's what this badge counts.
+        const unsub = db.collection('listings').where('promotionStatus', '==', 'pending')
             .onSnapshot(snap => setCount(snap.size), () => setCount(0));
         return unsub;
     }, []);
@@ -1993,8 +1995,18 @@ async function adminMarkWithdrawalPaid(w, adminUid) {
     await db.collection('fanPages').doc(w.pageId).update({ lifetimeWithdrawn: FieldValue.increment(w.amount) });
     notifyPageOwner(w.ownerId, w.pageId, 'withdrawal_paid', { withdrawalId: w.id, amount: w.amount });
 }
-async function requestListingPromotion(listingId) {
-    await db.collection('listings').doc(listingId).update({ promotionStatus: 'pending' });
+// ₦250/day — deliberately half of the ₦500 minimum ad campaign budget (see CreateCampaignSheet),
+// since a promoted listing is a lighter-weight placement than a full ad campaign.
+const LISTING_PROMOTION_DAILY_FEE = 250;
+async function requestListingPromotion(listingId, sellerId, title, days) {
+    const fee = days * LISTING_PROMOTION_DAILY_FEE;
+    // Paid upfront, same as ad campaigns — refunded automatically if the admin declines it (see
+    // setListingPromotion below), never touched if approved.
+    await debitWallet(sellerId, fee, 'listing_promotion', { listingId, description: `Promote listing for ${days} day(s) — "${title}"` });
+    await db.collection('listings').doc(listingId).update({ promotionStatus: 'pending', promotionDays: days, promotionFee: fee });
+    db.collection('notifications').doc(SUPER_ADMIN_UID).collection('items').add({
+        type: 'listing_promotion_pending', fromUserId: sellerId, listingId, title, read: false, createdAt: FieldValue.serverTimestamp()
+    }).catch(() => { });
 }
 async function submitListingOffer(listingId, sellerId, buyerId, amount, message) {
     await db.collection('listings').doc(listingId).collection('offers').doc(buyerId).set({
@@ -2027,8 +2039,23 @@ async function adminRemoveListing(listing) {
 async function toggleListingFeatured(listing) {
     await db.collection('listings').doc(listing.id).update({ featured: !listing.featured });
 }
-async function setListingPromotion(listing, approve) {
-    await db.collection('listings').doc(listing.id).update({ promotionStatus: approve ? 'approved' : 'declined', sponsored: !!approve });
+async function setListingPromotion(listing, approve, adminUid, adminEmail) {
+    if (approve) {
+        const days = listing.promotionDays || 1;
+        // Plain epoch-ms numbers, same convention as ad campaign startDate/endDate — millisOf()
+        // already handles both Timestamps and plain numbers (see the fix note on millisOf itself).
+        await db.collection('listings').doc(listing.id).update({
+            promotionStatus: 'approved', sponsored: true,
+            promotionStartDate: Date.now(), promotionEndDate: Date.now() + days * 24 * 60 * 60 * 1000,
+            reviewedBy: adminUid || null, reviewedByEmail: adminEmail || null
+        });
+    }
+    else {
+        await db.collection('listings').doc(listing.id).update({ promotionStatus: 'declined', sponsored: false });
+        if (listing.promotionFee) {
+            await creditWallet(listing.sellerId, listing.promotionFee, 'listing_promotion_refund', { listingId: listing.id, description: 'Refund — declined promotion for "' + (listing.title || '') + '"' });
+        }
+    }
     db.collection('notifications').doc(listing.sellerId).collection('items').add({ type: approve ? 'ad_approved' : 'ad_declined', listingId: listing.id, read: false, createdAt: FieldValue.serverTimestamp() });
 }
 async function resolveReport(collectionName, reportId) {
@@ -4843,7 +4870,24 @@ function useRecentTimelineListings() {
         // silently fail (empty results) rather than error loudly. Filter status client-side
         // instead, exactly like the reels privacy filter does.
         const unsub = db.collection('listings').orderBy('createdAt', 'desc').limit(50)
-            .onSnapshot(snap => setRows(snap.docs.map(d => Object.assign({ id: d.id }, d.data())).filter(l => l.status === 'active')), () => setRows([]));
+            .onSnapshot(snap => setRows(snap.docs.map(d => Object.assign({ id: d.id }, d.data()))
+                // Currently-sponsored listings are excluded from this once-only chronological pool
+                // — they're shown via the recurring sponsored rotation in HomeFeed instead (see
+                // usePromotedListings), so a promoted listing doesn't appear twice in the same feed.
+                .filter(l => l.status === 'active' && !(l.promotionStatus === 'approved' && l.promotionEndDate && l.promotionEndDate > Date.now()))), () => setRows([]));
+        return unsub;
+    }, []);
+    return rows;
+}
+// Paid, admin-approved listing promotions currently within their paid day window — these weave
+// into the timeline every few items alongside ads (see HomeFeed) so they resurface daily for as
+// long as the seller paid for, unlike a normal listing which only ever appears once.
+function usePromotedListings() {
+    const [rows, setRows] = useState(null);
+    useEffect(() => {
+        const unsub = db.collection('listings').where('promotionStatus', '==', 'approved').limit(30)
+            .onSnapshot(snap => setRows(snap.docs.map(d => Object.assign({ id: d.id }, d.data()))
+                .filter(l => l.status === 'active' && l.promotionEndDate && l.promotionEndDate > Date.now())), () => setRows([]));
         return unsub;
     }, []);
     return rows;
@@ -4852,7 +4896,7 @@ function useRecentTimelineListings() {
    card (author row, image, caption) so it reads as part of the feed rather than a separate
    widget — with a WhatsApp button and a direct in-app Message button to the seller, plus a
    link through to the full listing. */
-function ListingFeedCard({ listing, go }) {
+function ListingFeedCard({ listing, go, promoted }) {
     const { profile } = useAuth();
     const toast = useToast();
     const [seller, setSeller] = useState(null);
@@ -4893,7 +4937,8 @@ function ListingFeedCard({ listing, go }) {
                 React.createElement("div", { className: "min-w-0" },
                     React.createElement("div", { className: "flex items-center gap-1.5" },
                         React.createElement("span", { className: "font-semibold text-sm truncate" }, seller ? seller.displayName : '\u2026'),
-                        React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 dark:text-emerald-400 px-1.5 py-0.5 rounded flex items-center gap-1 shrink-0" }, React.createElement("i", { className: "fa-solid fa-store" }), "Marketplace")),
+                        React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 dark:text-emerald-400 px-1.5 py-0.5 rounded flex items-center gap-1 shrink-0" }, React.createElement("i", { className: "fa-solid fa-store" }), "Marketplace"),
+                        promoted && React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-amber-600 bg-amber-50 dark:bg-amber-900/30 dark:text-amber-400 px-1.5 py-0.5 rounded flex items-center gap-1 shrink-0" }, React.createElement("i", { className: "fa-solid fa-bullhorn" }), "Sponsored")),
                     React.createElement("span", { className: "text-[11px] text-slate-400" }, timeAgo(listing.createdAt)))),
             React.createElement("button", { onClick: openListing, className: "text-slate-400 shrink-0" }, React.createElement("i", { className: "fa-solid fa-ellipsis" }))),
         (listing.images || []).length > 0 && React.createElement("img", { src: listing.images[0], loading: "lazy", onClick: () => openLightbox(listing.images, 0), className: "w-full max-h-[420px] object-cover cursor-zoom-in" }),
@@ -4922,6 +4967,7 @@ function HomeFeed({ go }) {
     const [refreshing, setRefreshing] = useState(false);
     const activeCampaigns = useActiveAdCampaigns();
     const listings = useRecentTimelineListings();
+    const promotedListings = usePromotedListings();
     useEffect(() => {
         // Group posts are deliberately excluded from the global timeline — they only ever show
         // inside that group's own Posts tab. Besides matching how Groups behave on Facebook,
@@ -4958,25 +5004,30 @@ function HomeFeed({ go }) {
                 return pinB - pinA;
             return millisOf(b.data.createdAt) - millisOf(a.data.createdAt);
         });
-        // Weave a sponsored slot in every few items, rotating through whichever campaigns are
-        // currently 'active' — as soon as the admin approves one (and its start date has
-        // arrived), it shows up here on the very next feed refresh, and keeps reappearing every
-        // AD_INTERVAL_ITEMS items as the person scrolls, instead of a single one-shot slot gated
-        // behind a long per-device cooldown.
-        if (activeCampaigns.length === 0)
+        // Weave a sponsored slot in every few items, rotating through whichever ad campaigns are
+        // currently 'active' AND whichever marketplace listings have an approved, still-running
+        // paid promotion — as soon as the admin approves either one, it shows up here on the very
+        // next feed refresh, and keeps reappearing every AD_INTERVAL_ITEMS items as the person
+        // scrolls (and every day, for as many days as the listing's promotion was paid for),
+        // instead of a single one-shot slot gated behind a long per-device cooldown.
+        const sponsoredPool = [
+            ...activeCampaigns.map(c => ({ kind: 'ad', data: c })),
+            ...(promotedListings || []).map(l => ({ kind: 'promotedListing', data: l })),
+        ];
+        if (sponsoredPool.length === 0)
             return merged;
         const withAds = [];
         let adIdx = 0;
         merged.forEach((item, i) => {
             withAds.push(item);
             if ((i + 1) % AD_INTERVAL_ITEMS === 0) {
-                const campaign = activeCampaigns[adIdx % activeCampaigns.length];
-                withAds.push({ kind: 'ad', data: campaign, slotKey: 'ad-slot-' + i + '-' + campaign.id });
+                const slot = sponsoredPool[adIdx % sponsoredPool.length];
+                withAds.push(Object.assign({}, slot, { slotKey: 'sponsored-slot-' + i + '-' + slot.data.id }));
                 adIdx++;
             }
         });
         return withAds;
-    }, [posts, reels, listings, activeCampaigns]);
+    }, [posts, reels, listings, activeCampaigns, promotedListings]);
     return (React.createElement("div", null,
         React.createElement(PostTriggerBar, { go: go }),
         React.createElement(ReelsStrip, { go: go }),
@@ -4992,9 +5043,11 @@ function HomeFeed({ go }) {
                 ? React.createElement(PostCard, { key: 'p-' + it.data.id, post: it.data, go: go })
                 : it.kind === 'ad'
                     ? React.createElement(AdSlot, { key: it.slotKey, campaign: it.data, go: go })
-                    : it.kind === 'listing'
-                        ? React.createElement(ListingFeedCard, { key: 'l-' + it.data.id, listing: it.data, go: go })
-                        : React.createElement(TimelineReelCard, { key: 'r-' + it.data.id, reel: it.data, go: go });
+                    : it.kind === 'promotedListing'
+                        ? React.createElement(ListingFeedCard, { key: it.slotKey, listing: it.data, go: go, promoted: true })
+                        : it.kind === 'listing'
+                            ? React.createElement(ListingFeedCard, { key: 'l-' + it.data.id, listing: it.data, go: go })
+                            : React.createElement(TimelineReelCard, { key: 'r-' + it.data.id, reel: it.data, go: go });
             return React.createElement(React.Fragment, null,
                 items.slice(0, cutoff).map(renderItem),
                 React.createElement(PeopleYouMayKnow, { go: go }),
@@ -5106,7 +5159,7 @@ function SearchScreen({ go, route }) {
                 React.createElement("div", { className: "space-y-2" }, friendUsers.map(u => React.createElement(PersonRow, { key: u.id, u: u })))))))));
 }
 /* ============================== NOTIFICATIONS ============================== */
-const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', reply: 'replied to your comment', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', ad_campaign_pending: 'submitted a new ad campaign for review', listing_created: 'published a new marketplace listing', new_listing: 'listed a new product on Marketplace', timeline_post: 'wrote something on your timeline', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group', dating_invite: 'invited you to join Blueface Dating', friend_birthday: '\uD83C\uDF82 is celebrating a birthday today \u2014 wish them well!',
+const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', reply: 'replied to your comment', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', ad_campaign_pending: 'submitted a new ad campaign for review', listing_created: 'published a new marketplace listing', new_listing: 'listed a new product on Marketplace', listing_promotion_pending: 'requested to promote a marketplace listing', timeline_post: 'wrote something on your timeline', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group', dating_invite: 'invited you to join Blueface Dating', friend_birthday: '\uD83C\uDF82 is celebrating a birthday today \u2014 wish them well!',
     kyc_approved: 'Your Page KYC verification was approved', kyc_rejected: 'Your Page KYC verification was rejected',
     followers_milestone: 'Your Page reached 1,000 followers', monetization_eligible: 'Your Page is now eligible for monetization',
     monetization_approved: 'Your Page monetization application was approved', monetization_rejected: 'Your Page monetization application was rejected',
@@ -6942,13 +6995,13 @@ function AdminListingRow({ listing, adminUid, adminEmail }) {
         React.createElement("div", { className: "w-12 h-12 rounded-lg bg-slate-100 dark:bg-ink-700 overflow-hidden shrink-0" }, (listing.images && listing.images[0]) && React.createElement("img", { src: listing.images[0], className: "w-full h-full object-cover" })),
         React.createElement("div", { className: "flex-1 min-w-0" },
             React.createElement("p", { className: "text-sm font-semibold truncate" }, listing.title),
-            React.createElement("p", { className: "text-xs text-slate-400" }, formatNaira(listing.price), " \u00B7 ", listing.status, listing.promotionStatus === 'pending' ? ' \u00B7 ad requested' : '')),
+            React.createElement("p", { className: "text-xs text-slate-400" }, formatNaira(listing.price), " \u00B7 ", listing.status, listing.promotionStatus === 'pending' ? (' \u00B7 promotion requested \u2014 ' + (listing.promotionDays || 1) + 'd \u00B7 ' + formatNaira(listing.promotionFee || 0) + ' paid') : (listing.promotionStatus === 'approved' ? ' \u00B7 sponsored' : ''))),
         React.createElement("div", { className: "flex flex-wrap gap-1 justify-end shrink-0" },
             listing.status === 'pending' && React.createElement("button", { disabled: busy, onClick: () => run(() => approveListing(listing), 'approve_listing'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-500 text-white" }, "Approve"),
             listing.status !== 'removed' && React.createElement("button", { disabled: busy, onClick: () => run(() => adminRemoveListing(listing), 'remove_listing'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-500 text-white" }, "Remove"),
             React.createElement("button", { disabled: busy, onClick: () => run(() => toggleListingFeatured(listing), 'toggle_feature_listing'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-slate-100 dark:bg-ink-700" }, listing.featured ? 'Unfeature' : 'Feature'),
-            listing.promotionStatus === 'pending' && React.createElement("button", { disabled: busy, onClick: () => run(() => setListingPromotion(listing, true), 'approve_ad'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-amber-500 text-white" }, "Approve Ad"),
-            listing.promotionStatus === 'pending' && React.createElement("button", { disabled: busy, onClick: () => run(() => setListingPromotion(listing, false), 'decline_ad'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-slate-100 dark:bg-ink-700" }, "Decline Ad"),
+            listing.promotionStatus === 'pending' && React.createElement("button", { disabled: busy, onClick: () => run(() => setListingPromotion(listing, true, adminUid, adminEmail), 'approve_ad'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-amber-500 text-white" }, "Approve Ad"),
+            listing.promotionStatus === 'pending' && React.createElement("button", { disabled: busy, onClick: () => run(() => setListingPromotion(listing, false, adminUid, adminEmail), 'decline_ad'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-slate-100 dark:bg-ink-700" }, "Decline Ad"),
             React.createElement("button", { disabled: busy, onClick: () => confirm('Permanently delete this listing?') && run(() => deleteListing(listing.id), 'delete_listing'), className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-500 dark:bg-red-900/20" }, "Delete")));
 }
 function AdminListingReportRow({ report, adminUid, adminEmail }) {
@@ -8247,6 +8300,8 @@ function ListingDetailScreen({ id, go }) {
     const [offerMsg, setOfferMsg] = useState('');
     const [reportOpen, setReportOpen] = useState(null);
     const [busy, setBusy] = useState(false);
+    const [showPromoteForm, setShowPromoteForm] = useState(false);
+    const [promoteDays, setPromoteDays] = useState(3);
     useEffect(() => {
         const unsub = db.collection('listings').doc(id).onSnapshot(s => setListing(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setListing(null));
         return unsub;
@@ -8364,10 +8419,22 @@ function ListingDetailScreen({ id, go }) {
             listing.status !== 'sold' ?
                 React.createElement("button", { disabled: busy, onClick: () => run(() => markListingSold(listing)), className: "py-2.5 rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 text-sm font-semibold" }, "Mark as Sold") :
                 React.createElement("button", { disabled: busy, onClick: () => run(() => relistListing(listing.id)), className: "py-2.5 rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-900/20 text-sm font-semibold" }, "Relist"),
-            listing.status === 'active' && listing.promotionStatus !== 'pending' && listing.promotionStatus !== 'approved' && React.createElement("button", { disabled: busy, onClick: () => run(() => requestListingPromotion(listing.id)), className: "py-2.5 rounded-xl bg-amber-50 text-amber-600 dark:bg-amber-900/20 text-sm font-semibold col-span-2" },
+            listing.status === 'active' && listing.promotionStatus !== 'pending' && listing.promotionStatus !== 'approved' && React.createElement("button", { disabled: busy, onClick: () => setShowPromoteForm(v => !v), className: "py-2.5 rounded-xl bg-amber-50 text-amber-600 dark:bg-amber-900/20 text-sm font-semibold col-span-2" },
                 React.createElement("i", { className: "fa-solid fa-bullhorn mr-1.5" }),
                 "Promote This Listing"),
-            listing.promotionStatus === 'pending' && React.createElement("p", { className: "col-span-2 text-center text-xs text-amber-500 font-semibold" }, "Promotion request pending admin review"),
+            listing.status === 'active' && showPromoteForm && listing.promotionStatus !== 'pending' && listing.promotionStatus !== 'approved' && React.createElement("div", { className: "col-span-2 bg-amber-50 dark:bg-amber-900/10 rounded-xl p-3" },
+                React.createElement("p", { className: "text-xs text-slate-500 dark:text-slate-400 mb-2" }, "Sponsored listings get a badge and reappear on the home timeline every day for as many days as you choose, once an admin approves it. Cost: ", formatNaira(LISTING_PROMOTION_DAILY_FEE), "/day \u2014 half the price of a normal ad."),
+                React.createElement("div", { className: "flex items-center gap-2 mb-2" },
+                    React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Days:"),
+                    React.createElement("input", { type: "number", min: 1, max: 30, value: promoteDays, onChange: e => setPromoteDays(Math.max(1, Number(e.target.value) || 1)), className: "w-16 px-2 py-1 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm text-center" }),
+                    React.createElement("span", { className: "text-sm font-bold ml-auto" }, formatNaira(promoteDays * LISTING_PROMOTION_DAILY_FEE))),
+                React.createElement("button", { disabled: busy, onClick: () => {
+                        const fee = promoteDays * LISTING_PROMOTION_DAILY_FEE;
+                        if ((profile.walletBalance || 0) < fee) { toast('Insufficient wallet balance \u2014 fund your wallet first', 'error'); return; }
+                        run(() => requestListingPromotion(listing.id, profile.id, listing.title, promoteDays)).then(() => setShowPromoteForm(false));
+                    }, className: "w-full py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold" }, "Pay ", formatNaira(promoteDays * LISTING_PROMOTION_DAILY_FEE), " & submit for review")),
+            listing.promotionStatus === 'pending' && React.createElement("p", { className: "col-span-2 text-center text-xs text-amber-500 font-semibold" }, "Promotion request pending admin review \u2014 ", formatNaira(listing.promotionFee || 0), " paid for ", listing.promotionDays || 1, " day(s)"),
+            listing.promotionStatus === 'approved' && React.createElement("p", { className: "col-span-2 text-center text-xs text-emerald-600 font-semibold" }, listing.promotionEndDate && listing.promotionEndDate > Date.now() ? ("Sponsored \u2014 showing daily until " + new Date(listing.promotionEndDate).toLocaleDateString()) : "Sponsored promotion has ended"),
             React.createElement("button", { disabled: busy, onClick: () => confirm('Delete this listing permanently?') && run(() => deleteListing(listing.id)).then(() => go({ name: 'marketplace' })), className: "py-2.5 rounded-xl bg-red-50 text-red-500 dark:bg-red-900/20 text-sm font-semibold col-span-2" }, "Delete Listing"))),
         isOwner && offers && offers.length > 0 && (React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700 mb-3" },
             React.createElement("p", { className: "text-sm font-semibold mb-2" }, "Offers"),
