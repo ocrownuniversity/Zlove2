@@ -205,9 +205,14 @@ function postAudienceMeta(post) {
     return { icon: opt.icon, label: opt.label };
 }
 function millisOf(ts) {
-    // Safe Firestore Timestamp -> epoch-ms helper. Returns 0 for missing/pending
-    // (not-yet-server-confirmed) timestamps, matching the pattern used elsewhere in this file.
-    return (ts && ts.toMillis) ? ts.toMillis() : 0;
+    // Safe epoch-ms helper. Handles Firestore Timestamps (.toMillis()) AND plain numbers (e.g.
+    // ad campaign startDate/endDate, which are stored as raw epoch-ms, not Timestamps) so date
+    // comparisons against them don't silently collapse to 0. Missing/pending values return 0,
+    // matching the pattern used elsewhere in this file.
+    if (!ts) return 0;
+    if (typeof ts === 'number') return ts;
+    if (ts.toMillis) return ts.toMillis();
+    return 0;
 }
 function initials(name) {
     if (!name)
@@ -1121,14 +1126,13 @@ async function uploadListingImages(sellerId, files) {
 async function createListing(sellerId, fields, files) {
     const images = await uploadListingImages(sellerId, files);
     const doc = await db.collection('listings').add(Object.assign({}, fields, {
-        sellerId, images, status: 'pending', featured: false, sponsored: false, promotionStatus: 'none',
+        sellerId, images, status: 'active', featured: false, sponsored: false, promotionStatus: 'none',
         createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp()
     }));
-    // Notify the admin immediately, same as ad campaigns, so a new listing doesn't sit
-    // unreviewed — the "pending" queue in the admin Marketplace tab already existed but had
-    // nothing pointing admins at it.
+    // Listings publish immediately (no approval gate) — this is just an FYI ping so the admin
+    // can still spot-check new listings in the Marketplace tab after the fact if they want to.
     db.collection('notifications').doc(SUPER_ADMIN_UID).collection('items').add({
-        type: 'listing_pending', fromUserId: sellerId, listingId: doc.id, title: fields.title || '',
+        type: 'listing_created', fromUserId: sellerId, listingId: doc.id, title: fields.title || '',
         read: false, createdAt: FieldValue.serverTimestamp()
     }).catch(() => { });
     return doc.id;
@@ -4740,8 +4744,13 @@ function PeopleYouMayKnow({ go }) {
 function useRecentTimelineListings() {
     const [rows, setRows] = useState(null);
     useEffect(() => {
-        const unsub = db.collection('listings').where('status', '==', 'active').orderBy('createdAt', 'desc').limit(30)
-            .onSnapshot(snap => setRows(snap.docs.map(d => Object.assign({ id: d.id }, d.data()))), () => setRows([]));
+        // Deliberately NOT chaining .where('status','==','active') onto .orderBy('createdAt') —
+        // same reasoning as the reels query above: a where + orderBy on two different fields
+        // needs a Firestore composite index that doesn't exist in this project, so it would
+        // silently fail (empty results) rather than error loudly. Filter status client-side
+        // instead, exactly like the reels privacy filter does.
+        const unsub = db.collection('listings').orderBy('createdAt', 'desc').limit(50)
+            .onSnapshot(snap => setRows(snap.docs.map(d => Object.assign({ id: d.id }, d.data())).filter(l => l.status === 'active')), () => setRows([]));
         return unsub;
     }, []);
     return rows;
@@ -4816,40 +4825,6 @@ function HomeFeed({ go }) {
     const [refreshing, setRefreshing] = useState(false);
     const activeCampaigns = useActiveAdCampaigns();
     const listings = useRecentTimelineListings();
-    // The sponsored slot for this feed session is decided ONCE (not on every Firestore snapshot
-    // update, which fires repeatedly as posts/reels sync) so it can't flicker in and then get
-    // silently dropped again before the user ever sees it. `decidedRef` guards against choosing
-    // more than once per mount; the cap itself is what governs whether an ad is chosen at all.
-    const [adSlot, setAdSlot] = useState(null);
-    const adDecidedRef = useRef(false);
-    const adTriedIndicesRef = useRef(new Set());
-    const chooseAd = useCallback(() => {
-        if (activeCampaigns.length === 0) return;
-        const { lastShownAt, rotationCount } = getAdFrequencyState();
-        if (Date.now() - lastShownAt < AD_MIN_INTERVAL_MS) return;
-        // Skip any campaign already tried and found unusable this session (e.g. its post was
-        // deleted), so one broken campaign can't blank out ads for the whole session.
-        for (let i = 0; i < activeCampaigns.length; i++) {
-            const idx = (rotationCount + i) % activeCampaigns.length;
-            if (adTriedIndicesRef.current.has(idx)) continue;
-            adTriedIndicesRef.current.add(idx);
-            setAdSlot({ kind: 'ad', data: activeCampaigns[idx] });
-            markAdSlotShown(rotationCount);
-            adDecidedRef.current = true;
-            return;
-        }
-    }, [activeCampaigns]);
-    useEffect(() => {
-        if (adDecidedRef.current) return;
-        chooseAd();
-    }, [activeCampaigns, chooseAd]);
-    // If the chosen campaign's post turns out to be missing, retry with the next one instead of
-    // leaving the slot permanently empty for this session.
-    const handleAdUnavailable = useCallback(() => {
-        adDecidedRef.current = false;
-        setAdSlot(null);
-        chooseAd();
-    }, [chooseAd]);
     useEffect(() => {
         // Group posts are deliberately excluded from the global timeline — they only ever show
         // inside that group's own Posts tab. Besides matching how Groups behave on Facebook,
@@ -4886,16 +4861,25 @@ function HomeFeed({ go }) {
                 return pinB - pinA;
             return millisOf(b.data.createdAt) - millisOf(a.data.createdAt);
         });
-        // Insert the sponsored slot decided above (if any) a few items down so it reads as part
-        // of the timeline rather than a banner. The cap/rotation decision already happened once
-        // in the effect above — this just places it, so re-renders can't flicker it away.
-        if (adSlot) {
-            const withAds = merged.slice();
-            withAds.splice(Math.min(4, withAds.length), 0, adSlot);
-            return withAds;
-        }
-        return merged;
-    }, [posts, reels, listings, adSlot]);
+        // Weave a sponsored slot in every few items, rotating through whichever campaigns are
+        // currently 'active' — as soon as the admin approves one (and its start date has
+        // arrived), it shows up here on the very next feed refresh, and keeps reappearing every
+        // AD_INTERVAL_ITEMS items as the person scrolls, instead of a single one-shot slot gated
+        // behind a long per-device cooldown.
+        if (activeCampaigns.length === 0)
+            return merged;
+        const withAds = [];
+        let adIdx = 0;
+        merged.forEach((item, i) => {
+            withAds.push(item);
+            if ((i + 1) % AD_INTERVAL_ITEMS === 0) {
+                const campaign = activeCampaigns[adIdx % activeCampaigns.length];
+                withAds.push({ kind: 'ad', data: campaign, slotKey: 'ad-slot-' + i + '-' + campaign.id });
+                adIdx++;
+            }
+        });
+        return withAds;
+    }, [posts, reels, listings, activeCampaigns]);
     return (React.createElement("div", null,
         React.createElement(PostTriggerBar, { go: go }),
         React.createElement(ReelsStrip, { go: go }),
@@ -4910,7 +4894,7 @@ function HomeFeed({ go }) {
             const renderItem = it => it.kind === 'post'
                 ? React.createElement(PostCard, { key: 'p-' + it.data.id, post: it.data, go: go })
                 : it.kind === 'ad'
-                    ? React.createElement(AdSlot, { key: 'ad-' + it.data.id, campaign: it.data, go: go, onUnavailable: handleAdUnavailable })
+                    ? React.createElement(AdSlot, { key: it.slotKey, campaign: it.data, go: go })
                     : it.kind === 'listing'
                         ? React.createElement(ListingFeedCard, { key: 'l-' + it.data.id, listing: it.data, go: go })
                         : React.createElement(TimelineReelCard, { key: 'r-' + it.data.id, reel: it.data, go: go });
@@ -5025,7 +5009,7 @@ function SearchScreen({ go, route }) {
                 React.createElement("div", { className: "space-y-2" }, friendUsers.map(u => React.createElement(PersonRow, { key: u.id, u: u })))))))));
 }
 /* ============================== NOTIFICATIONS ============================== */
-const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', reply: 'replied to your comment', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', ad_campaign_pending: 'submitted a new ad campaign for review', listing_pending: 'submitted a new marketplace listing for review', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group', dating_invite: 'invited you to join Blueface Dating', friend_birthday: '\uD83C\uDF82 is celebrating a birthday today \u2014 wish them well!',
+const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', reply: 'replied to your comment', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', ad_campaign_pending: 'submitted a new ad campaign for review', listing_created: 'published a new marketplace listing', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group', dating_invite: 'invited you to join Blueface Dating', friend_birthday: '\uD83C\uDF82 is celebrating a birthday today \u2014 wish them well!',
     kyc_approved: 'Your Page KYC verification was approved', kyc_rejected: 'Your Page KYC verification was rejected',
     followers_milestone: 'Your Page reached 1,000 followers', monetization_eligible: 'Your Page is now eligible for monetization',
     monetization_approved: 'Your Page monetization application was approved', monetization_rejected: 'Your Page monetization application was rejected',
@@ -11782,25 +11766,11 @@ function useAllAdCampaigns(active) {
     }, [active]);
     return rows;
 }
-/* Frequency capping: a device should never see more than one sponsored feed slot within any
-   20-minute window, and consecutive ads should rotate through the active campaigns rather than
-   repeating the same one. State is kept in localStorage (per-device, not per-session) so the
-   cap survives refreshes and app restarts, same as real ad platforms enforce frequency caps. */
-const AD_MIN_INTERVAL_MS = 20 * 60 * 1000;
-function getAdFrequencyState() {
-    try {
-        return {
-            lastShownAt: Number(localStorage.getItem('bf_ad_last_shown_at')) || 0,
-            rotationCount: Number(localStorage.getItem('bf_ad_rotation_count')) || 0,
-        };
-    } catch (e) { return { lastShownAt: 0, rotationCount: 0 }; }
-}
-function markAdSlotShown(rotationCount) {
-    try {
-        localStorage.setItem('bf_ad_last_shown_at', String(Date.now()));
-        localStorage.setItem('bf_ad_rotation_count', String(rotationCount + 1));
-    } catch (e) { /* localStorage unavailable (private mode, etc.) — cap just won't persist */ }
-}
+/* Ads now weave into the timeline every AD_INTERVAL_ITEMS feed items (see HomeFeed), rotating
+   through whichever campaigns are currently 'active', instead of a single slot gated behind a
+   long per-device cooldown — so an approved campaign shows up right away and keeps reappearing
+   as the person scrolls, which is closer to how a real ad-supported feed behaves. */
+const AD_INTERVAL_ITEMS = 6;
 /* Feed-facing: live 'active' campaigns only, synced lazily so 'approved' campaigns whose start
    date just arrived (or 'active' ones that just ran out of budget/date) flip promptly. */
 function useActiveAdCampaigns() {
