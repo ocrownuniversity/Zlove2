@@ -12827,7 +12827,7 @@ async function attachReferralIfAny(newUid) {
         await db.collection('referrals').doc(newUid).set({
             referrerId, referredId: newUid, rewardAmount: cfg.rewardAmount, status: 'pending', createdAt: FieldValue.serverTimestamp()
         });
-    } catch (e) { /* best-effort */ }
+    } catch (e) { console.error('[referral] attachReferralIfAny failed:', e && e.code, e && e.message); /* best-effort, but logged so it's diagnosable */ }
 }
 // Called once the referred user finishes onboarding (sets a username) — the point this app
 // considers registration "successfully completed". Transaction-guarded on the referrals/{uid}
@@ -12835,19 +12835,29 @@ async function attachReferralIfAny(newUid) {
 async function completeReferralIfEligible(uid) {
     const refDoc = db.collection('referrals').doc(uid);
     let referrerId = null, amount = 0;
-    await db.runTransaction(async (tx) => {
-        const snap = await tx.get(refDoc);
-        if (!snap.exists || snap.data().status !== 'pending') return;
-        const data = snap.data();
-        const referrerRef = db.collection('users').doc(data.referrerId);
-        const referrerSnap = await tx.get(referrerRef);
-        if (!referrerSnap.exists) { tx.update(refDoc, { status: 'invalid' }); return; }
-        referrerId = data.referrerId;
-        amount = data.rewardAmount || 0;
-        tx.update(referrerRef, { referralBalance: FieldValue.increment(amount), referralEarnings: FieldValue.increment(amount) });
-        tx.update(refDoc, { status: 'completed', completedAt: FieldValue.serverTimestamp() });
-        tx.update(db.collection('users').doc(uid), { referralRewarded: true });
-    });
+    try {
+        await db.runTransaction(async (tx) => {
+            const snap = await tx.get(refDoc);
+            if (!snap.exists || snap.data().status !== 'pending') return;
+            const data = snap.data();
+            const referrerRef = db.collection('users').doc(data.referrerId);
+            const referrerSnap = await tx.get(referrerRef);
+            if (!referrerSnap.exists) { tx.update(refDoc, { status: 'invalid' }); return; }
+            referrerId = data.referrerId;
+            amount = data.rewardAmount || 0;
+            tx.update(referrerRef, { referralBalance: FieldValue.increment(amount), referralEarnings: FieldValue.increment(amount) });
+            tx.update(refDoc, { status: 'completed', completedAt: FieldValue.serverTimestamp() });
+            tx.update(db.collection('users').doc(uid), { referralRewarded: true });
+        });
+    } catch (e) {
+        // Most common real-world cause: Firestore security rules reject this transaction because
+        // it's the REFERRED user's session writing to the REFERRER's user document (a cross-user
+        // write). "Test mode" rules (allow read, write: if true) permit this; locked-down rules
+        // that only allow `request.auth.uid == userId` on /users/{userId} will silently block it
+        // unless you add an explicit carve-out for the referralBalance/referralEarnings fields.
+        console.error('[referral] completeReferralIfEligible failed for uid=' + uid + ':', e && e.code, e && e.message);
+        return;
+    }
     if (referrerId) notifyUser(referrerId, 'referral_reward', { amount, referredId: uid });
 }
 function useMyReferrals(uid) {
