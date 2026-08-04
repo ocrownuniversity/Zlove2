@@ -3251,6 +3251,16 @@ function MainApp({ route, setRoute }) {
     const friendships = useFriendships(profile.id);
     const incomingRequestsCount = (friendships || []).filter(f => f.status === 'pending' && f.requestedBy !== profile.id).length;
     useReferralCode(profile); // auto-generates profile.referralCode once, if missing
+    // Self-heals a referral reward that should have been credited already but wasn't — e.g. the
+    // completeReferralIfEligible() call at signup hit a transient error (permission rule not
+    // deployed yet, offline, etc.) and its silent .catch() swallowed it. Anyone who finished
+    // onboarding (has a username) via a referral link, whose reward hasn't landed yet, gets it
+    // retried here every time they open the app, at no cost if it's already been paid.
+    useEffect(() => {
+        if (profile && profile.id && profile.username && profile.referredBy && !profile.referralRewarded) {
+            completeReferralIfEligible(profile.id).catch(() => { });
+        }
+    }, [profile && profile.id, profile && profile.username, profile && profile.referredBy, profile && profile.referralRewarded]);
     useEffect(() => {
         setPresence(profile.id, true);
         const heartbeat = setInterval(() => setPresence(profile.id, true), 25000);
