@@ -4356,13 +4356,24 @@ function PostCard({ post, go, groupCtx, autoOpenComments, sponsored }) {
     if (!author)
         return React.createElement(PostSkeleton, null);
     const audienceMeta = postAudienceMeta(post);
-    return (React.createElement("div", { id: 'post-' + post.id, className: "bg-white dark:bg-ink-800 -mx-2 sm:mx-0 rounded-none sm:rounded-2xl border-y sm:border border-slate-100 dark:border-ink-700 mb-2 fade-in overflow-hidden" },
+    // An "official" post is any Page post where the Page itself carries Anthropic-style
+    // verification (fanPages.verified — set for the Blueface identity via ensureBluefaceOfficialPage,
+    // and toggleable for any other Page from the Super Admin > Pages panel). These get a
+    // visually distinct treatment (glow border, gradient badge, display-font body copy) so
+    // they read at a glance as an authoritative account post rather than an ordinary Page post.
+    const isOfficial = !!(post.pageId && author.verified);
+    return (React.createElement("div", { id: 'post-' + post.id, className: "bg-white dark:bg-ink-800 -mx-2 sm:mx-0 rounded-none sm:rounded-2xl border-y sm:border mb-2 fade-in overflow-hidden relative " + (isOfficial ? "border-transparent sm:shadow-[0_0_0_1.5px_rgba(13,148,136,0.9),0_6px_24px_-6px_rgba(13,148,136,0.35)] ring-1 ring-brand-500/70 sm:ring-0" : "border-slate-100 dark:border-ink-700") },
+        isOfficial && React.createElement("div", { className: "h-1 w-full bg-gradient-to-r from-sky-400 via-brand-500 to-emerald-400" }),
         React.createElement("div", { className: "flex items-start justify-between gap-2 px-3 sm:px-4 pt-3 mb-2" },
             React.createElement("div", { className: "flex items-center gap-3 cursor-pointer min-w-0 flex-1", onClick: () => go(post.pageId ? { name: 'page', id: post.pageId } : { name: 'profile', uid: post.authorId }) },
-                React.createElement(Avatar, { user: author, size: 16 }),
+                React.createElement("div", { className: "relative shrink-0" },
+                    React.createElement(Avatar, { user: author, size: 16 }),
+                    isOfficial && React.createElement("span", { className: "absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-white dark:bg-ink-800 flex items-center justify-center shadow" },
+                        React.createElement("i", { className: "fa-solid fa-circle-check text-sky-500 text-[15px]" }))),
                 React.createElement("div", { className: "min-w-0" },
-                    React.createElement("p", { className: "font-bold text-base flex items-center gap-1.5" }, author.displayName,
-                        post.pageId && React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-brand-600 bg-brand-50 dark:bg-brand-900/30 dark:text-brand-400 px-1.5 py-0.5 rounded" }, "Page"),
+                    React.createElement("p", { className: "font-bold text-base flex items-center gap-1.5 flex-wrap" }, author.displayName,
+                        isOfficial && React.createElement("i", { className: "fa-solid fa-badge-check text-sky-500 text-sm", title: "Verified" }),
+                        post.pageId && (isOfficial ? React.createElement("span", { className: "text-[10px] font-extrabold uppercase tracking-wider text-white bg-gradient-to-r from-sky-500 via-brand-600 to-emerald-500 px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm" }, React.createElement("i", { className: "fa-solid fa-shield-halved text-[9px]" }), "Official") : React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-brand-600 bg-brand-50 dark:bg-brand-900/30 dark:text-brand-400 px-1.5 py-0.5 rounded" }, "Page")),
                         sponsored && React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-amber-600 bg-amber-50 dark:bg-amber-900/30 dark:text-amber-400 px-1.5 py-0.5 rounded flex items-center gap-1" }, React.createElement("i", { className: "fa-solid fa-bullhorn" }), "Sponsored"),
                         post.groupAnnouncement && React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-amber-600 bg-amber-50 dark:bg-amber-900/30 dark:text-amber-400 px-1.5 py-0.5 rounded flex items-center gap-1" }, React.createElement("i", { className: "fa-solid fa-bullhorn" }), "Announcement")),
                     React.createElement("p", { className: "text-sm text-slate-400 flex items-center gap-1.5 flex-wrap" },
@@ -4405,7 +4416,7 @@ function PostCard({ post, go, groupCtx, autoOpenComments, sponsored }) {
         React.createElement("div", { className: `w-full min-h-[240px] flex items-center justify-center text-center px-8 py-10 mb-2 ${bgStyleClass(post.bgStyle)}` },
             React.createElement("p", { className: "text-white text-2xl sm:text-3xl font-bold whitespace-pre-wrap leading-snug" }, formatRichText(post.text)))) : (
         React.createElement("div", { className: "px-3 sm:px-4" },
-            React.createElement(ExpandableText, { text: post.text, limit: 220, className: "text-base whitespace-pre-wrap mb-2 leading-relaxed " + (post.bold ? 'font-bold' : '') }))))),
+            React.createElement(ExpandableText, { text: post.text, limit: 220, className: "text-base whitespace-pre-wrap mb-2 leading-relaxed " + (post.bold ? 'font-bold ' : '') + (isOfficial ? 'font-display font-semibold text-[16.5px] text-ink-900 dark:text-white tracking-[0.005em]' : '') }))))),
         ((_a = post.images) === null || _a === void 0 ? void 0 : _a.length) > 0 && (post.images.length === 1 ? (
         // Single-image posts: never crop. Guessing a crop position (center, or biased to the
         // top for headshots) cuts off real content depending on the photo — a portrait gets its
@@ -4533,7 +4544,9 @@ function SharedPostPreview({ postId, go }) {
                 React.createElement("p", { className: "font-semibold text-xs flex items-center gap-1.5" }, author ? (author.displayName || author.pageDisplayName) : '…',
                     campaign
                         ? React.createElement("span", { className: "text-[9px] font-bold uppercase tracking-wide text-amber-600 bg-amber-50 dark:bg-amber-900/30 dark:text-amber-400 px-1.5 py-0.5 rounded flex items-center gap-1" }, React.createElement("i", { className: "fa-solid fa-bullhorn" }), "Sponsored")
-                        : (orig.pageId && React.createElement("span", { className: "text-[9px] font-bold uppercase tracking-wide text-brand-600 bg-brand-50 dark:bg-brand-900/30 dark:text-brand-400 px-1.5 py-0.5 rounded" }, "Page"))),
+                        : (orig.pageId && (author && author.verified
+                            ? React.createElement("span", { className: "text-[9px] font-extrabold uppercase tracking-wider text-white bg-gradient-to-r from-sky-500 via-brand-600 to-emerald-500 px-1.5 py-0.5 rounded-full flex items-center gap-1" }, React.createElement("i", { className: "fa-solid fa-shield-halved text-[8px]" }), "Official")
+                            : React.createElement("span", { className: "text-[9px] font-bold uppercase tracking-wide text-brand-600 bg-brand-50 dark:bg-brand-900/30 dark:text-brand-400 px-1.5 py-0.5 rounded" }, "Page")))),
                 React.createElement("p", { className: "text-[11px] text-slate-400" }, timeAgo(orig.createdAt)),
                 orig.groupId && React.createElement("button", { onClick: (e) => { e.stopPropagation(); go({ name: 'group', id: orig.groupId }); }, className: "text-[11px] font-semibold text-brand-600 dark:text-brand-400 hover:underline flex items-center gap-1 mt-0.5" },
                     React.createElement("i", { className: "fa-solid fa-people-group text-[9px]" }), "Posted in " + (orig.groupName || 'a group')))),
@@ -7520,11 +7533,34 @@ function AdminPostAsBluefaceForm({ adminUid, adminEmail }) {
     const [busy, setBusy] = useState(false);
     const fileRef = useRef();
     const toast = useToast();
+    // Live doc for the official Page so the avatar/cover uploader below always reflects what's
+    // actually saved, and so we know whether ensureBluefaceOfficialPage has run yet at all.
+    const [bluefacePage, setBluefacePage] = useState(undefined);
+    const [photoBusy, setPhotoBusy] = useState(false);
+    const avatarRef = useRef();
+    const coverRef = useRef();
+    useEffect(() => {
+        const unsub = db.collection('fanPages').doc(BLUEFACE_OFFICIAL_PAGE_ID)
+            .onSnapshot(s => setBluefacePage(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setBluefacePage(null));
+        return unsub;
+    }, []);
     const pickFile = (e) => {
         const f = e.target.files[0];
         if (!f) return;
         setFile(f);
         setPreview(URL.createObjectURL(f));
+    };
+    const uploadBluefacePhoto = async (f, kind) => {
+        if (!f) return;
+        setPhotoBusy(true);
+        try {
+            await ensureBluefaceOfficialPage(adminUid);
+            await uploadPageImage(BLUEFACE_OFFICIAL_PAGE_ID, f, kind);
+            logAdminAction(adminUid, adminEmail, kind === 'avatars' ? 'update_blueface_photo' : 'update_blueface_cover', 'page', BLUEFACE_OFFICIAL_PAGE_ID, null);
+            toast(kind === 'avatars' ? 'Profile picture updated' : 'Cover photo updated', 'success');
+        }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setPhotoBusy(false); }
     };
     const send = async (e) => {
         e.preventDefault();
@@ -7556,6 +7592,21 @@ function AdminPostAsBluefaceForm({ adminUid, adminEmail }) {
     return React.createElement("div", null,
         React.createElement("h2", { className: "font-display text-lg font-bold mb-1" }, "Post as Blueface"),
         React.createElement("p", { className: "text-xs text-slate-400 mb-4" }, "Publishes a real, verified post to everyone's home timeline under the official \"Blueface\" Page \u2014 with likes, comments, and shares, unlike Announcements below which only sends a notification."),
+        React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-4 border border-slate-100 dark:border-ink-700 max-w-lg mb-4" },
+            React.createElement("h3", { className: "font-display text-sm font-bold mb-3 flex items-center gap-1.5" }, React.createElement("i", { className: "fa-solid fa-image text-brand-600 text-xs" }), "Official Page identity"),
+            React.createElement("div", { className: "h-20 rounded-lg bg-gradient-to-r from-sky-500 via-brand-600 to-emerald-500 relative overflow-hidden mb-[-2rem]" },
+                (bluefacePage && bluefacePage.coverURL) && React.createElement("img", { src: bluefacePage.coverURL, className: "w-full h-full object-cover" }),
+                React.createElement("button", { type: "button", disabled: photoBusy, onClick: () => coverRef.current.click(), className: "absolute bottom-1.5 right-1.5 bg-white/90 dark:bg-ink-700/90 w-7 h-7 rounded-full flex items-center justify-center shadow text-[11px]" }, React.createElement("i", { className: "fa-solid fa-camera" })),
+                React.createElement("input", { ref: coverRef, type: "file", accept: "image/*", hidden: true, onChange: e => uploadBluefacePhoto(e.target.files[0], 'covers') })),
+            React.createElement("div", { className: "flex items-end gap-3 pl-2" },
+                React.createElement("div", { className: "relative shrink-0" },
+                    React.createElement("div", { className: "w-16 h-16 rounded-xl ring-4 ring-white dark:ring-ink-800 overflow-hidden bg-slate-100 dark:bg-ink-700" },
+                        React.createElement(Avatar, { user: bluefacePage || { displayName: 'Blueface' }, size: 16 })),
+                    React.createElement("button", { type: "button", disabled: photoBusy, onClick: () => avatarRef.current.click(), className: "absolute -bottom-1 -right-1 bg-white dark:bg-ink-700 w-7 h-7 rounded-full flex items-center justify-center shadow border border-slate-200 dark:border-ink-600 text-[11px]" }, React.createElement("i", { className: "fa-solid fa-camera" })),
+                    React.createElement("input", { ref: avatarRef, type: "file", accept: "image/*", hidden: true, onChange: e => uploadBluefacePhoto(e.target.files[0], 'avatars') })),
+                React.createElement("div", { className: "pb-1" },
+                    React.createElement("p", { className: "text-sm font-bold flex items-center gap-1" }, "Blueface", React.createElement("i", { className: "fa-solid fa-badge-check text-sky-500 text-xs" })),
+                    React.createElement("p", { className: "text-[11px] text-slate-400" }, photoBusy ? 'Uploading\u2026' : "Tap either camera icon to set the profile picture or cover shown on every official post.")))),
         React.createElement("form", { onSubmit: send, className: "bg-white dark:bg-ink-800 rounded-xl p-4 border border-slate-100 dark:border-ink-700 max-w-lg" },
             React.createElement("textarea", { value: text, onChange: e => setText(e.target.value), placeholder: "What's the announcement\u2026", rows: 4, className: "w-full mb-3 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-700 bg-transparent text-sm resize-none" }),
             preview && React.createElement("div", { className: "relative mb-3 inline-block" },
