@@ -7785,7 +7785,7 @@ function DateSeparator({ prev, curr }) {
     const label = currDate === new Date().toDateString() ? 'Today' : curr.createdAt.toDate().toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
     return React.createElement("div", { className: "text-center text-xs text-slate-400 my-2" }, label);
 }
-function MessageBubble({ message, isMe, otherUid, otherUser, showAvatar, menuOpen, setMenuOpen, onReply, onForward, onCopy, onEdit, onDelete, onReact }) {
+function MessageBubble({ message, isMe, otherUid, otherUser, showAvatar, menuOpen, setMenuOpen, onReply, onForward, onCopy, onEdit, onDeleteForMe, onDeleteForEveryone, onReact }) {
     var _a;
     const status = () => {
         if ((message.readBy || []).includes(otherUid))
@@ -7795,6 +7795,15 @@ function MessageBubble({ message, isMe, otherUid, otherUser, showAvatar, menuOpe
         return React.createElement("i", { className: "fa-solid fa-check text-white/60" });
     };
     const reactions = message.reactions ? Object.entries(message.reactions) : [];
+    // "Unsent" messages (deleted for everyone) still exist as a doc — for readBy/order/ordering
+    // integrity — but render as a muted placeholder instead of their original content, the same
+    // way WhatsApp/Messenger show "This message was deleted." to both sides.
+    if (message.deletedForEveryone) {
+        return (React.createElement("div", { className: "flex items-end gap-1.5 " + (isMe ? "justify-end" : "justify-start") },
+            !isMe && React.createElement("div", { className: "w-6 shrink-0" }, showAvatar && React.createElement(Avatar, { user: otherUser, size: 6 })),
+            React.createElement("div", { className: "max-w-[75%] px-3 py-[6px] rounded-[18px] text-[13px] italic border " + (isMe ? "border-white/20 text-white/60 bg-[#0d9488]/40" : "border-slate-200 dark:border-ink-600 text-slate-400 bg-transparent") },
+                React.createElement("i", { className: "fa-solid fa-ban mr-1.5 text-[11px]" }), isMe ? "You deleted this message" : "This message was deleted")));
+    }
     return (React.createElement("div", { className: "flex items-end gap-1.5 " + (isMe ? "justify-end" : "justify-start") },
         !isMe && React.createElement("div", { className: "w-6 shrink-0" }, showAvatar && React.createElement(Avatar, { user: otherUser, size: 6 })),
         React.createElement("div", { className: "max-w-[75%] group relative" },
@@ -7803,7 +7812,12 @@ function MessageBubble({ message, isMe, otherUid, otherUser, showAvatar, menuOpe
                 "Forwarded"),
             message.replyTo && (React.createElement("div", { className: "text-xs px-2.5 py-1 rounded-t-lg border-l-2 border-brand-400 bg-black/5 dark:bg-white/5" },
                 React.createElement("p", { className: "truncate opacity-70 max-w-[220px]" }, message.replyTo.text))),
-            React.createElement("div", { className: "relative px-3 py-[6px] rounded-[18px] text-[15px] leading-snug " + (isMe ? "bg-[#0d9488] text-white" : "bg-[#F0F0F0] dark:bg-[#3A3B3C] text-[#050505] dark:text-white") },
+            React.createElement("div", {
+                className: "relative px-3 py-[6px] rounded-[18px] text-[15px] leading-snug " + (isMe ? "bg-[#0d9488] text-white" : "bg-[#F0F0F0] dark:bg-[#3A3B3C] text-[#050505] dark:text-white"),
+                // Long-press (touch) opens the same action menu as the chevron button, since a hover-only
+                // affordance is unreachable on a phone — there is no hover state on a touchscreen.
+                onContextMenu: (e) => { e.preventDefault(); setMenuOpen(!menuOpen); }
+            },
                 message.type === 'text' && React.createElement("p", { className: "whitespace-pre-wrap break-words" }, message.text),
                 message.type === 'image' && React.createElement("img", { src: message.mediaURL, onClick: () => openLightbox(message.mediaURL), loading: "lazy", className: "rounded-lg max-w-[240px] cursor-zoom-in" }),
                 message.type === 'video' && React.createElement("video", { src: message.mediaURL, controls: true, className: "rounded-lg max-w-[240px]" }),
@@ -7815,16 +7829,21 @@ function MessageBubble({ message, isMe, otherUid, otherUser, showAvatar, menuOpe
                     message.editedAt && React.createElement("span", null, "edited"),
                     React.createElement("span", null, ((_a = message.createdAt) === null || _a === void 0 ? void 0 : _a.toDate) ? message.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''),
                     isMe && status()),
-                React.createElement("button", { onClick: () => setMenuOpen(!menuOpen), className: "absolute top-1 " + (isMe ? "-left-7" : "-right-7") + " opacity-0 group-hover:opacity-100 text-slate-400 text-xs px-1.5 py-1" },
+                // Visible at all times on touch devices (opacity-100), and only reveals itself on hover
+                // on larger pointer-driven screens (sm:opacity-0 sm:group-hover:opacity-100) — the previous
+                // "opacity-0 group-hover:opacity-100" made this button permanently unreachable on mobile,
+                // which is why there was "nowhere to delete or edit" a sent message.
+                React.createElement("button", { onClick: () => setMenuOpen(!menuOpen), className: "absolute top-1 " + (isMe ? "-left-8" : "-right-8") + " opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-slate-400 text-sm w-7 h-7 flex items-center justify-center rounded-full bg-white dark:bg-ink-700 shadow border border-slate-100 dark:border-ink-600" },
                     React.createElement("i", { className: "fa-solid fa-chevron-down" }))),
             reactions.length > 0 && (React.createElement("div", { className: "flex gap-0.5 mt-0.5" }, reactions.map(([uid, emoji]) => React.createElement("span", { key: uid, className: "text-xs bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-600 rounded-full px-1.5" }, emoji)))),
-            menuOpen && (React.createElement("div", { className: "absolute z-20 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl border border-slate-100 dark:border-ink-600 overflow-hidden w-40 " + (isMe ? "right-0" : "left-0") },
+            menuOpen && (React.createElement("div", { className: "absolute z-20 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl border border-slate-100 dark:border-ink-600 overflow-hidden w-44 " + (isMe ? "right-0" : "left-0") },
                 React.createElement("div", { className: "flex justify-around px-2 py-1.5 border-b border-slate-100 dark:border-ink-600" }, REACTION_EMOJIS.map(e => React.createElement("button", { key: e, onClick: () => { onReact(e); setMenuOpen(false); }, className: "text-sm hover:scale-125 transition" }, e))),
                 React.createElement("button", { onClick: () => { onReply(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Reply"),
                 React.createElement("button", { onClick: () => { onForward(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Forward"),
                 message.type === 'text' && React.createElement("button", { onClick: () => { onCopy(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Copy"),
-                isMe && message.type === 'text' && React.createElement("button", { onClick: () => { onEdit(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Edit"),
-                React.createElement("button", { onClick: () => { onDelete(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Delete for me"))))));
+                isMe && message.type === 'text' && React.createElement("button", { onClick: () => { onEdit(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, React.createElement("i", { className: "fa-solid fa-pen text-[11px] mr-1.5 text-slate-400" }), "Edit"),
+                React.createElement("button", { onClick: () => { onDeleteForMe(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Delete for me"),
+                isMe && React.createElement("button", { onClick: () => { if (confirm('Delete this message for everyone? This cannot be undone.')) { onDeleteForEveryone(); } setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm text-red-600 font-semibold hover:bg-slate-50 dark:hover:bg-ink-600 border-t border-slate-100 dark:border-ink-600" }, "Delete for everyone"))))));
 }
 function ChatWindow({ chatId, otherUid, pageId, go }) {
     var _a;
@@ -8026,6 +8045,18 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
         }
     };
     const deleteForMe = (m) => db.collection('chats').doc(chatId).collection('messages').doc(m.id).update({ deletedFor: FieldValue.arrayUnion(profile.id) });
+    // "Delete for everyone" (unsend) keeps the message doc (so ordering/read-receipts stay
+    // intact) but flags it and strips the content, so MessageBubble renders the muted
+    // "This message was deleted" placeholder for both participants instead of the real text/media.
+    const deleteForEveryone = async (m) => {
+        try {
+            await db.collection('chats').doc(chatId).collection('messages').doc(m.id).update({
+                deletedForEveryone: true, text: FieldValue.delete(), mediaURL: FieldValue.delete(),
+                mediaName: FieldValue.delete(), replyTo: FieldValue.delete(), reactions: {}
+            });
+        }
+        catch (e) { toast('Could not delete message', 'error'); }
+    };
     const copyText = (m) => { var _a; (_a = navigator.clipboard) === null || _a === void 0 ? void 0 : _a.writeText(m.text || ''); toast('Copied', 'success'); };
     const react = async (m, emoji) => {
         var _a;
@@ -8064,7 +8095,7 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
                 React.createElement("p", { className: "text-xs mt-1" }, "Say hello to start the conversation \uD83D\uDC4B"))),
             visibleMessages.map((m, i) => (React.createElement(React.Fragment, { key: m.id },
                 React.createElement(DateSeparator, { prev: visibleMessages[i - 1], curr: m }),
-                React.createElement(MessageBubble, { message: m, isMe: m.senderId === profile.id, otherUid: otherUid, otherUser: displayIdentity, showAvatar: !visibleMessages[i + 1] || visibleMessages[i + 1].senderId !== m.senderId, menuOpen: activeMenuId === m.id, setMenuOpen: (v) => setActiveMenuId(v ? m.id : null), onReply: () => setReplyTo(m), onForward: () => setForwardMsg(m), onCopy: () => copyText(m), onEdit: () => { setEditingMessage(m); setText(m.text || ''); }, onDelete: () => deleteForMe(m), onReact: (e) => react(m, e) })))),
+                React.createElement(MessageBubble, { message: m, isMe: m.senderId === profile.id, otherUid: otherUid, otherUser: displayIdentity, showAvatar: !visibleMessages[i + 1] || visibleMessages[i + 1].senderId !== m.senderId, menuOpen: activeMenuId === m.id, setMenuOpen: (v) => setActiveMenuId(v ? m.id : null), onReply: () => setReplyTo(m), onForward: () => setForwardMsg(m), onCopy: () => copyText(m), onEdit: () => { setEditingMessage(m); setText(m.text || ''); }, onDeleteForMe: () => deleteForMe(m), onDeleteForEveryone: () => deleteForEveryone(m), onReact: (e) => react(m, e) })))),
             React.createElement("div", { ref: bottomRef })),
         blocked && (React.createElement("div", { className: "px-4 py-2 text-xs text-center text-red-500 bg-red-50 dark:bg-red-900/20 shrink-0" }, iBlockedThem ? "You've blocked this user." : "You can't reply to this conversation.")),
         (replyTo || editingMessage) && (React.createElement("div", { className: "flex items-center justify-between px-4 py-2 border-t border-slate-100 dark:border-ink-700 bg-slate-50 dark:bg-ink-700 shrink-0" },
