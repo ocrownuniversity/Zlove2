@@ -12808,6 +12808,43 @@ function useReferralConfig() {
 async function saveReferralConfig(fields) {
     await db.collection('settings').doc('referral').set(Object.assign({}, fields, { updatedAt: FieldValue.serverTimestamp() }), { merge: true });
 }
+// ---- On-screen referral debug banner -------------------------------------------------
+// Shows the EXACT reason a referral step failed or was skipped, right on the page, so you
+// don't need to open DevTools. Red = a real error (e.g. Firestore permission-denied). Amber =
+// the code intentionally skipped the step (e.g. no code found, self-referral, program disabled)
+// so you can tell "it broke" apart from "it correctly decided there was nothing to do."
+// Remove this whole block (and its two call-sites below) once referrals are confirmed working.
+function showReferralDebug(msg, isError) {
+    try {
+        console[isError ? 'error' : 'warn']('[referral]', msg);
+        let box = document.getElementById('__referralDebugBox');
+        if (!box) {
+            box = document.createElement('div');
+            box.id = '__referralDebugBox';
+            box.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:2147483647;' +
+                'max-height:45vh;overflow:auto;font:12px/1.4 monospace;padding:10px 12px 14px;' +
+                'background:#111827;border-top:3px solid #ef4444;box-shadow:0 -4px 16px rgba(0,0,0,.4);';
+            const head = document.createElement('div');
+            head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;';
+            head.innerHTML = '<strong style="color:#fca5a5;">REFERRAL DEBUG LOG</strong>';
+            const closeBtn = document.createElement('button');
+            closeBtn.textContent = 'Close';
+            closeBtn.style.cssText = 'background:#374151;color:#fff;border:0;border-radius:6px;padding:3px 10px;font:11px monospace;cursor:pointer;';
+            closeBtn.onclick = () => box.remove();
+            head.appendChild(closeBtn);
+            box.appendChild(head);
+            const list = document.createElement('div');
+            list.id = '__referralDebugList';
+            box.appendChild(list);
+            document.body.appendChild(box);
+        }
+        const list = document.getElementById('__referralDebugList');
+        const line = document.createElement('div');
+        line.style.cssText = 'padding:6px 0;border-top:1px solid #1f2937;color:' + (isError ? '#fca5a5' : '#fcd34d') + ';white-space:pre-wrap;';
+        line.textContent = new Date().toLocaleTimeString() + '  ' + msg;
+        list.prepend(line);
+    } catch (e) { /* debug banner must never itself break the app */ }
+}
 // Called right after a brand-new account is created (email/password or Google). Reads whatever
 // referral code was captured into localStorage, resolves it to a referrer, and — as long as it's
 // not a self-referral and the program is enabled — attaches referredBy to the new user and opens
@@ -12815,34 +12852,38 @@ async function saveReferralConfig(fields) {
 async function attachReferralIfAny(newUid) {
     try {
         const code = (localStorage.getItem('zlove_ref_code') || '').trim().toUpperCase();
-        if (!code) return;
+        if (!code) { showReferralDebug('No ref code in localStorage — this signup was not via a referral link, so nothing to attach.'); return; }
         const codeSnap = await db.collection('referralCodes').doc(code).get();
-        if (!codeSnap.exists) return;
+        if (!codeSnap.exists) { showReferralDebug('Code "' + code + '" not found in referralCodes collection — link is stale/invalid or that doc was deleted.'); return; }
         const referrerId = codeSnap.data().uid;
-        if (!referrerId || referrerId === newUid) return; // no self-referral
+        if (!referrerId || referrerId === newUid) { showReferralDebug('Skipped: self-referral (referrer uid === new user uid).'); return; }
         const cfgSnap = await db.collection('settings').doc('referral').get();
         const cfg = Object.assign({ enabled: true, rewardAmount: 100 }, cfgSnap.exists ? cfgSnap.data() : {});
-        if (!cfg.enabled) return;
+        if (!cfg.enabled) { showReferralDebug('Skipped: referral program is disabled in settings/referral (enabled=false).'); return; }
         await db.collection('users').doc(newUid).set({ referredBy: referrerId, referralRewarded: false }, { merge: true });
         await db.collection('referrals').doc(newUid).set({
             referrerId, referredId: newUid, rewardAmount: cfg.rewardAmount, status: 'pending', createdAt: FieldValue.serverTimestamp()
         });
-    } catch (e) { console.error('[referral] attachReferralIfAny failed:', e && e.code, e && e.message); /* best-effort, but logged so it's diagnosable */ }
+        showReferralDebug('OK: referrals/' + newUid + ' created as pending, referrer=' + referrerId + ', reward=' + cfg.rewardAmount);
+    } catch (e) {
+        showReferralDebug('attachReferralIfAny FAILED for newUid=' + newUid + '  code=' + (e && e.code) + '  message=' + (e && e.message), true);
+    }
 }
 // Called once the referred user finishes onboarding (sets a username) — the point this app
 // considers registration "successfully completed". Transaction-guarded on the referrals/{uid}
 // doc's status so a reward can never be paid out twice for the same referred account.
 async function completeReferralIfEligible(uid) {
     const refDoc = db.collection('referrals').doc(uid);
-    let referrerId = null, amount = 0;
+    let referrerId = null, amount = 0, skippedReason = null;
     try {
         await db.runTransaction(async (tx) => {
             const snap = await tx.get(refDoc);
-            if (!snap.exists || snap.data().status !== 'pending') return;
+            if (!snap.exists) { skippedReason = 'No referrals/' + uid + ' doc exists — attachReferralIfAny never created one for this user.'; return; }
+            if (snap.data().status !== 'pending') { skippedReason = 'referrals/' + uid + ' has status="' + snap.data().status + '" (not "pending") — already processed or invalidated.'; return; }
             const data = snap.data();
             const referrerRef = db.collection('users').doc(data.referrerId);
             const referrerSnap = await tx.get(referrerRef);
-            if (!referrerSnap.exists) { tx.update(refDoc, { status: 'invalid' }); return; }
+            if (!referrerSnap.exists) { tx.update(refDoc, { status: 'invalid' }); skippedReason = 'Referrer user ' + data.referrerId + ' no longer exists — marked invalid.'; return; }
             referrerId = data.referrerId;
             amount = data.rewardAmount || 0;
             tx.update(referrerRef, { referralBalance: FieldValue.increment(amount), referralEarnings: FieldValue.increment(amount) });
@@ -12855,10 +12896,14 @@ async function completeReferralIfEligible(uid) {
         // write). "Test mode" rules (allow read, write: if true) permit this; locked-down rules
         // that only allow `request.auth.uid == userId` on /users/{userId} will silently block it
         // unless you add an explicit carve-out for the referralBalance/referralEarnings fields.
-        console.error('[referral] completeReferralIfEligible failed for uid=' + uid + ':', e && e.code, e && e.message);
+        showReferralDebug('completeReferralIfEligible FAILED for uid=' + uid + '  code=' + (e && e.code) + '  message=' + (e && e.message), true);
         return;
     }
-    if (referrerId) notifyUser(referrerId, 'referral_reward', { amount, referredId: uid });
+    if (skippedReason) { showReferralDebug(skippedReason); return; }
+    if (referrerId) {
+        showReferralDebug('OK: credited \u20A6' + amount + ' to referrer ' + referrerId + ' for referred user ' + uid);
+        notifyUser(referrerId, 'referral_reward', { amount, referredId: uid });
+    }
 }
 function useMyReferrals(uid) {
     const [rows, setRows] = useState(null);
