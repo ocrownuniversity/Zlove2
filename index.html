@@ -9180,6 +9180,29 @@ function AdminReelsTab() {
 // small "story" style profile-picture cards. It now shows Reels instead, at a larger size
 // so each one is easier to tap and preview, plus a leading "Create" tile so posting a reel
 // is still just as quick as the old "Your profile" story tile was.
+// Small live-lookup for a reel-rail tile's owner, so the tile can show who posted it (name is
+// not denormalized onto the reel doc itself, same as everywhere else reel authors are resolved).
+function useReelOwnerName(isPage, ownerId) {
+    const [owner, setOwner] = useState(null);
+    useEffect(() => {
+        if (!ownerId) { setOwner(null); return; }
+        const ref = isPage ? db.collection('fanPages').doc(ownerId) : db.collection('users').doc(ownerId);
+        const unsub = ref.onSnapshot(s => setOwner(s.exists ? s.data() : null), () => setOwner(null));
+        return unsub;
+    }, [isPage, ownerId]);
+    return owner ? (owner.displayName || owner.username) : null;
+}
+function ReelStripTile({ g, tileClass, go }) {
+    const r = g.reel;
+    const ownerName = useReelOwnerName(g.isPage, g.ownerKey);
+    return React.createElement("div", { onClick: () => go({ name: 'reels', reelId: r.id, scope: (g.isPage ? 'page:' : 'user:') + g.ownerKey }), className: tileClass },
+        r.thumbURL ? React.createElement("img", { src: r.thumbURL, className: "w-full h-full object-cover" }) : React.createElement("div", { className: "w-full h-full flex items-center justify-center text-slate-400" }, React.createElement("i", { className: "fa-solid fa-clapperboard text-2xl" })),
+        React.createElement("div", { className: "absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/80 to-transparent" }),
+        React.createElement("span", { className: "absolute top-2 left-2 min-w-[20px] h-5 px-1 rounded-full bg-brand-600 text-white text-[11px] font-bold flex items-center justify-center ring-2 ring-white dark:ring-ink-900" }, g.count),
+        React.createElement("i", { className: "fa-solid fa-play absolute top-2.5 right-2.5 text-white text-sm drop-shadow" }),
+        React.createElement("p", { className: "absolute bottom-6 inset-x-0 text-center text-white text-[11px] font-bold px-1.5 truncate" }, ownerName || '\u2026'),
+        React.createElement("p", { className: "absolute bottom-2 inset-x-0 text-center text-white/90 text-[10px] font-medium px-1" }, formatCount(r.viewsCount || 0), " views"));
+}
 function ReelsStrip({ go }) {
     const { profile } = useAuth();
     const [reels, setReels] = useState(null);
@@ -9223,12 +9246,7 @@ function ReelsStrip({ go }) {
             groupedReels === null && [1, 2, 3].map(i => React.createElement("div", { key: i, className: TILE + " animate-pulse" })),
             groupedReels !== null && groupedReels.length === 0 && React.createElement("div", { className: "shrink-0 w-[136px] h-[224px] rounded-2xl border border-dashed border-slate-200 dark:border-ink-700 flex items-center justify-center text-center px-3" },
                 React.createElement("p", { className: "text-xs text-slate-400" }, "No reels yet — be the first to post one")),
-            (groupedReels || []).map(g => { const r = g.reel; return React.createElement("div", { key: g.ownerKey, onClick: () => go({ name: 'reels', reelId: r.id, scope: (g.isPage ? 'page:' : 'user:') + g.ownerKey }), className: TILE },
-                r.thumbURL ? React.createElement("img", { src: r.thumbURL, className: "w-full h-full object-cover" }) : React.createElement("div", { className: "w-full h-full flex items-center justify-center text-slate-400" }, React.createElement("i", { className: "fa-solid fa-clapperboard text-2xl" })),
-                React.createElement("div", { className: "absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/75 to-transparent" }),
-                React.createElement("span", { className: "absolute top-2 left-2 min-w-[20px] h-5 px-1 rounded-full bg-brand-600 text-white text-[11px] font-bold flex items-center justify-center ring-2 ring-white dark:ring-ink-900" }, g.count),
-                React.createElement("i", { className: "fa-solid fa-play absolute top-2.5 right-2.5 text-white text-sm drop-shadow" }),
-                React.createElement("p", { className: "absolute bottom-2 inset-x-0 text-center text-white text-xs font-semibold px-1" }, formatCount(r.viewsCount || 0), " views")); }))));
+            (groupedReels || []).map(g => React.createElement(ReelStripTile, { key: g.ownerKey, g: g, tileClass: TILE, go: go })))));
 }
 /* ============================== GROUPS ==============================
  * Collections used:
