@@ -12716,15 +12716,17 @@ function AdminWalletPanel({ adminUid, adminEmail }) {
  *                                    'completed'|'invalid', createdAt, completedAt }
  *     -- doc ID is the referred user's uid, which makes duplicate rewards structurally
  *        impossible (one referral record can ever exist per referred account).
- *   referralWithdrawals/{autoId}   { uid, userEmail, username, amount, zmonieAccountId,
- *                                    status:'pending'|'approved'|'rejected', rejectionReason,
- *                                    requestedAt, reviewedAt, reviewedBy, reviewedByEmail }
+ *   referralWithdrawals/{autoId}   { uid, userEmail, username, amount, zmonieAccountNumber,
+ *                                    zmonieAccountName, status:'pending'|'approved'|'rejected',
+ *                                    rejectionReason, requestedAt, reviewedAt, reviewedBy,
+ *                                    reviewedByEmail }
  *
- * This app has no connection to Zmonie's own backend, so a "Zmonie account" can't be verified
- * automatically. Withdrawal just asks the user for their Zmonie phone number/username and an
- * admin pays it out manually once approved (same escrow pattern as Page monetization
- * withdrawals: the amount is held out of the available balance the moment a request is
- * submitted, and refunded back if the admin rejects it).
+ * This app has no connection to Zmonie's own backend, so a Zmonie account can't be verified
+ * automatically. Withdrawal asks the user for their Zmonie account number and account name
+ * (with a link to register on Zmonie if they don't have one yet), and an admin pays it out
+ * manually once approved (same escrow pattern as Page monetization withdrawals: the amount is
+ * held out of the available balance the moment a request is submitted, and refunded back if
+ * the admin rejects it).
  */
 function notifyUser(uid, type, extra) {
     if (!uid) return;
@@ -12739,29 +12741,49 @@ function generateReferralCode() {
 function referralLinkFor(code) {
     return window.location.origin + window.location.pathname + '?ref=' + code;
 }
+// Tries to attach a fresh referral code to a user, retrying on code collisions. Returns true on
+// success, false if it ran out of attempts or every attempt hit a real error (e.g. blocked by
+// Firestore security rules or offline) — logged to the console so it's diagnosable instead of
+// just hanging silently on "Generating…" forever.
+async function generateAndAttachReferralCode(profile) {
+    let lastError = null;
+    for (let i = 0; i < 5; i++) {
+        const code = generateReferralCode();
+        try {
+            await db.runTransaction(async (tx) => {
+                const codeRef = db.collection('referralCodes').doc(code);
+                const snap = await tx.get(codeRef);
+                if (snap.exists) throw new Error('taken');
+                tx.set(codeRef, { uid: profile.id, createdAt: FieldValue.serverTimestamp() });
+                tx.update(db.collection('users').doc(profile.id), { referralCode: code });
+            });
+            return true;
+        } catch (e) {
+            lastError = e;
+            if (e && e.message !== 'taken') break; // real error (permissions/offline/etc.) — no point retrying with a new random code
+        }
+    }
+    if (lastError) console.error('Referral code generation failed:', lastError);
+    return false;
+}
 // Auto-heals a referral code onto any logged-in user who doesn't have one yet — covers both
-// brand-new signups and existing users from before this feature existed.
+// brand-new signups and existing users from before this feature existed. Exposes a status
+// ('idle' | 'working' | 'failed') and a retry() so the UI can offer a manual retry instead of
+// leaving the user staring at "Generating…" indefinitely if the first attempt failed.
 function useReferralCode(profile) {
+    const [status, setStatus] = useState('idle');
+    const [attempt, setAttempt] = useState(0);
     useEffect(() => {
-        if (!profile || !profile.id || profile.referralCode) return;
+        if (!profile || !profile.id || profile.referralCode) { setStatus('idle'); return; }
         let cancelled = false;
-        (async () => {
-            for (let i = 0; i < 5 && !cancelled; i++) {
-                const code = generateReferralCode();
-                try {
-                    await db.runTransaction(async (tx) => {
-                        const codeRef = db.collection('referralCodes').doc(code);
-                        const snap = await tx.get(codeRef);
-                        if (snap.exists) throw new Error('taken');
-                        tx.set(codeRef, { uid: profile.id, createdAt: FieldValue.serverTimestamp() });
-                        tx.update(db.collection('users').doc(profile.id), { referralCode: code });
-                    });
-                    return;
-                } catch (e) { /* collision — retry with a new random code */ }
-            }
-        })();
+        setStatus('working');
+        generateAndAttachReferralCode(profile).then(ok => {
+            if (!cancelled) setStatus(ok ? 'idle' : 'failed');
+        });
         return () => { cancelled = true; };
-    }, [profile && profile.id, profile && profile.referralCode]);
+    }, [profile && profile.id, profile && profile.referralCode, attempt]);
+    const retry = useCallback(() => setAttempt(a => a + 1), []);
+    return [status, retry];
 }
 function useReferralConfig() {
     const [cfg, setCfg] = useState({ enabled: true, rewardAmount: 100, minWithdrawal: 500 });
@@ -12844,18 +12866,21 @@ function useMyReferralWithdrawals(uid) {
     }, [uid]);
     return rows;
 }
-async function requestReferralWithdrawal(profile, amountNaira, zmonieAccountId, cfg) {
+async function requestReferralWithdrawal(profile, amountNaira, zmonieDetails, cfg) {
     const amt = Number(amountNaira) || 0;
     const minAmt = cfg.minWithdrawal || 500;
+    const zmonieAccountNumber = (zmonieDetails && zmonieDetails.zmonieAccountNumber || '').trim();
+    const zmonieAccountName = (zmonieDetails && zmonieDetails.zmonieAccountName || '').trim();
     if (!cfg.enabled) throw new Error('The referral program is currently disabled.');
     if (amt < minAmt) throw new Error(`Minimum withdrawal is ${formatNaira(minAmt)}.`);
-    if (!zmonieAccountId || !zmonieAccountId.trim()) throw new Error('Enter the phone number or username registered on your Zmonie account.');
+    if (!zmonieAccountNumber) throw new Error('Enter your Zmonie account number.');
+    if (!zmonieAccountName) throw new Error('Enter the account name on your Zmonie account.');
     const balance = profile.referralBalance || 0;
     if (amt > balance) throw new Error('Amount exceeds your available referral balance.');
     const ref = db.collection('referralWithdrawals').doc();
     await ref.set({
         uid: profile.id, userEmail: profile.email || '', username: profile.username || '',
-        amount: amt, zmonieAccountId: zmonieAccountId.trim(), status: 'pending',
+        amount: amt, zmonieAccountNumber, zmonieAccountName, status: 'pending',
         requestedAt: FieldValue.serverTimestamp(), reviewedAt: null, reviewedBy: null, reviewedByEmail: null, rejectionReason: null
     });
     // Escrow: hold the amount out of the available balance the moment it's requested, so a user
@@ -12881,6 +12906,7 @@ function ReferralScreen({ go }) {
     const cfg = useReferralConfig();
     const referrals = useMyReferrals(profile.id);
     const withdrawals = useMyReferralWithdrawals(profile.id);
+    const [codeStatus, retryReferralCode] = useReferralCode(profile);
     const [withdrawOpen, setWithdrawOpen] = useState(false);
     const [historyTab, setHistoryTab] = useState('referrals');
     const total = referrals ? referrals.length : 0;
@@ -12913,7 +12939,13 @@ function ReferralScreen({ go }) {
                 React.createElement("p", { className: "text-lg font-extrabold" }, v), React.createElement("p", { className: "text-[11px] text-slate-400" }, l)))),
         React.createElement("div", { className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-4 mb-4" },
             React.createElement("p", { className: "text-xs font-semibold text-slate-500 mb-1" }, "Your referral code"),
-            React.createElement("p", { className: "font-mono font-bold text-lg mb-3 tracking-wide" }, profile.referralCode || 'Generating\u2026'),
+            profile.referralCode ?
+                React.createElement("p", { className: "font-mono font-bold text-lg mb-3 tracking-wide" }, profile.referralCode) :
+                codeStatus === 'failed' ?
+                    React.createElement("button", { onClick: retryReferralCode, className: "flex items-center gap-2 text-sm font-semibold text-amber-600 mb-3" },
+                        React.createElement("i", { className: "fa-solid fa-rotate-right" }), "Couldn't generate a code \u2014 tap to retry") :
+                    React.createElement("p", { className: "font-mono font-bold text-lg mb-3 tracking-wide text-slate-400" },
+                        React.createElement("i", { className: "fa-solid fa-circle-notch fa-spin mr-2" }), "Generating\u2026"),
             React.createElement("p", { className: "text-xs font-semibold text-slate-500 mb-1" }, "Your referral link"),
             React.createElement("p", { className: "text-xs text-slate-500 dark:text-slate-400 break-all mb-3" }, link || '\u2014'),
             React.createElement("div", { className: "flex gap-2" },
@@ -12936,14 +12968,15 @@ function ReferralScreen({ go }) {
                 React.createElement("div", { className: "flex items-center justify-between mb-1" },
                     React.createElement("p", { className: "text-sm font-bold" }, formatNaira(w.amount)),
                     React.createElement("span", { className: "text-[11px] font-semibold px-2 py-0.5 rounded-full " + (w.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : w.status === 'rejected' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700') }, w.status)),
-                React.createElement("p", { className: "text-[11px] text-slate-400" }, "To Zmonie: ", w.zmonieAccountId, " \u00B7 ", timeAgo(w.requestedAt)),
+                React.createElement("p", { className: "text-[11px] text-slate-400" }, "Zmonie: ", w.zmonieAccountNumber, " \u00B7 ", w.zmonieAccountName, " \u00B7 ", timeAgo(w.requestedAt)),
                 w.rejectionReason && React.createElement("p", { className: "text-[11px] text-red-500 mt-1" }, "Reason: ", w.rejectionReason)))),
         withdrawOpen && React.createElement(WithdrawReferralSheet, { profile: profile, cfg: cfg, onClose: () => setWithdrawOpen(false) }));
 }
 function WithdrawReferralSheet({ profile, cfg, onClose }) {
     const toast = useToast();
     const [amount, setAmount] = useState('');
-    const [zmonieAccountId, setZmonieAccountId] = useState('');
+    const [zmonieAccountNumber, setZmonieAccountNumber] = useState('');
+    const [zmonieAccountName, setZmonieAccountName] = useState('');
     const [confirmed, setConfirmed] = useState(false);
     const [busy, setBusy] = useState(false);
     const balance = profile.referralBalance || 0;
@@ -12951,7 +12984,7 @@ function WithdrawReferralSheet({ profile, cfg, onClose }) {
         if (!confirmed) { toast('Please confirm you have a registered Zmonie account.', 'error'); return; }
         setBusy(true);
         try {
-            await requestReferralWithdrawal(profile, amount, zmonieAccountId, cfg);
+            await requestReferralWithdrawal(profile, amount, { zmonieAccountNumber, zmonieAccountName }, cfg);
             toast('Withdrawal request submitted \u2014 an admin will review it shortly.', 'success');
             onClose();
         } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
@@ -12961,12 +12994,14 @@ function WithdrawReferralSheet({ profile, cfg, onClose }) {
             React.createElement("h3", { className: "font-display font-bold text-lg mb-1" }, "Withdraw referral earnings"),
             React.createElement("p", { className: "text-xs text-slate-400 mb-4" }, "Available: ", formatNaira(balance)),
             React.createElement("div", { className: "bg-amber-50 dark:bg-amber-900/20 rounded-lg p-3 mb-4 text-xs text-amber-700 dark:text-amber-400" },
-                "You need a Zmonie account before you can withdraw your referral earnings. This app is not connected to Zmonie \u2014 enter the phone number or username on your Zmonie account below so we can send your payment there.",
+                "You need a Zmonie account before you can withdraw your referral earnings. Enter the account number and account name on your Zmonie account below so we can send your payment there. Don't have one yet? Register first.",
                 React.createElement("a", { href: "https://zmonie.com", target: "_blank", rel: "noopener noreferrer", className: "block mt-2 text-center bg-amber-600 hover:bg-amber-700 text-white rounded-lg py-2 text-xs font-semibold" }, "Register on Zmonie")),
             React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Amount (\u20A6)"),
             React.createElement("input", { type: "number", min: cfg.minWithdrawal || 500, value: amount, onChange: e => setAmount(e.target.value), placeholder: "Min " + formatNaira(cfg.minWithdrawal || 500), className: "w-full mt-1 mb-4 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
-            React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Your Zmonie phone number / username"),
-            React.createElement("input", { value: zmonieAccountId, onChange: e => setZmonieAccountId(e.target.value), placeholder: "e.g. 0803xxxxxxx", className: "w-full mt-1 mb-4 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+            React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Your Zmonie account number"),
+            React.createElement("input", { value: zmonieAccountNumber, onChange: e => setZmonieAccountNumber(e.target.value.trim()), placeholder: "e.g. 0803xxxxxxx", className: "w-full mt-1 mb-4 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm font-mono" }),
+            React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Your Zmonie account name"),
+            React.createElement("input", { value: zmonieAccountName, onChange: e => setZmonieAccountName(e.target.value), placeholder: "Name on your Zmonie account", className: "w-full mt-1 mb-4 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
             React.createElement("label", { className: "flex items-start gap-2 text-xs text-slate-500 mb-4 select-none" },
                 React.createElement("input", { type: "checkbox", checked: confirmed, onChange: e => setConfirmed(e.target.checked), className: "mt-0.5 shrink-0" }),
                 React.createElement("span", null, "I confirm I have a registered Zmonie account and the details above are correct.")),
@@ -13029,7 +13064,7 @@ function AdminReferralsPanel({ adminUid, adminEmail }) {
                     React.createElement("p", { className: "font-bold text-sm" }, formatNaira(w.amount)),
                     React.createElement("span", { className: "text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-ink-700" }, w.status)),
                 React.createElement("p", { className: "text-xs text-slate-500" }, w.username || w.userEmail || w.uid),
-                React.createElement("p", { className: "text-xs text-slate-400 mb-2" }, "Zmonie: ", w.zmonieAccountId, " \u00B7 ", timeAgo(w.requestedAt)),
+                React.createElement("p", { className: "text-xs text-slate-400 mb-2" }, "Zmonie: ", w.zmonieAccountNumber, " \u00B7 ", w.zmonieAccountName, " \u00B7 ", timeAgo(w.requestedAt)),
                 w.rejectionReason && React.createElement("p", { className: "text-xs text-red-500 mb-2" }, "Rejected: ", w.rejectionReason),
                 w.status === 'pending' && React.createElement("div", { className: "flex gap-2" },
                     React.createElement("button", { onClick: () => approve(w), className: "flex-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg py-1.5 text-xs font-semibold" }, "Approve"),
