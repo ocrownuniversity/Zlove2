@@ -137,6 +137,21 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 const storage = firebase.storage();
 const FieldValue = firebase.firestore.FieldValue;
+// Referral capture: if the visitor arrived via someone's referral link (?ref=CODE), stash the
+// code in localStorage (survives across pages/sessions until they sign up) and strip it from
+// the URL so it doesn't linger in the address bar.
+(function captureReferralCodeFromURL() {
+    try {
+        const params = new URLSearchParams(window.location.search);
+        const ref = params.get('ref');
+        if (ref && ref.trim()) {
+            localStorage.setItem('zlove_ref_code', ref.trim().toUpperCase());
+            params.delete('ref');
+            const rest = params.toString();
+            window.history.replaceState({}, '', window.location.pathname + (rest ? '?' + rest : '') + window.location.hash);
+        }
+    } catch (e) { /* ignore */ }
+})();
 const Timestamp = firebase.firestore.Timestamp;
 
 /* ============================== SUPER ADMIN ACCESS ==============================
@@ -754,6 +769,32 @@ function useUnreadNotifications(uid) {
         return unsub;
     }, [uid]);
     return count;
+}
+// New-reels badge for the Reels nav icon: counts reels (from other people) uploaded since the
+// user last opened the Reels tab. "Last seen" is kept in localStorage per-uid — this is just a
+// UI freshness indicator, not data worth a Firestore write on every scroll.
+function useNewReelsCount(uid) {
+    const [count, setCount] = useState(0);
+    const [lastSeen, setLastSeen] = useState(() => Number(localStorage.getItem('zlove_reels_seen_' + uid) || 0));
+    useEffect(() => {
+        if (!uid) return;
+        const unsub = db.collection('reels').orderBy('createdAt', 'desc').limit(100).onSnapshot(snap => {
+            let n = 0;
+            snap.docs.forEach(d => {
+                const r = d.data();
+                const t = (r.createdAt && r.createdAt.toMillis) ? r.createdAt.toMillis() : 0;
+                if (t > lastSeen && r.authorId !== uid) n++;
+            });
+            setCount(n);
+        }, () => setCount(0));
+        return unsub;
+    }, [uid, lastSeen]);
+    const markReelsSeen = useCallback(() => {
+        const now = Date.now();
+        localStorage.setItem('zlove_reels_seen_' + uid, String(now));
+        setLastSeen(now);
+    }, [uid]);
+    return [count, markReelsSeen];
 }
 async function ensureChat(meId, otherId) {
     const id = chatIdFor(meId, otherId);
@@ -2948,7 +2989,13 @@ function AuthScreen() {
     const [showPassword, setShowPassword] = useState(false);
     const [busy, setBusy] = useState(false);
     const [agreed, setAgreed] = useState(false);
+    const [refCode, setRefCode] = useState('');
+    const [refCodeLocked, setRefCodeLocked] = useState(false);
     const toast = useToast();
+    useEffect(() => {
+        const stored = (localStorage.getItem('zlove_ref_code') || '').trim().toUpperCase();
+        if (stored) { setRefCode(stored); setRefCodeLocked(true); }
+    }, []);
     const needsConsent = mode === 'signup' && !agreed;
     const handleEmailAuth = async (e) => {
         e.preventDefault();
@@ -2965,11 +3012,13 @@ function AuthScreen() {
                 if (password.length < 6)
                     throw new Error('Password must be at least 6 characters.');
                 const cred = await auth.createUserWithEmailAndPassword(email, password);
+                if (refCode.trim()) localStorage.setItem('zlove_ref_code', refCode.trim().toUpperCase());
                 await db.collection('users').doc(cred.user.uid).set({
                     uid: cred.user.uid, email, createdAt: FieldValue.serverTimestamp(),
                     followersCount: 0, followingCount: 0, postsCount: 0,
                     isAdmin: cred.user.uid === SUPER_ADMIN_UID, suspended: false
                 }, { merge: true });
+                await attachReferralIfAny(cred.user.uid);
             }
         }
         catch (err) {
@@ -2997,6 +3046,7 @@ function AuthScreen() {
                     followersCount: 0, followingCount: 0, postsCount: 0,
                     isAdmin: cred.user.uid === SUPER_ADMIN_UID, suspended: false
                 }, { merge: true });
+                await attachReferralIfAny(cred.user.uid);
             }
         }
         catch (err) {
@@ -3055,6 +3105,12 @@ function AuthScreen() {
                         React.createElement("input", { required: true, type: showPassword ? "text" : "password", placeholder: "Password", value: password, onChange: e => setPassword(e.target.value), className: "w-full pl-11 pr-11 py-3.5 rounded-2xl border border-slate-200 dark:border-ink-700 bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500" }),
                         React.createElement("button", { type: "button", onClick: () => setShowPassword(v => !v), "aria-label": showPassword ? "Hide password" : "Show password", className: "absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-brand-600 p-1" },
                             React.createElement("i", { className: "fa-solid " + (showPassword ? "fa-eye-slash" : "fa-eye") }))),
+                    mode === 'signup' && (React.createElement("div", { className: "relative" },
+                        React.createElement("i", { className: "fa-solid fa-gift absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" }),
+                        React.createElement("input", { type: "text", placeholder: "Referral code (optional)", value: refCode, readOnly: refCodeLocked,
+                            onChange: e => setRefCode(e.target.value.toUpperCase()),
+                            className: "w-full pl-11 pr-4 py-3.5 rounded-2xl border border-slate-200 dark:border-ink-700 bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500 " + (refCodeLocked ? "opacity-70" : "") }),
+                        refCodeLocked && React.createElement("i", { className: "fa-solid fa-lock absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 text-xs" }))),
                     mode === 'signup' && (React.createElement("label", { className: "flex items-start gap-2 text-xs text-slate-500 leading-relaxed select-none" },
                         React.createElement("input", { type: "checkbox", checked: agreed, onChange: e => setAgreed(e.target.checked), className: "mt-0.5 shrink-0" }),
                         React.createElement("span", null,
@@ -3144,6 +3200,9 @@ function OnboardingScreen() {
                     phoneNumber: phoneNumber.trim(), state, nationality
                 }, { merge: true });
             });
+            // Registration is only "complete" once onboarding (username) is done — this is
+            // the point a referral reward is credited to whoever referred this user, if any.
+            completeReferralIfEligible(firebaseUser.uid).catch(() => { });
         }
         catch (err) {
             toast(err.message, 'error');
@@ -3187,8 +3246,11 @@ function MainApp({ route, setRoute }) {
     const { theme, setTheme } = useContext(ThemeContext);
     const unreadMessages = useUnreadMessages(profile.id);
     const unreadNotifications = useUnreadNotifications(profile.id);
+    const [newReelsCount, markReelsSeen] = useNewReelsCount(profile.id);
+    useEffect(() => { if (route.name === 'reels') markReelsSeen(); }, [route.name]);
     const friendships = useFriendships(profile.id);
     const incomingRequestsCount = (friendships || []).filter(f => f.status === 'pending' && f.requestedBy !== profile.id).length;
+    useReferralCode(profile); // auto-generates profile.referralCode once, if missing
     useEffect(() => {
         setPresence(profile.id, true);
         const heartbeat = setInterval(() => setPresence(profile.id, true), 25000);
@@ -3203,7 +3265,7 @@ function MainApp({ route, setRoute }) {
     }, [profile.id]);
     const nav = [
         { name: 'home', icon: 'fa-house', label: 'Home' },
-        { name: 'reels', icon: 'fa-clapperboard', label: 'Reels' },
+        { name: 'reels', icon: 'fa-clapperboard', label: 'Reels', badge: newReelsCount },
         { name: 'search', icon: 'fa-user-group', label: 'People', badge: incomingRequestsCount },
         { name: 'marketplace', icon: 'fa-store', label: 'Marketplace' },
         { name: 'games', icon: 'fa-gamepad', label: 'Games' },
@@ -3274,6 +3336,7 @@ function MainApp({ route, setRoute }) {
                 route.name === 'bookmarks' && React.createElement(BookmarksScreen, { go: go }),
                 route.name === 'birthdays' && React.createElement(BirthdaysScreen, { go: go }),
                 route.name === 'wallet' && React.createElement(WalletScreen, { go: go }),
+                route.name === 'referrals' && React.createElement(ReferralScreen, { go: go }),
                 route.name === 'adCentre' && React.createElement(AdCentreScreen, { go: go }),
                 route.name === 'post' && React.createElement(PostDetailScreen, { id: route.id, go: go, openComments: route.openComments }),
                 route.name === 'profile' && React.createElement(ProfileScreen, { uid: route.uid, go: go }),
@@ -3312,6 +3375,7 @@ const MENU_TILES = [
     { key: 'events', label: 'Events', icon: 'fa-calendar-days', route: null },
     { key: 'adCentre', label: 'Ad Centre', icon: 'fa-bullhorn', route: { name: 'adCentre' } },
     { key: 'wallet', label: 'Wallet', icon: 'fa-wallet', route: { name: 'wallet' } },
+    { key: 'referrals', label: 'Referrals', icon: 'fa-user-plus', route: { name: 'referrals' } },
     { key: 'feeds', label: 'Feeds', icon: 'fa-table-cells-large', route: null },
 ];
 const MENU_TILE_COLORS = {
@@ -3322,6 +3386,7 @@ const MENU_TILE_COLORS = {
     saved: 'bg-purple-100 text-purple-600', memories: 'bg-blue-100 text-blue-600',
     birthdays: 'bg-red-100 text-red-500', events: 'bg-red-100 text-red-500',
     adCentre: 'bg-blue-100 text-blue-600', wallet: 'bg-emerald-100 text-emerald-600', feeds: 'bg-orange-100 text-orange-600',
+    referrals: 'bg-amber-100 text-amber-600',
 };
 function MenuTile({ tile, onOpen }) {
     return React.createElement("button", { onClick: () => onOpen(tile), className: "flex items-center gap-3 bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3 text-left active:scale-[0.98] transition" },
@@ -5225,14 +5290,18 @@ const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your p
     withdrawal_approved: 'Your withdrawal request was approved', withdrawal_rejected: 'Your withdrawal request was rejected',
     withdrawal_paid: 'Your withdrawal payment was completed',
     page_name_change_submitted: 'Your Page name change request was submitted for review', page_name_change_approved: 'Your Page name change was approved',
-    page_name_change_rejected: 'Your Page name change request was rejected' };
+    page_name_change_rejected: 'Your Page name change request was rejected',
+    referral_reward: 'You earned a referral reward', referral_withdrawal_submitted: 'Your referral withdrawal request was submitted',
+    referral_withdrawal_approved: 'Your referral withdrawal was approved and sent to your Zmonie account', referral_withdrawal_rejected: 'Your referral withdrawal request was rejected' };
 const SYSTEM_NOTIF_TYPES = ['listing_approved', 'listing_removed', 'ad_approved', 'ad_declined', 'group_request_approved', 'group_request_rejected',
     'kyc_approved', 'kyc_rejected', 'followers_milestone', 'monetization_eligible', 'monetization_approved', 'monetization_rejected', 'monetization_suspended',
     'earnings_updated', 'withdrawal_approved', 'withdrawal_rejected', 'withdrawal_paid',
-    'page_name_change_submitted', 'page_name_change_approved', 'page_name_change_rejected'];
+    'page_name_change_submitted', 'page_name_change_approved', 'page_name_change_rejected',
+    'referral_reward', 'referral_withdrawal_submitted', 'referral_withdrawal_approved', 'referral_withdrawal_rejected'];
 const PAGE_NAME_CHANGE_NOTIF_TYPES = ['page_name_change_submitted', 'page_name_change_approved', 'page_name_change_rejected'];
 const MONETIZATION_NOTIF_TYPES = ['kyc_approved', 'kyc_rejected', 'followers_milestone', 'monetization_eligible', 'monetization_approved', 'monetization_rejected', 'monetization_suspended', 'earnings_updated'];
 const WITHDRAWAL_NOTIF_TYPES = ['withdrawal_approved', 'withdrawal_rejected', 'withdrawal_paid'];
+const REFERRAL_NOTIF_TYPES = ['referral_reward', 'referral_withdrawal_submitted', 'referral_withdrawal_approved', 'referral_withdrawal_rejected'];
 function NotificationsScreen({ go }) {
     const { profile } = useAuth();
     const [items, setItems] = useState(null);
@@ -5280,15 +5349,17 @@ function NotifRow({ n, go }) {
             return go({ name: 'monetization', id: n.pageId });
         if (PAGE_NAME_CHANGE_NOTIF_TYPES.includes(n.type) && n.pageId)
             return go({ name: 'pageForm', id: n.pageId });
+        if (REFERRAL_NOTIF_TYPES.includes(n.type))
+            return go({ name: 'referrals' });
         go({ name: 'profile', uid: n.fromUserId });
     };
     return (React.createElement("div", { onClick: openNotif, className: "flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700 cursor-pointer" },
-        isSystem ? React.createElement("div", { className: "w-9 h-9 rounded-full bg-brand-50 dark:bg-brand-900/30 flex items-center justify-center text-brand-600 dark:text-brand-400 shrink-0" }, React.createElement("i", { className: "fa-solid " + (n.groupId ? 'fa-people-group' : PAGE_NAME_CHANGE_NOTIF_TYPES.includes(n.type) ? 'fa-signature' : (MONETIZATION_NOTIF_TYPES.includes(n.type) || WITHDRAWAL_NOTIF_TYPES.includes(n.type)) ? 'fa-sack-dollar' : 'fa-store') })) : React.createElement(Avatar, { user: from, size: 9 }),
+        isSystem ? React.createElement("div", { className: "w-9 h-9 rounded-full bg-brand-50 dark:bg-brand-900/30 flex items-center justify-center text-brand-600 dark:text-brand-400 shrink-0" }, React.createElement("i", { className: "fa-solid " + (n.groupId ? 'fa-people-group' : PAGE_NAME_CHANGE_NOTIF_TYPES.includes(n.type) ? 'fa-signature' : (MONETIZATION_NOTIF_TYPES.includes(n.type) || WITHDRAWAL_NOTIF_TYPES.includes(n.type) || REFERRAL_NOTIF_TYPES.includes(n.type)) ? 'fa-sack-dollar' : 'fa-store') })) : React.createElement(Avatar, { user: from, size: 9 }),
         React.createElement("p", { className: "text-sm" },
             !isSystem && React.createElement("span", { className: "font-semibold" }, from.displayName),
             !isSystem && " ",
             NOTIF_TEXT[n.type] || 'interacted with you',
-            (n.type === 'earnings_updated' || WITHDRAWAL_NOTIF_TYPES.includes(n.type)) && typeof n.amount === 'number' ? (' (' + Math.abs(n.amount).toLocaleString() + ')') : '',
+            (n.type === 'earnings_updated' || WITHDRAWAL_NOTIF_TYPES.includes(n.type) || REFERRAL_NOTIF_TYPES.includes(n.type)) && typeof n.amount === 'number' ? (' (\u20A6' + Math.abs(n.amount).toLocaleString() + ')') : '',
             " ",
             React.createElement("span", { className: "text-slate-400" },
                 "\u00B7 ",
@@ -6658,6 +6729,7 @@ function SuperAdminApp({ theme, setTheme }) {
         { key: 'monetization', label: 'Monetization', icon: 'fa-sack-dollar' },
         { key: 'ads', label: 'Ads' + (pendingAdCount ? ' (' + pendingAdCount + ')' : ''), icon: 'fa-bullhorn' },
         { key: 'wallet', label: 'Wallet', icon: 'fa-wallet' },
+        { key: 'referrals', label: 'Referrals', icon: 'fa-user-plus' },
         { key: 'marketplace', label: 'Marketplace' + (pendingListingCount ? ' (' + pendingListingCount + ')' : ''), icon: 'fa-store' },
         { key: 'reports', label: 'Reports', icon: 'fa-flag' },
         { key: 'postAsOdoife', label: 'Post as Odoife', icon: 'fa-pen-nib' },
@@ -7005,6 +7077,9 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
     }
     if (tab === 'wallet') {
         return React.createElement(AdminWalletPanel, { adminUid: adminUid, adminEmail: adminEmail });
+    }
+    if (tab === 'referrals') {
+        return React.createElement(AdminReferralsPanel, { adminUid: adminUid, adminEmail: adminEmail });
     }
     if (tab === 'postAsOdoife') {
         return React.createElement(AdminPostAsOdoifeForm, { adminUid: adminUid, adminEmail: adminEmail });
@@ -12626,6 +12701,359 @@ function AdminWalletPanel({ adminUid, adminEmail }) {
                 React.createElement("input", { value: cfgForm.bankAccountNumber, onChange: e => setCfgForm(f => Object.assign({}, f, { bankAccountNumber: e.target.value.trim() })), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm font-mono" })),
             React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Account name"),
                 React.createElement("input", { value: cfgForm.bankAccountName, onChange: e => setCfgForm(f => Object.assign({}, f, { bankAccountName: e.target.value })), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" })),
+            React.createElement("button", { onClick: saveCfg, className: "w-full bg-brand-600 hover:bg-brand-700 text-white rounded-xl py-2.5 text-sm font-semibold" }, "Save settings")) :
+            React.createElement("div", { className: "py-10 flex justify-center" }, React.createElement("div", { className: "w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" }))));
+}
+
+/* ============================== REFERRAL SYSTEM ==============================
+ * Firestore layout:
+ *   settings/referral              { enabled, rewardAmount, minWithdrawal, updatedAt }
+ *   referralCodes/{code}           { uid }  -- O(1) lookup of a code's owner
+ *   users/{uid} gains:             referralCode, referredBy (uid|null, set once, immutable),
+ *                                  referralRewarded (bool), referralBalance, referralEarnings,
+ *                                  referralWithdrawn (numbers, naira)
+ *   referrals/{referredUid}        { referrerId, referredId, rewardAmount, status:'pending'|
+ *                                    'completed'|'invalid', createdAt, completedAt }
+ *     -- doc ID is the referred user's uid, which makes duplicate rewards structurally
+ *        impossible (one referral record can ever exist per referred account).
+ *   referralWithdrawals/{autoId}   { uid, userEmail, username, amount, zmonieAccountId,
+ *                                    status:'pending'|'approved'|'rejected', rejectionReason,
+ *                                    requestedAt, reviewedAt, reviewedBy, reviewedByEmail }
+ *
+ * This app has no connection to Zmonie's own backend, so a "Zmonie account" can't be verified
+ * automatically. Withdrawal just asks the user for their Zmonie phone number/username and an
+ * admin pays it out manually once approved (same escrow pattern as Page monetization
+ * withdrawals: the amount is held out of the available balance the moment a request is
+ * submitted, and refunded back if the admin rejects it).
+ */
+function notifyUser(uid, type, extra) {
+    if (!uid) return;
+    db.collection('notifications').doc(uid).collection('items').add(Object.assign({ type, read: false, createdAt: FieldValue.serverTimestamp() }, extra || {})).catch(() => { });
+}
+function generateReferralCode() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no ambiguous 0/O/1/I
+    let s = '';
+    for (let i = 0; i < 7; i++) s += chars[Math.floor(Math.random() * chars.length)];
+    return s;
+}
+function referralLinkFor(code) {
+    return window.location.origin + window.location.pathname + '?ref=' + code;
+}
+// Auto-heals a referral code onto any logged-in user who doesn't have one yet — covers both
+// brand-new signups and existing users from before this feature existed.
+function useReferralCode(profile) {
+    useEffect(() => {
+        if (!profile || !profile.id || profile.referralCode) return;
+        let cancelled = false;
+        (async () => {
+            for (let i = 0; i < 5 && !cancelled; i++) {
+                const code = generateReferralCode();
+                try {
+                    await db.runTransaction(async (tx) => {
+                        const codeRef = db.collection('referralCodes').doc(code);
+                        const snap = await tx.get(codeRef);
+                        if (snap.exists) throw new Error('taken');
+                        tx.set(codeRef, { uid: profile.id, createdAt: FieldValue.serverTimestamp() });
+                        tx.update(db.collection('users').doc(profile.id), { referralCode: code });
+                    });
+                    return;
+                } catch (e) { /* collision — retry with a new random code */ }
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [profile && profile.id, profile && profile.referralCode]);
+}
+function useReferralConfig() {
+    const [cfg, setCfg] = useState({ enabled: true, rewardAmount: 100, minWithdrawal: 500 });
+    useEffect(() => {
+        const unsub = db.collection('settings').doc('referral').onSnapshot(s => {
+            setCfg(Object.assign({ enabled: true, rewardAmount: 100, minWithdrawal: 500 }, s.exists ? s.data() : {}));
+        }, () => { });
+        return unsub;
+    }, []);
+    return cfg;
+}
+async function saveReferralConfig(fields) {
+    await db.collection('settings').doc('referral').set(Object.assign({}, fields, { updatedAt: FieldValue.serverTimestamp() }), { merge: true });
+}
+// Called right after a brand-new account is created (email/password or Google). Reads whatever
+// referral code was captured into localStorage, resolves it to a referrer, and — as long as it's
+// not a self-referral and the program is enabled — attaches referredBy to the new user and opens
+// a 'pending' referrals record. Best-effort: never throws, so it can never block signup.
+async function attachReferralIfAny(newUid) {
+    try {
+        const code = (localStorage.getItem('zlove_ref_code') || '').trim().toUpperCase();
+        if (!code) return;
+        const codeSnap = await db.collection('referralCodes').doc(code).get();
+        if (!codeSnap.exists) return;
+        const referrerId = codeSnap.data().uid;
+        if (!referrerId || referrerId === newUid) return; // no self-referral
+        const cfgSnap = await db.collection('settings').doc('referral').get();
+        const cfg = Object.assign({ enabled: true, rewardAmount: 100 }, cfgSnap.exists ? cfgSnap.data() : {});
+        if (!cfg.enabled) return;
+        await db.collection('users').doc(newUid).set({ referredBy: referrerId, referralRewarded: false }, { merge: true });
+        await db.collection('referrals').doc(newUid).set({
+            referrerId, referredId: newUid, rewardAmount: cfg.rewardAmount, status: 'pending', createdAt: FieldValue.serverTimestamp()
+        });
+    } catch (e) { /* best-effort */ }
+}
+// Called once the referred user finishes onboarding (sets a username) — the point this app
+// considers registration "successfully completed". Transaction-guarded on the referrals/{uid}
+// doc's status so a reward can never be paid out twice for the same referred account.
+async function completeReferralIfEligible(uid) {
+    const refDoc = db.collection('referrals').doc(uid);
+    let referrerId = null, amount = 0;
+    await db.runTransaction(async (tx) => {
+        const snap = await tx.get(refDoc);
+        if (!snap.exists || snap.data().status !== 'pending') return;
+        const data = snap.data();
+        const referrerRef = db.collection('users').doc(data.referrerId);
+        const referrerSnap = await tx.get(referrerRef);
+        if (!referrerSnap.exists) { tx.update(refDoc, { status: 'invalid' }); return; }
+        referrerId = data.referrerId;
+        amount = data.rewardAmount || 0;
+        tx.update(referrerRef, { referralBalance: FieldValue.increment(amount), referralEarnings: FieldValue.increment(amount) });
+        tx.update(refDoc, { status: 'completed', completedAt: FieldValue.serverTimestamp() });
+        tx.update(db.collection('users').doc(uid), { referralRewarded: true });
+    });
+    if (referrerId) notifyUser(referrerId, 'referral_reward', { amount, referredId: uid });
+}
+function useMyReferrals(uid) {
+    const [rows, setRows] = useState(null);
+    useEffect(() => {
+        if (!uid) { setRows([]); return; }
+        const unsub = db.collection('referrals').where('referrerId', '==', uid).limit(500).onSnapshot(snap => {
+            const list = snap.docs.map(d => Object.assign({ id: d.id }, d.data()));
+            list.sort((a, b) => millisOf(b.createdAt) - millisOf(a.createdAt));
+            setRows(list);
+        }, () => setRows([]));
+        return unsub;
+    }, [uid]);
+    return rows;
+}
+function useMyReferralWithdrawals(uid) {
+    const [rows, setRows] = useState(null);
+    useEffect(() => {
+        if (!uid) { setRows([]); return; }
+        const unsub = db.collection('referralWithdrawals').where('uid', '==', uid).limit(200).onSnapshot(snap => {
+            const list = snap.docs.map(d => Object.assign({ id: d.id }, d.data()));
+            list.sort((a, b) => millisOf(b.requestedAt) - millisOf(a.requestedAt));
+            setRows(list);
+        }, () => setRows([]));
+        return unsub;
+    }, [uid]);
+    return rows;
+}
+async function requestReferralWithdrawal(profile, amountNaira, zmonieAccountId, cfg) {
+    const amt = Number(amountNaira) || 0;
+    const minAmt = cfg.minWithdrawal || 500;
+    if (!cfg.enabled) throw new Error('The referral program is currently disabled.');
+    if (amt < minAmt) throw new Error(`Minimum withdrawal is ${formatNaira(minAmt)}.`);
+    if (!zmonieAccountId || !zmonieAccountId.trim()) throw new Error('Enter the phone number or username registered on your Zmonie account.');
+    const balance = profile.referralBalance || 0;
+    if (amt > balance) throw new Error('Amount exceeds your available referral balance.');
+    const ref = db.collection('referralWithdrawals').doc();
+    await ref.set({
+        uid: profile.id, userEmail: profile.email || '', username: profile.username || '',
+        amount: amt, zmonieAccountId: zmonieAccountId.trim(), status: 'pending',
+        requestedAt: FieldValue.serverTimestamp(), reviewedAt: null, reviewedBy: null, reviewedByEmail: null, rejectionReason: null
+    });
+    // Escrow: hold the amount out of the available balance the moment it's requested, so a user
+    // can never submit two requests that together exceed their balance. Refunded if rejected.
+    await db.collection('users').doc(profile.id).update({ referralBalance: FieldValue.increment(-amt) });
+    notifyUser(profile.id, 'referral_withdrawal_submitted', { amount: amt });
+    return ref.id;
+}
+async function adminApproveReferralWithdrawal(w, adminUid, adminEmail) {
+    await db.collection('referralWithdrawals').doc(w.id).update({ status: 'approved', reviewedAt: FieldValue.serverTimestamp(), reviewedBy: adminUid, reviewedByEmail: adminEmail || null });
+    await db.collection('users').doc(w.uid).update({ referralWithdrawn: FieldValue.increment(w.amount) });
+    notifyUser(w.uid, 'referral_withdrawal_approved', { amount: w.amount });
+}
+async function adminRejectReferralWithdrawal(w, reason, adminUid, adminEmail) {
+    await db.collection('referralWithdrawals').doc(w.id).update({ status: 'rejected', rejectionReason: reason || '', reviewedAt: FieldValue.serverTimestamp(), reviewedBy: adminUid, reviewedByEmail: adminEmail || null });
+    await db.collection('users').doc(w.uid).update({ referralBalance: FieldValue.increment(w.amount) }); // refund the escrow hold
+    notifyUser(w.uid, 'referral_withdrawal_rejected', { amount: w.amount, reason: reason || '' });
+}
+/* ---------- User-facing dashboard ---------- */
+function ReferralScreen({ go }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const cfg = useReferralConfig();
+    const referrals = useMyReferrals(profile.id);
+    const withdrawals = useMyReferralWithdrawals(profile.id);
+    const [withdrawOpen, setWithdrawOpen] = useState(false);
+    const [historyTab, setHistoryTab] = useState('referrals');
+    const total = referrals ? referrals.length : 0;
+    const successful = referrals ? referrals.filter(r => r.status === 'completed').length : 0;
+    const pending = referrals ? referrals.filter(r => r.status === 'pending').length : 0;
+    const link = profile.referralCode ? referralLinkFor(profile.referralCode) : '';
+    const copyLink = () => {
+        if (!link) return;
+        navigator.clipboard.writeText(link).then(() => toast('Referral link copied!', 'success')).catch(() => toast('Could not copy link', 'error'));
+    };
+    const shareLink = () => {
+        if (!link) return;
+        if (navigator.share) navigator.share({ title: 'Join Odoife', text: 'Join me on Odoife!', url: link }).catch(() => { });
+        else copyLink();
+    };
+    return React.createElement("div", null,
+        React.createElement("div", { className: "flex items-center gap-2 mb-4" },
+            React.createElement("button", { onClick: () => go({ name: 'menu' }), className: "text-slate-400" }, React.createElement("i", { className: "fa-solid fa-arrow-left text-lg" })),
+            React.createElement("h1", { className: "font-display text-lg font-bold" }, "Referrals")),
+        !cfg.enabled && React.createElement("p", { className: "text-xs text-amber-600 bg-amber-50 dark:bg-amber-900/20 rounded-lg p-2 mb-3" }, "The referral program is currently paused."),
+        React.createElement("div", { className: "bg-gradient-to-br from-brand-600 to-brand-700 rounded-2xl p-5 text-white mb-4" },
+            React.createElement("p", { className: "text-xs text-white/80 mb-1" }, "Available referral balance"),
+            React.createElement("p", { className: "text-3xl font-extrabold mb-4" }, formatNaira(profile.referralBalance || 0)),
+            React.createElement("div", { className: "grid grid-cols-2 gap-3 text-xs mb-4" },
+                React.createElement("div", null, React.createElement("p", { className: "text-white/70" }, "Total earned"), React.createElement("p", { className: "font-bold text-sm" }, formatNaira(profile.referralEarnings || 0))),
+                React.createElement("div", null, React.createElement("p", { className: "text-white/70" }, "Total withdrawn"), React.createElement("p", { className: "font-bold text-sm" }, formatNaira(profile.referralWithdrawn || 0)))),
+            React.createElement("button", { onClick: () => setWithdrawOpen(true), className: "bg-white text-brand-700 text-sm font-bold px-4 py-2 rounded-xl" }, React.createElement("i", { className: "fa-solid fa-arrow-up-from-bracket mr-1.5" }), "Withdraw")),
+        React.createElement("div", { className: "grid grid-cols-3 gap-2 mb-4" },
+            [['Total', total], ['Successful', successful], ['Pending', pending]].map(([l, v]) => React.createElement("div", { key: l, className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl py-3 text-center" },
+                React.createElement("p", { className: "text-lg font-extrabold" }, v), React.createElement("p", { className: "text-[11px] text-slate-400" }, l)))),
+        React.createElement("div", { className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-4 mb-4" },
+            React.createElement("p", { className: "text-xs font-semibold text-slate-500 mb-1" }, "Your referral code"),
+            React.createElement("p", { className: "font-mono font-bold text-lg mb-3 tracking-wide" }, profile.referralCode || 'Generating\u2026'),
+            React.createElement("p", { className: "text-xs font-semibold text-slate-500 mb-1" }, "Your referral link"),
+            React.createElement("p", { className: "text-xs text-slate-500 dark:text-slate-400 break-all mb-3" }, link || '\u2014'),
+            React.createElement("div", { className: "flex gap-2" },
+                React.createElement("button", { onClick: copyLink, disabled: !link, className: "flex-1 bg-slate-100 dark:bg-ink-700 disabled:opacity-40 rounded-lg py-2 text-xs font-semibold" }, React.createElement("i", { className: "fa-solid fa-copy mr-1.5" }), "Copy link"),
+                React.createElement("button", { onClick: shareLink, disabled: !link, className: "flex-1 bg-brand-600 hover:bg-brand-700 disabled:opacity-40 text-white rounded-lg py-2 text-xs font-semibold" }, React.createElement("i", { className: "fa-solid fa-share-nodes mr-1.5" }), "Share")),
+            React.createElement("p", { className: "text-[11px] text-slate-400 mt-3" }, "Share your link \u2014 you earn ", formatNaira(cfg.rewardAmount), " for every friend who signs up and completes their profile.")),
+        React.createElement("div", { className: "flex gap-2 mb-3" }, [['referrals', 'Referral history'], ['withdrawals', 'Withdrawal history']].map(([k, l]) => React.createElement("button", { key: k, onClick: () => setHistoryTab(k), className: "px-3 py-1.5 rounded-full text-xs font-semibold " + (historyTab === k ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, l))),
+        historyTab === 'referrals' && React.createElement("div", { className: "space-y-1.5" },
+            referrals === null && React.createElement("div", { className: "py-10 flex justify-center" }, React.createElement("div", { className: "w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" })),
+            referrals !== null && referrals.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-8" }, "No referrals yet \u2014 share your link to get started."),
+            referrals && referrals.map(r => React.createElement("div", { key: r.id, className: "flex items-center justify-between bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-lg px-3 py-2.5" },
+                React.createElement("div", { className: "min-w-0" },
+                    React.createElement("p", { className: "text-sm font-semibold" }, r.status === 'completed' ? 'Successful referral' : r.status === 'invalid' ? 'Invalid referral' : 'Pending \u2014 awaiting profile setup'),
+                    React.createElement("p", { className: "text-[11px] text-slate-400" }, timeAgo(r.createdAt))),
+                React.createElement("span", { className: "text-sm font-bold shrink-0 " + (r.status === 'completed' ? "text-emerald-600" : "text-slate-400") }, r.status === 'completed' ? '+' + formatNaira(r.rewardAmount) : formatNaira(r.rewardAmount))))),
+        historyTab === 'withdrawals' && React.createElement("div", { className: "space-y-1.5" },
+            withdrawals === null && React.createElement("div", { className: "py-10 flex justify-center" }, React.createElement("div", { className: "w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" })),
+            withdrawals !== null && withdrawals.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-8" }, "No withdrawal requests yet."),
+            withdrawals && withdrawals.map(w => React.createElement("div", { key: w.id, className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-lg px-3 py-2.5" },
+                React.createElement("div", { className: "flex items-center justify-between mb-1" },
+                    React.createElement("p", { className: "text-sm font-bold" }, formatNaira(w.amount)),
+                    React.createElement("span", { className: "text-[11px] font-semibold px-2 py-0.5 rounded-full " + (w.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : w.status === 'rejected' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700') }, w.status)),
+                React.createElement("p", { className: "text-[11px] text-slate-400" }, "To Zmonie: ", w.zmonieAccountId, " \u00B7 ", timeAgo(w.requestedAt)),
+                w.rejectionReason && React.createElement("p", { className: "text-[11px] text-red-500 mt-1" }, "Reason: ", w.rejectionReason)))),
+        withdrawOpen && React.createElement(WithdrawReferralSheet, { profile: profile, cfg: cfg, onClose: () => setWithdrawOpen(false) }));
+}
+function WithdrawReferralSheet({ profile, cfg, onClose }) {
+    const toast = useToast();
+    const [amount, setAmount] = useState('');
+    const [zmonieAccountId, setZmonieAccountId] = useState('');
+    const [confirmed, setConfirmed] = useState(false);
+    const [busy, setBusy] = useState(false);
+    const balance = profile.referralBalance || 0;
+    const submit = async () => {
+        if (!confirmed) { toast('Please confirm you have a registered Zmonie account.', 'error'); return; }
+        setBusy(true);
+        try {
+            await requestReferralWithdrawal(profile, amount, zmonieAccountId, cfg);
+            toast('Withdrawal request submitted \u2014 an admin will review it shortly.', 'success');
+            onClose();
+        } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+    };
+    return React.createElement("div", { className: "fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center", onClick: onClose },
+        React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm max-h-[90vh] overflow-y-auto p-5", onClick: e => e.stopPropagation() },
+            React.createElement("h3", { className: "font-display font-bold text-lg mb-1" }, "Withdraw referral earnings"),
+            React.createElement("p", { className: "text-xs text-slate-400 mb-4" }, "Available: ", formatNaira(balance)),
+            React.createElement("div", { className: "bg-amber-50 dark:bg-amber-900/20 rounded-lg p-3 mb-4 text-xs text-amber-700 dark:text-amber-400" },
+                "You need a Zmonie account before you can withdraw your referral earnings. This app is not connected to Zmonie \u2014 enter the phone number or username on your Zmonie account below so we can send your payment there.",
+                React.createElement("a", { href: "https://zmonie.com", target: "_blank", rel: "noopener noreferrer", className: "block mt-2 text-center bg-amber-600 hover:bg-amber-700 text-white rounded-lg py-2 text-xs font-semibold" }, "Register on Zmonie")),
+            React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Amount (\u20A6)"),
+            React.createElement("input", { type: "number", min: cfg.minWithdrawal || 500, value: amount, onChange: e => setAmount(e.target.value), placeholder: "Min " + formatNaira(cfg.minWithdrawal || 500), className: "w-full mt-1 mb-4 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+            React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Your Zmonie phone number / username"),
+            React.createElement("input", { value: zmonieAccountId, onChange: e => setZmonieAccountId(e.target.value), placeholder: "e.g. 0803xxxxxxx", className: "w-full mt-1 mb-4 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+            React.createElement("label", { className: "flex items-start gap-2 text-xs text-slate-500 mb-4 select-none" },
+                React.createElement("input", { type: "checkbox", checked: confirmed, onChange: e => setConfirmed(e.target.checked), className: "mt-0.5 shrink-0" }),
+                React.createElement("span", null, "I confirm I have a registered Zmonie account and the details above are correct.")),
+            React.createElement("button", { disabled: busy, onClick: submit, className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl py-3 font-semibold text-sm" }, busy ? 'Submitting\u2026' : 'Submit withdrawal request')));
+}
+/* ---------- Admin panel ---------- */
+function AdminReferralsPanel({ adminUid, adminEmail }) {
+    const toast = useToast();
+    const [subtab, setSubtab] = useState('overview');
+    const [search, setSearch] = useState('');
+    const [withdrawalFilter, setWithdrawalFilter] = useState('pending');
+    const [referrals, setReferrals] = useState([]);
+    const [withdrawals, setWithdrawals] = useState([]);
+    const [users, setUsers] = useState([]);
+    const cfg = useReferralConfig();
+    const [cfgForm, setCfgForm] = useState(null);
+    useEffect(() => { if (subtab === 'settings') setCfgForm(cfg); }, [subtab]);
+    useEffect(() => {
+        if (subtab !== 'overview' && subtab !== 'users') return;
+        const unsub = db.collection('referrals').limit(2000).onSnapshot(snap => setReferrals(snap.docs.map(d => Object.assign({ id: d.id }, d.data()))), () => { });
+        return unsub;
+    }, [subtab]);
+    useEffect(() => {
+        if (subtab !== 'withdrawals') return;
+        const unsub = db.collection('referralWithdrawals').orderBy('requestedAt', 'desc').limit(500).onSnapshot(snap => {
+            let list = snap.docs.map(d => Object.assign({ id: d.id }, d.data()));
+            if (withdrawalFilter !== 'all') list = list.filter(r => r.status === withdrawalFilter);
+            setWithdrawals(list);
+        }, () => setWithdrawals([]));
+        return unsub;
+    }, [subtab, withdrawalFilter]);
+    useEffect(() => {
+        if (subtab !== 'users') return;
+        const unsub = db.collection('users').limit(500).onSnapshot(snap => setUsers(snap.docs.map(d => Object.assign({ id: d.id }, d.data()))), () => { });
+        return unsub;
+    }, [subtab]);
+    const totalReferrals = referrals.length;
+    const successfulReferrals = referrals.filter(r => r.status === 'completed').length;
+    const totalPaidOut = referrals.filter(r => r.status === 'completed').reduce((s, r) => s + (r.rewardAmount || 0), 0);
+    const pendingWithdrawalCount = withdrawals.filter(w => w.status === 'pending').length; // only meaningful while viewing that filter
+    const approve = async (w) => { try { await adminApproveReferralWithdrawal(w, adminUid, adminEmail); toast('Approved \u2014 mark it paid on Zmonie manually', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    const reject = async (w) => { const reason = prompt('Reason for rejection:'); if (reason === null) return; try { await adminRejectReferralWithdrawal(w, reason, adminUid, adminEmail); toast('Rejected \u2014 balance refunded', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    const saveCfg = async () => { try { await saveReferralConfig(cfgForm); toast('Referral settings saved', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    const filteredUsers = users.filter(u => {
+        if (!search.trim()) return (u.referralEarnings || 0) > 0 || (u.referralCode);
+        const q = search.trim().toLowerCase();
+        return (u.username || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q) || (u.displayName || '').toLowerCase().includes(q);
+    });
+    return React.createElement("div", null,
+        React.createElement("h2", { className: "font-display text-lg font-bold mb-3 flex items-center gap-2" }, React.createElement("i", { className: "fa-solid fa-user-plus text-brand-600" }), "Referral Management"),
+        React.createElement("div", { className: "flex gap-2 mb-4 flex-wrap" }, [['overview', 'Overview'], ['withdrawals', 'Withdrawals'], ['users', 'Users'], ['settings', 'Settings']].map(([k, l]) => React.createElement("button", { key: k, onClick: () => setSubtab(k), className: "px-3 py-1.5 rounded-full text-xs font-semibold " + (subtab === k ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, l))),
+        subtab === 'overview' && React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
+            [['Total referrals', totalReferrals], ['Successful', successfulReferrals], ['Pending', totalReferrals - successfulReferrals], ['Total paid out', formatNaira(totalPaidOut)]].map(([l, v]) => React.createElement("div", { key: l, className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-4" },
+                React.createElement("p", { className: "text-xl font-extrabold" }, v), React.createElement("p", { className: "text-xs text-slate-400" }, l)))),
+        subtab === 'withdrawals' && React.createElement("div", null,
+            React.createElement("div", { className: "flex gap-2 mb-3" }, ['pending', 'approved', 'rejected', 'all'].map(f => React.createElement("button", { key: f, onClick: () => setWithdrawalFilter(f), className: "px-3 py-1 rounded-full text-xs font-semibold " + (withdrawalFilter === f ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, f))),
+            withdrawals.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No withdrawal requests in this filter."),
+            withdrawals.map(w => React.createElement("div", { key: w.id, className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3 mb-2" },
+                React.createElement("div", { className: "flex items-center justify-between mb-1" },
+                    React.createElement("p", { className: "font-bold text-sm" }, formatNaira(w.amount)),
+                    React.createElement("span", { className: "text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-ink-700" }, w.status)),
+                React.createElement("p", { className: "text-xs text-slate-500" }, w.username || w.userEmail || w.uid),
+                React.createElement("p", { className: "text-xs text-slate-400 mb-2" }, "Zmonie: ", w.zmonieAccountId, " \u00B7 ", timeAgo(w.requestedAt)),
+                w.rejectionReason && React.createElement("p", { className: "text-xs text-red-500 mb-2" }, "Rejected: ", w.rejectionReason),
+                w.status === 'pending' && React.createElement("div", { className: "flex gap-2" },
+                    React.createElement("button", { onClick: () => approve(w), className: "flex-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg py-1.5 text-xs font-semibold" }, "Approve"),
+                    React.createElement("button", { onClick: () => reject(w), className: "flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-1.5 text-xs font-semibold" }, "Reject"))))),
+        subtab === 'users' && React.createElement("div", null,
+            React.createElement("input", { value: search, onChange: e => setSearch(e.target.value), placeholder: "Search by username or email\u2026", className: "w-full mb-3 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+            filteredUsers.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No matching users."),
+            filteredUsers.map(u => {
+                const mine = referrals.filter(r => r.referrerId === u.id);
+                return React.createElement("div", { key: u.id, className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3 mb-2" },
+                    React.createElement("div", { className: "flex items-center justify-between mb-1" },
+                        React.createElement("p", { className: "font-semibold text-sm" }, u.displayName || u.username || u.email),
+                        React.createElement("p", { className: "text-xs font-mono text-slate-400" }, u.referralCode || '\u2014')),
+                    React.createElement("p", { className: "text-xs text-slate-400 mb-1" }, mine.length, " referrals \u00B7 ", mine.filter(r => r.status === 'completed').length, " successful \u00B7 balance ", formatNaira(u.referralBalance || 0), " \u00B7 withdrawn ", formatNaira(u.referralWithdrawn || 0)));
+            })),
+        subtab === 'settings' && (cfgForm ? React.createElement("div", { className: "max-w-sm space-y-3" },
+            React.createElement("div", { className: "flex items-center justify-between py-2" },
+                React.createElement("span", { className: "text-sm font-semibold" }, "Referral program enabled"),
+                React.createElement("button", { onClick: () => setCfgForm(f => Object.assign({}, f, { enabled: !f.enabled })), className: "w-11 h-6 rounded-full relative transition shrink-0 " + (cfgForm.enabled ? "bg-brand-600" : "bg-slate-200 dark:bg-ink-600") },
+                    React.createElement("span", { className: "absolute top-0.5 w-5 h-5 bg-white rounded-full transition " + (cfgForm.enabled ? "left-[22px]" : "left-0.5") }))),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Reward amount per successful referral (\u20A6)"),
+                React.createElement("input", { type: "number", min: 0, value: cfgForm.rewardAmount, onChange: e => setCfgForm(f => Object.assign({}, f, { rewardAmount: Number(e.target.value) || 0 })), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" })),
+            React.createElement("div", null, React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Minimum withdrawal amount (\u20A6)"),
+                React.createElement("input", { type: "number", min: 0, value: cfgForm.minWithdrawal, onChange: e => setCfgForm(f => Object.assign({}, f, { minWithdrawal: Number(e.target.value) || 0 })), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" })),
             React.createElement("button", { onClick: saveCfg, className: "w-full bg-brand-600 hover:bg-brand-700 text-white rounded-xl py-2.5 text-sm font-semibold" }, "Save settings")) :
             React.createElement("div", { className: "py-10 flex justify-center" }, React.createElement("div", { className: "w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" }))));
 }
