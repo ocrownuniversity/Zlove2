@@ -12808,42 +12808,11 @@ function useReferralConfig() {
 async function saveReferralConfig(fields) {
     await db.collection('settings').doc('referral').set(Object.assign({}, fields, { updatedAt: FieldValue.serverTimestamp() }), { merge: true });
 }
-// ---- On-screen referral debug banner -------------------------------------------------
-// Shows the EXACT reason a referral step failed or was skipped, right on the page, so you
-// don't need to open DevTools. Red = a real error (e.g. Firestore permission-denied). Amber =
-// the code intentionally skipped the step (e.g. no code found, self-referral, program disabled)
-// so you can tell "it broke" apart from "it correctly decided there was nothing to do."
-// Remove this whole block (and its two call-sites below) once referrals are confirmed working.
+// ---- Referral debug logger (console only — nothing shown on screen to users) ----------
+// Logs the exact reason a referral step failed or was skipped. Open your browser's DevTools
+// console (F12) and filter for "[referral]" if you ever need to diagnose this again.
 function showReferralDebug(msg, isError) {
-    try {
-        console[isError ? 'error' : 'warn']('[referral]', msg);
-        let box = document.getElementById('__referralDebugBox');
-        if (!box) {
-            box = document.createElement('div');
-            box.id = '__referralDebugBox';
-            box.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:2147483647;' +
-                'max-height:45vh;overflow:auto;font:12px/1.4 monospace;padding:10px 12px 14px;' +
-                'background:#111827;border-top:3px solid #ef4444;box-shadow:0 -4px 16px rgba(0,0,0,.4);';
-            const head = document.createElement('div');
-            head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;';
-            head.innerHTML = '<strong style="color:#fca5a5;">REFERRAL DEBUG LOG</strong>';
-            const closeBtn = document.createElement('button');
-            closeBtn.textContent = 'Close';
-            closeBtn.style.cssText = 'background:#374151;color:#fff;border:0;border-radius:6px;padding:3px 10px;font:11px monospace;cursor:pointer;';
-            closeBtn.onclick = () => box.remove();
-            head.appendChild(closeBtn);
-            box.appendChild(head);
-            const list = document.createElement('div');
-            list.id = '__referralDebugList';
-            box.appendChild(list);
-            document.body.appendChild(box);
-        }
-        const list = document.getElementById('__referralDebugList');
-        const line = document.createElement('div');
-        line.style.cssText = 'padding:6px 0;border-top:1px solid #1f2937;color:' + (isError ? '#fca5a5' : '#fcd34d') + ';white-space:pre-wrap;';
-        line.textContent = new Date().toLocaleTimeString() + '  ' + msg;
-        list.prepend(line);
-    } catch (e) { /* debug banner must never itself break the app */ }
+    try { console[isError ? 'error' : 'warn']('[referral]', msg); } catch (e) { /* never break the app */ }
 }
 // Called right after a brand-new account is created (email/password or Google). Reads whatever
 // referral code was captured into localStorage, resolves it to a referrer, and — as long as it's
