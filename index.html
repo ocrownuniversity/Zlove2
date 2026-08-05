@@ -4274,7 +4274,7 @@ function ReactionsListModal({ reactions, onClose, go }) {
                 React.createElement("span", { className: "text-sm font-semibold truncate" }, u ? (u.displayName || u.username) : 'Loading\u2026'));
         }));
 }
-function PostCard({ post, go, groupCtx, autoOpenComments, sponsored }) {
+function PostCard({ post, go, groupCtx, autoOpenComments, sponsored, repeated }) {
     var _a;
     const { profile } = useAuth();
     const toast = useToast();
@@ -4450,6 +4450,7 @@ function PostCard({ post, go, groupCtx, autoOpenComments, sponsored }) {
                         isOfficial && React.createElement("i", { className: "fa-solid fa-badge-check text-sky-500 text-sm", title: "Verified" }),
                         post.pageId && (isOfficial ? React.createElement("span", { className: "text-[10px] font-extrabold uppercase tracking-wider text-white bg-gradient-to-r from-sky-500 via-brand-600 to-emerald-500 px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm" }, React.createElement("i", { className: "fa-solid fa-shield-halved text-[9px]" }), "Official") : React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-brand-600 bg-brand-50 dark:bg-brand-900/30 dark:text-brand-400 px-1.5 py-0.5 rounded" }, "Page")),
                         sponsored && React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-amber-600 bg-amber-50 dark:bg-amber-900/30 dark:text-amber-400 px-1.5 py-0.5 rounded flex items-center gap-1" }, React.createElement("i", { className: "fa-solid fa-bullhorn" }), "Sponsored"),
+                        repeated && React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-sky-600 bg-sky-50 dark:bg-sky-900/30 dark:text-sky-400 px-1.5 py-0.5 rounded flex items-center gap-1", title: "Official posts are shown again for a few days so more people see them" }, React.createElement("i", { className: "fa-solid fa-arrow-rotate-right" }), "Recap"),
                         post.groupAnnouncement && React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-amber-600 bg-amber-50 dark:bg-amber-900/30 dark:text-amber-400 px-1.5 py-0.5 rounded flex items-center gap-1" }, React.createElement("i", { className: "fa-solid fa-bullhorn" }), "Announcement")),
                     React.createElement("p", { className: "text-sm text-slate-400 flex items-center gap-1.5 flex-wrap" },
                         "@", author.username,
@@ -5001,6 +5002,29 @@ function usePromotedListings() {
     }, []);
     return rows;
 }
+// Official "Post as Lokiface" posts (see AdminPostAsLokifaceForm / LOKIFACE_OFFICIAL_PAGE_ID) get
+// woven back into everyone's home timeline on a repeating rotation for OFFICIAL_POST_REPEAT_DAYS
+// after they're published — the same "keeps reappearing as you scroll" mechanism the sponsored
+// marketplace slots already use (see sponsoredPool in HomeFeed) — instead of showing once and
+// disappearing, so official announcements actually get seen. Filtering by pageId only (no
+// orderBy) deliberately avoids needing a Firestore composite index; the 3-day cutoff and sort
+// happen client-side, same pattern as the reels/posts snapshots elsewhere in this file.
+const OFFICIAL_POST_REPEAT_DAYS = 3;
+function useRecentOfficialPosts() {
+    const [rows, setRows] = useState([]);
+    useEffect(() => {
+        const unsub = db.collection('posts').where('pageId', '==', LOKIFACE_OFFICIAL_PAGE_ID).limit(20)
+            .onSnapshot(snap => {
+                const cutoff = Date.now() - OFFICIAL_POST_REPEAT_DAYS * 24 * 60 * 60 * 1000;
+                const list = snap.docs.map(d => Object.assign({ id: d.id }, d.data()))
+                    .filter(p => !p.hiddenByAdmin && millisOf(p.createdAt) >= cutoff)
+                    .sort((a, b) => millisOf(b.createdAt) - millisOf(a.createdAt));
+                setRows(list);
+            }, () => setRows([]));
+        return unsub;
+    }, []);
+    return rows;
+}
 /* Renders one marketplace listing inline in the home timeline, styled to match a normal post
    card (author row, image, caption) so it reads as part of the feed rather than a separate
    widget — with a WhatsApp button and a direct in-app Message button to the seller, plus a
@@ -5081,6 +5105,7 @@ function HomeFeed({ go }) {
     const activeCampaigns = useActiveAdCampaigns();
     const listings = useRecentTimelineListings();
     const promotedListings = usePromotedListings();
+    const officialRepeats = useRecentOfficialPosts();
     useEffect(() => {
         // Group posts are deliberately excluded from the global timeline — they only ever show
         // inside that group's own Posts tab. Besides matching how Groups behave on Facebook,
@@ -5126,6 +5151,7 @@ function HomeFeed({ go }) {
         const sponsoredPool = [
             ...activeCampaigns.map(c => ({ kind: 'ad', data: c })),
             ...(promotedListings || []).map(l => ({ kind: 'promotedListing', data: l })),
+            ...officialRepeats.map(p => ({ kind: 'officialRepeat', data: p })),
         ];
         if (sponsoredPool.length === 0)
             return merged;
@@ -5140,7 +5166,7 @@ function HomeFeed({ go }) {
             }
         });
         return withAds;
-    }, [posts, reels, listings, activeCampaigns, promotedListings]);
+    }, [posts, reels, listings, activeCampaigns, promotedListings, officialRepeats]);
     return (React.createElement("div", null,
         React.createElement(PostTriggerBar, { go: go }),
         React.createElement(ReelsStrip, { go: go }),
@@ -5158,9 +5184,11 @@ function HomeFeed({ go }) {
                     ? React.createElement(AdSlot, { key: it.slotKey, campaign: it.data, go: go })
                     : it.kind === 'promotedListing'
                         ? React.createElement(ListingFeedCard, { key: it.slotKey, listing: it.data, go: go, promoted: true })
-                        : it.kind === 'listing'
-                            ? React.createElement(ListingFeedCard, { key: 'l-' + it.data.id, listing: it.data, go: go })
-                            : React.createElement(TimelineReelCard, { key: 'r-' + it.data.id, reel: it.data, go: go });
+                        : it.kind === 'officialRepeat'
+                            ? React.createElement(PostCard, { key: it.slotKey, post: it.data, go: go, repeated: true })
+                            : it.kind === 'listing'
+                                ? React.createElement(ListingFeedCard, { key: 'l-' + it.data.id, listing: it.data, go: go })
+                                : React.createElement(TimelineReelCard, { key: 'r-' + it.data.id, reel: it.data, go: go });
             return React.createElement(React.Fragment, null,
                 items.slice(0, cutoff).map(renderItem),
                 React.createElement(PeopleYouMayKnow, { go: go }),
@@ -5303,7 +5331,7 @@ const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your p
     page_name_change_rejected: 'Your Page name change request was rejected',
     referral_reward: 'You earned a referral reward', referral_withdrawal_submitted: 'Your referral withdrawal request was submitted',
     referral_withdrawal_approved: 'Your referral withdrawal was approved and sent to your Zmonie account', referral_withdrawal_rejected: 'Your referral withdrawal request was rejected' };
-const SYSTEM_NOTIF_TYPES = ['listing_approved', 'listing_removed', 'ad_approved', 'ad_declined', 'group_request_approved', 'group_request_rejected',
+const SYSTEM_NOTIF_TYPES = ['announcement', 'listing_approved', 'listing_removed', 'ad_approved', 'ad_declined', 'group_request_approved', 'group_request_rejected',
     'kyc_approved', 'kyc_rejected', 'followers_milestone', 'monetization_eligible', 'monetization_approved', 'monetization_rejected', 'monetization_suspended',
     'earnings_updated', 'withdrawal_approved', 'withdrawal_rejected', 'withdrawal_paid',
     'page_name_change_submitted', 'page_name_change_approved', 'page_name_change_rejected',
@@ -5339,6 +5367,8 @@ function NotifRow({ n, go }) {
     if (!isSystem && !from)
         return null;
     const openNotif = () => {
+        if (n.type === 'announcement')
+            return; // no deep link — the full title/message is already shown inline below
         if (n.type === 'message')
             return go({ name: 'chat', chatId: chatIdFor(profile.id, n.fromUserId), otherUid: n.fromUserId });
         if (n.type === 'dating_invite')
@@ -5364,11 +5394,15 @@ function NotifRow({ n, go }) {
         go({ name: 'profile', uid: n.fromUserId });
     };
     return (React.createElement("div", { onClick: openNotif, className: "flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700 cursor-pointer" },
-        isSystem ? React.createElement("div", { className: "w-9 h-9 rounded-full bg-brand-50 dark:bg-brand-900/30 flex items-center justify-center text-brand-600 dark:text-brand-400 shrink-0" }, React.createElement("i", { className: "fa-solid " + (n.groupId ? 'fa-people-group' : PAGE_NAME_CHANGE_NOTIF_TYPES.includes(n.type) ? 'fa-signature' : (MONETIZATION_NOTIF_TYPES.includes(n.type) || WITHDRAWAL_NOTIF_TYPES.includes(n.type) || REFERRAL_NOTIF_TYPES.includes(n.type)) ? 'fa-sack-dollar' : 'fa-store') })) : React.createElement(Avatar, { user: from, size: 9 }),
+        isSystem ? React.createElement("div", { className: "w-9 h-9 rounded-full bg-brand-50 dark:bg-brand-900/30 flex items-center justify-center text-brand-600 dark:text-brand-400 shrink-0" }, React.createElement("i", { className: "fa-solid " + (n.type === 'announcement' ? 'fa-bullhorn' : n.groupId ? 'fa-people-group' : PAGE_NAME_CHANGE_NOTIF_TYPES.includes(n.type) ? 'fa-signature' : (MONETIZATION_NOTIF_TYPES.includes(n.type) || WITHDRAWAL_NOTIF_TYPES.includes(n.type) || REFERRAL_NOTIF_TYPES.includes(n.type)) ? 'fa-sack-dollar' : 'fa-store') })) : React.createElement(Avatar, { user: from, size: 9 }),
         React.createElement("p", { className: "text-sm" },
-            !isSystem && React.createElement("span", { className: "font-semibold" }, from.displayName),
-            !isSystem && " ",
-            NOTIF_TEXT[n.type] || 'interacted with you',
+            n.type === 'announcement' ? React.createElement("span", { className: "font-semibold" }, n.title) : null,
+            n.type === 'announcement' && n.title ? " " : null,
+            n.type === 'announcement' ? n.message : [
+                !isSystem && React.createElement("span", { key: 'name', className: "font-semibold" }, from.displayName),
+                !isSystem && " ",
+                NOTIF_TEXT[n.type] || 'interacted with you'
+            ],
             (n.type === 'earnings_updated' || WITHDRAWAL_NOTIF_TYPES.includes(n.type) || REFERRAL_NOTIF_TYPES.includes(n.type)) && typeof n.amount === 'number' ? (' (\u20A6' + Math.abs(n.amount).toLocaleString() + ')') : '',
             " ",
             React.createElement("span", { className: "text-slate-400" },
