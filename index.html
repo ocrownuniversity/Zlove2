@@ -2989,370 +2989,6 @@ function ToastProvider({ children }) {
                 (t.type === 'error' ? 'bg-red-500' : t.type === 'success' ? 'bg-emerald-500' : 'bg-ink-800') }, t.message))))));
 }
 /* ============================== APP ROOT ============================== */
-/* ============================== VOICE & VIDEO CALLING ==============================
-   Peer-to-peer WebRTC calls, signaled entirely through Firestore — no server or Cloud
-   Function required, since only Firestore + Auth + Storage are available here.
-
-   Firestore layout used (new, does not touch any existing collection):
-     calls/{callId}                — one doc per call attempt
-       callerId, calleeId, callerName, callerPhoto, calleeName, calleePhoto,
-       type ('voice'|'video'), status ('ringing'|'accepted'|'rejected'|'busy'|'missed'|'ended'),
-       offer{type,sdp}, answer{type,sdp}, createdAt, updatedAt
-     calls/{callId}/candidates/{auto} — ICE candidates, { from: uid, candidate }
-
-   Add these Security Rules (Firestore console → Rules) so only the two participants on
-   a call can read/write it:
-
-     match /calls/{callId} {
-       allow create: if request.auth != null && request.auth.uid == request.resource.data.callerId;
-       allow read: if request.auth != null &&
-         (request.auth.uid == resource.data.callerId || request.auth.uid == resource.data.calleeId);
-       allow update: if request.auth != null &&
-         (request.auth.uid == resource.data.callerId || request.auth.uid == resource.data.calleeId);
-       match /candidates/{candidateId} {
-         allow read, create: if request.auth != null;
-       }
-     }
-
-   Optional cleanup: Firestore supports a free TTL policy (Console → Firestore →
-   TTL) on the `updatedAt` field of `calls` so old call docs auto-delete after a day —
-   no Cloud Function needed.
-
-   NAT traversal: Google's free public STUN servers, plus the free OpenRelay TURN
-   servers (openrelay.metered.ca) as a fallback for callers behind strict NATs/firewalls
-   where a direct peer-to-peer connection can't be established. OpenRelay's free tier is
-   shared publicly and rate-limited — fine to get started, but swap in your own TURN
-   credentials below (e.g. a free Metered.ca or Cloudflare Calls account) if calls start
-   failing to connect under real traffic. */
-const ICE_SERVERS = {
-    iceServers: [
-        { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] },
-        { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-        { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-        { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
-    ]
-};
-const RING_TIMEOUT_MS = 45000;
-// Tiny module-level store (outside React) so any component can trigger/observe the
-// active call without needing a Context Provider wrapped around the whole app.
-const callStore = (function () {
-    let state = { call: null };
-    let listeners = [];
-    return {
-        get: () => state,
-        set: (patch) => { state = Object.assign({}, state, typeof patch === 'function' ? patch(state) : patch); listeners.forEach(l => l(state)); },
-        subscribe: (fn) => { listeners.push(fn); return () => { listeners = listeners.filter(l => l !== fn); }; }
-    };
-})();
-function useCallState() {
-    const [s, setS] = useState(callStore.get());
-    useEffect(() => callStore.subscribe(setS), []);
-    return s;
-}
-function makeRingtone(freq) {
-    let ctx = null, interval = null;
-    return {
-        start() {
-            try {
-                ctx = new (window.AudioContext || window.webkitAudioContext)();
-                const beep = () => {
-                    if (!ctx) return;
-                    const osc = ctx.createOscillator(), gain = ctx.createGain();
-                    osc.type = 'sine'; osc.frequency.value = freq || 440;
-                    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-                    gain.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.05);
-                    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.85);
-                    osc.connect(gain); gain.connect(ctx.destination);
-                    osc.start(); osc.stop(ctx.currentTime + 0.9);
-                };
-                beep();
-                interval = setInterval(beep, 1600);
-            } catch (e) { /* Web Audio unsupported/blocked — call still works, just silent */ }
-        },
-        stop() {
-            clearInterval(interval); interval = null;
-            if (ctx) { try { ctx.close(); } catch (e) { } ctx = null; }
-        }
-    };
-}
-let __ringtone = null;
-let __session = null; // { pc, localStream, callId, role, otherUid, callDocUnsub, candidatesUnsub, ringTimeout }
-function __teardownSession() {
-    if (__ringtone) { __ringtone.stop(); __ringtone = null; }
-    if (!__session) return;
-    const s = __session;
-    __session = null;
-    if (s.ringTimeout) clearTimeout(s.ringTimeout);
-    if (s.callDocUnsub) s.callDocUnsub();
-    if (s.candidatesUnsub) s.candidatesUnsub();
-    try { s.pc && s.pc.close(); } catch (e) { }
-    try { (s.localStream ? s.localStream.getTracks() : []).forEach(t => t.stop()); } catch (e) { }
-}
-function endActiveCall(reason) {
-    const s = __session;
-    if (s && s.callId) {
-        db.collection('calls').doc(s.callId).update({ status: reason || 'ended', updatedAt: FieldValue.serverTimestamp() }).catch(() => { });
-    }
-    __teardownSession();
-    callStore.set({ call: null });
-}
-function declineIncomingCall(callId) {
-    if (__ringtone) { __ringtone.stop(); __ringtone = null; }
-    const current = callStore.get().call;
-    if (current && current.incomingUnsub) current.incomingUnsub();
-    db.collection('calls').doc(callId).update({ status: 'rejected', updatedAt: FieldValue.serverTimestamp() }).catch(() => { });
-    callStore.set({ call: null });
-}
-function attachRemoteTrackHandlers(pc) {
-    const remoteStream = new MediaStream();
-    pc.ontrack = (e) => {
-        (e.streams[0] ? e.streams[0].getTracks() : [e.track]).forEach(t => { if (!remoteStream.getTracks().includes(t)) remoteStream.addTrack(t); });
-        callStore.set(s => ({ call: s.call ? Object.assign({}, s.call, { remoteStream }) : s.call }));
-    };
-    return remoteStream;
-}
-function watchConnectionState(pc) {
-    pc.onconnectionstatechange = () => {
-        const st = pc.connectionState;
-        if (st === 'connected') {
-            callStore.set(s => (s.call && s.call.status !== 'connected') ? { call: Object.assign({}, s.call, { status: 'connected', connectedAt: Date.now() }) } : s);
-        } else if (st === 'failed' || st === 'closed') {
-            if (__session) endActiveCall('ended');
-        }
-    };
-}
-async function startOutgoingCall(profile, otherUid, otherUser, type) {
-    if (__session || callStore.get().call) throw new Error('You are already on a call.');
-    if (!otherUid || otherUid === profile.id) throw new Error('Invalid call target.');
-    let localStream;
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: type === 'video' ? { facingMode: 'user' } : false });
-    } catch (e) {
-        throw new Error('Could not access your ' + (type === 'video' ? 'camera/microphone' : 'microphone') + '. Please allow permission and try again.');
-    }
-    const pc = new RTCPeerConnection(ICE_SERVERS);
-    localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-    const remoteStream = attachRemoteTrackHandlers(pc);
-    watchConnectionState(pc);
-    const callRef = db.collection('calls').doc();
-    pc.onicecandidate = (e) => { if (e.candidate) callRef.collection('candidates').add({ from: profile.id, candidate: e.candidate.toJSON(), createdAt: FieldValue.serverTimestamp() }).catch(() => { }); };
-    const otherPhoto = otherUser.photoURL || (otherUser.photos && otherUser.photos[0]) || null;
-    __session = { pc, localStream, callId: callRef.id, role: 'caller', otherUid };
-    callStore.set({
-        call: { id: callRef.id, role: 'caller', type, status: 'ringing', peer: { id: otherUid, name: otherUser.displayName, photo: otherPhoto }, localStream, remoteStream, muted: false, cameraOff: false }
-    });
-    try {
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        await callRef.set({
-            callerId: profile.id, calleeId: otherUid,
-            callerName: profile.displayName || 'Someone', callerPhoto: profile.photoURL || null,
-            calleeName: otherUser.displayName || '', calleePhoto: otherPhoto,
-            type, status: 'ringing', offer: { type: offer.type, sdp: offer.sdp }, answer: null,
-            createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp()
-        });
-    } catch (e) {
-        __teardownSession(); callStore.set({ call: null });
-        throw new Error('Could not start the call: ' + e.message);
-    }
-    __ringtone = makeRingtone(480);
-    __ringtone.start();
-    __session.candidatesUnsub = callRef.collection('candidates').where('from', '==', otherUid).onSnapshot(snap => {
-        snap.docChanges().forEach(ch => { if (ch.type === 'added') { const d = ch.doc.data(); pc.addIceCandidate(new RTCIceCandidate(d.candidate)).catch(() => { }); } });
-    });
-    __session.callDocUnsub = callRef.onSnapshot(async (snap) => {
-        if (!snap.exists || !__session || __session.callId !== callRef.id) return;
-        const data = snap.data();
-        if (data.status === 'accepted' && data.answer && !pc.currentRemoteDescription) {
-            if (__ringtone) { __ringtone.stop(); __ringtone = null; }
-            if (__session.ringTimeout) clearTimeout(__session.ringTimeout);
-            try { await pc.setRemoteDescription(new RTCSessionDescription(data.answer)); } catch (e) { }
-            callStore.set(s => ({ call: s.call ? Object.assign({}, s.call, { status: 'connecting' }) : s.call }));
-        } else if (data.status === 'rejected' || data.status === 'busy' || data.status === 'ended' || data.status === 'missed') {
-            callStore.set({ call: null }); __teardownSession();
-        }
-    });
-    __session.ringTimeout = setTimeout(() => {
-        if (__session && __session.callId === callRef.id) {
-            callRef.update({ status: 'missed', updatedAt: FieldValue.serverTimestamp() }).catch(() => { });
-            callStore.set({ call: null }); __teardownSession();
-        }
-    }, RING_TIMEOUT_MS);
-}
-function listenForIncomingCalls(profile) {
-    return db.collection('calls').where('calleeId', '==', profile.id).where('status', '==', 'ringing')
-        .onSnapshot(snap => {
-            snap.docChanges().forEach(ch => {
-                if (ch.type !== 'added') return;
-                const data = ch.doc.data();
-                const ageMs = data.createdAt && data.createdAt.toDate ? (Date.now() - data.createdAt.toDate().getTime()) : 0;
-                if (ageMs > RING_TIMEOUT_MS) return; // stale ringing doc left over from a previous session
-                if (__session || callStore.get().call) { // already on/showing a call — auto-decline as busy
-                    db.collection('calls').doc(ch.doc.id).update({ status: 'busy', updatedAt: FieldValue.serverTimestamp() }).catch(() => { });
-                    return;
-                }
-                __ringtone = makeRingtone(392);
-                __ringtone.start();
-                const incomingUnsub = db.collection('calls').doc(ch.doc.id).onSnapshot(s2 => {
-                    if (!s2.exists) return;
-                    const d2 = s2.data();
-                    const cur = callStore.get().call;
-                    if (d2.status !== 'ringing' && cur && cur.id === ch.doc.id && cur.status === 'ringing-incoming') {
-                        if (__ringtone) { __ringtone.stop(); __ringtone = null; }
-                        callStore.set({ call: null });
-                    }
-                });
-                callStore.set({ call: { id: ch.doc.id, role: 'callee', status: 'ringing-incoming', type: data.type, peer: { id: data.callerId, name: data.callerName, photo: data.callerPhoto }, incomingUnsub } });
-            });
-        }, () => { });
-}
-async function acceptIncomingCall(profile) {
-    const current = callStore.get().call;
-    if (!current || current.role !== 'callee') return;
-    const callId = current.id;
-    if (__ringtone) { __ringtone.stop(); __ringtone = null; }
-    if (current.incomingUnsub) current.incomingUnsub();
-    const callRef = db.collection('calls').doc(callId);
-    const snap = await callRef.get();
-    if (!snap.exists || snap.data().status !== 'ringing') { callStore.set({ call: null }); throw new Error('This call is no longer available.'); }
-    const data = snap.data();
-    let localStream;
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: data.type === 'video' ? { facingMode: 'user' } : false });
-    } catch (e) {
-        await callRef.update({ status: 'rejected', updatedAt: FieldValue.serverTimestamp() });
-        callStore.set({ call: null });
-        throw new Error('Could not access your ' + (data.type === 'video' ? 'camera/microphone' : 'microphone') + '. Please allow permission and try again.');
-    }
-    const pc = new RTCPeerConnection(ICE_SERVERS);
-    localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-    const remoteStream = attachRemoteTrackHandlers(pc);
-    watchConnectionState(pc);
-    pc.onicecandidate = (e) => { if (e.candidate) callRef.collection('candidates').add({ from: profile.id, candidate: e.candidate.toJSON(), createdAt: FieldValue.serverTimestamp() }).catch(() => { }); };
-    __session = { pc, localStream, callId, role: 'callee', otherUid: data.callerId };
-    callStore.set({ call: { id: callId, role: 'callee', type: data.type, status: 'connecting', peer: { id: data.callerId, name: data.callerName, photo: data.callerPhoto }, localStream, remoteStream, muted: false, cameraOff: false } });
-    try {
-        await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        await callRef.update({ answer: { type: answer.type, sdp: answer.sdp }, status: 'accepted', updatedAt: FieldValue.serverTimestamp() });
-    } catch (e) {
-        __teardownSession(); callStore.set({ call: null });
-        throw new Error('Could not connect the call: ' + e.message);
-    }
-    __session.candidatesUnsub = callRef.collection('candidates').where('from', '==', data.callerId).onSnapshot(snap2 => {
-        snap2.docChanges().forEach(ch => { if (ch.type === 'added') { const d = ch.doc.data(); pc.addIceCandidate(new RTCIceCandidate(d.candidate)).catch(() => { }); } });
-    });
-    __session.callDocUnsub = callRef.onSnapshot(s3 => {
-        if (!s3.exists || !__session) return;
-        if (s3.data().status === 'ended') { callStore.set({ call: null }); __teardownSession(); }
-    });
-}
-function toggleCallMute() {
-    if (!__session) return;
-    const track = __session.localStream.getAudioTracks()[0];
-    if (!track) return;
-    track.enabled = !track.enabled;
-    callStore.set(s => ({ call: s.call ? Object.assign({}, s.call, { muted: !track.enabled }) : s.call }));
-}
-function toggleCallCamera() {
-    if (!__session) return;
-    const track = __session.localStream.getVideoTracks()[0];
-    if (!track) return;
-    track.enabled = !track.enabled;
-    callStore.set(s => ({ call: s.call ? Object.assign({}, s.call, { cameraOff: !track.enabled }) : s.call }));
-}
-async function switchCallCamera() {
-    if (!__session) return;
-    const current = __session.localStream.getVideoTracks()[0];
-    if (!current) return;
-    const facing = (current.getSettings().facingMode === 'environment') ? 'user' : 'environment';
-    try {
-        const newStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: false });
-        const newTrack = newStream.getVideoTracks()[0];
-        const sender = __session.pc.getSenders().find(s => s.track && s.track.kind === 'video');
-        if (sender) await sender.replaceTrack(newTrack);
-        current.stop();
-        __session.localStream.removeTrack(current);
-        __session.localStream.addTrack(newTrack);
-        callStore.set(s => ({ call: s.call ? Object.assign({}, s.call) : s.call })); // same object refs, just nudge a re-render
-    } catch (e) { /* device likely only has one camera — ignore */ }
-}
-function CallTimer({ connectedAt }) {
-    const [now, setNow] = useState(Date.now());
-    useEffect(() => { const i = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(i); }, []);
-    if (!connectedAt) return null;
-    const secs = Math.max(0, Math.floor((now - connectedAt) / 1000));
-    return React.createElement("span", null, String(Math.floor(secs / 60)).padStart(2, '0') + ':' + String(secs % 60).padStart(2, '0'));
-}
-function CallAvatarPhoto({ peer, size }) {
-    const src = peer.photo || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(peer.name || '?')}&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`;
-    return React.createElement("img", { src: src, className: "rounded-full object-cover bg-slate-700", style: { width: size, height: size } });
-}
-function IncomingCallModal({ call }) {
-    const toast = useToast();
-    const [busy, setBusy] = useState(false);
-    const { profile } = useAuth();
-    const accept = async () => { setBusy(true); try { await acceptIncomingCall(profile); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); } };
-    const decline = () => declineIncomingCall(call.id);
-    return React.createElement("div", { className: "fixed inset-0 z-[200] bg-ink-900/98 flex flex-col items-center justify-center text-white px-6" },
-        React.createElement("div", { className: "absolute inset-0 flex items-center justify-center" },
-            React.createElement("div", { className: "w-56 h-56 rounded-full bg-brand-500/10 animate-ping absolute" })),
-        React.createElement("div", { className: "relative z-10 flex flex-col items-center" },
-            React.createElement(CallAvatarPhoto, { peer: call.peer, size: 112 }),
-            React.createElement("p", { className: "mt-5 font-display text-xl font-bold" }, call.peer.name || 'Someone'),
-            React.createElement("p", { className: "mt-1 text-sm text-slate-300" }, "Incoming ", call.type === 'video' ? 'video call' : 'voice call', "\u2026"),
-            React.createElement("div", { className: "flex items-center gap-10 mt-12" },
-                React.createElement("button", { onClick: decline, disabled: busy, className: "w-16 h-16 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center shadow-lg disabled:opacity-60" },
-                    React.createElement("i", { className: "fa-solid fa-phone-slash text-xl" })),
-                React.createElement("button", { onClick: accept, disabled: busy, className: "w-16 h-16 rounded-full bg-emerald-500 hover:bg-emerald-600 flex items-center justify-center shadow-lg disabled:opacity-60" },
-                    React.createElement("i", { className: (call.type === 'video' ? "fa-solid fa-video" : "fa-solid fa-phone") + " text-xl" })))));
-}
-function CallScreen({ call }) {
-    const localVideoRef = useRef(null);
-    const remoteVideoRef = useRef(null);
-    const remoteAudioRef = useRef(null);
-    useEffect(() => { if (localVideoRef.current) localVideoRef.current.srcObject = call.localStream || null; }, [call.localStream]);
-    useEffect(() => { if (remoteVideoRef.current) remoteVideoRef.current.srcObject = call.remoteStream || null; }, [call.remoteStream, call.type]);
-    useEffect(() => { if (remoteAudioRef.current) remoteAudioRef.current.srcObject = call.remoteStream || null; }, [call.remoteStream, call.type]);
-    const isVideo = call.type === 'video';
-    const statusLabel = call.status === 'connected' ? React.createElement(CallTimer, { connectedAt: call.connectedAt })
-        : call.status === 'connecting' ? 'Connecting\u2026'
-            : call.role === 'caller' ? 'Ringing\u2026' : 'Connecting\u2026';
-    return React.createElement("div", { className: "fixed inset-0 z-[200] bg-ink-900 text-white flex flex-col" },
-        isVideo && React.createElement("video", { ref: remoteVideoRef, autoPlay: true, playsInline: true, className: "absolute inset-0 w-full h-full object-cover bg-ink-900" }),
-        !isVideo && React.createElement("audio", { ref: remoteAudioRef, autoPlay: true }),
-        (!isVideo || call.status !== 'connected') && React.createElement("div", { className: "absolute inset-0 flex flex-col items-center justify-center" + (isVideo ? " bg-ink-900/60" : "") },
-            React.createElement(CallAvatarPhoto, { peer: call.peer, size: 128 }),
-            React.createElement("p", { className: "mt-5 font-display text-xl font-bold" }, call.peer.name || 'Someone'),
-            React.createElement("p", { className: "mt-1 text-sm text-slate-300" }, statusLabel)),
-        isVideo && call.status === 'connected' && React.createElement("p", { className: "absolute top-6 left-0 right-0 text-center text-sm font-semibold text-white drop-shadow" }, call.peer.name, " \u00B7 ", statusLabel),
-        isVideo && !call.cameraOff && React.createElement("video", { ref: localVideoRef, autoPlay: true, playsInline: true, muted: true, className: "absolute bottom-28 right-4 w-28 h-40 rounded-2xl object-cover border-2 border-white/20 shadow-lg bg-ink-800" }),
-        React.createElement("div", { className: "relative z-10 mt-auto pb-10 pt-6 flex items-center justify-center gap-5" },
-            React.createElement("button", { onClick: toggleCallMute, className: "w-14 h-14 rounded-full flex items-center justify-center " + (call.muted ? "bg-white text-ink-900" : "bg-white/15 hover:bg-white/25") },
-                React.createElement("i", { className: "fa-solid " + (call.muted ? "fa-microphone-slash" : "fa-microphone") })),
-            isVideo && React.createElement("button", { onClick: toggleCallCamera, className: "w-14 h-14 rounded-full flex items-center justify-center " + (call.cameraOff ? "bg-white text-ink-900" : "bg-white/15 hover:bg-white/25") },
-                React.createElement("i", { className: "fa-solid " + (call.cameraOff ? "fa-video-slash" : "fa-video") })),
-            isVideo && React.createElement("button", { onClick: switchCallCamera, className: "w-14 h-14 rounded-full flex items-center justify-center bg-white/15 hover:bg-white/25" },
-                React.createElement("i", { className: "fa-solid fa-camera-rotate" })),
-            React.createElement("button", { onClick: () => endActiveCall('ended'), className: "w-16 h-16 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center shadow-lg" },
-                React.createElement("i", { className: "fa-solid fa-phone-slash text-xl" }))));
-}
-// Mounted once inside MainApp — listens for incoming calls addressed to the signed-in
-// user and renders the incoming-call / in-call full-screen overlays on top of everything.
-function CallOverlayHost() {
-    const { profile } = useAuth();
-    const { call } = useCallState();
-    useEffect(() => {
-        if (!(profile && profile.id)) return;
-        const unsub = listenForIncomingCalls(profile);
-        return () => { unsub && unsub(); if (__session) endActiveCall('ended'); };
-    }, [profile && profile.id]);
-    if (!call) return null;
-    if (call.role === 'callee' && call.status === 'ringing-incoming') return React.createElement(IncomingCallModal, { call: call });
-    return React.createElement(CallScreen, { call: call });
-}
-
 function App() {
     const [firebaseUser, setFirebaseUser] = useState(undefined); // undefined = loading
     const [profile, setProfile] = useState(null);
@@ -3788,7 +3424,6 @@ function MainApp({ route, setRoute }) {
     // through visible navigation, per the "not discoverable by regular users" requirement.
     const go = (r) => { setRoute(r); };
     return (React.createElement("div", { className: "min-h-screen flex" },
-        React.createElement(CallOverlayHost, null),
         React.createElement("aside", { className: "hidden md:flex flex-col w-64 shrink-0 border-r border-slate-100 dark:border-ink-800 px-4 py-6 sticky top-0 h-screen" },
             React.createElement("div", { className: "flex items-center gap-2 px-2 mb-8 text-brand-600 dark:text-brand-400" },
                 React.createElement("span", { className: "font-display font-extrabold text-3xl" }, "Lokiface")),
@@ -3844,10 +3479,6 @@ function MainApp({ route, setRoute }) {
                 route.name === 'bookmarks' && React.createElement(BookmarksScreen, { go: go }),
                 route.name === 'memories' && React.createElement(MemoriesScreen, { go: go }),
                 route.name === 'birthdays' && React.createElement(BirthdaysScreen, { go: go }),
-                route.name === 'dashboard' && React.createElement(DashboardScreen, { go: go }),
-                route.name === 'events' && React.createElement(EventsScreen, { go: go }),
-                route.name === 'eventForm' && React.createElement(EventFormScreen, { go: go }),
-                route.name === 'feeds' && React.createElement(FeedsScreen, { go: go }),
                 route.name === 'wallet' && React.createElement(WalletScreen, { go: go }),
                 route.name === 'referrals' && React.createElement(ReferralScreen, { go: go }),
                 route.name === 'adCentre' && React.createElement(AdCentreScreen, { go: go }),
@@ -3873,7 +3504,7 @@ function MainApp({ route, setRoute }) {
 // Tiles with route: null are not implemented yet, so tapping them just shows a "Coming soon" toast
 // instead of pretending the feature exists.
 const MENU_TILES = [
-    { key: 'dashboard', label: 'Dashboard', icon: 'fa-chart-simple', route: { name: 'dashboard' } },
+    { key: 'dashboard', label: 'Dashboard', icon: 'fa-chart-simple', route: null },
     { key: 'messages', label: 'Messages', icon: 'fa-comment-dots', route: { name: 'messages' } },
     { key: 'groups', label: 'Groups', icon: 'fa-people-group', route: { name: 'groups' } },
     { key: 'friends', label: 'Friends', icon: 'fa-user-group', route: { name: 'search' } },
@@ -3885,11 +3516,11 @@ const MENU_TILES = [
     { key: 'saved', label: 'Saved', icon: 'fa-bookmark', route: { name: 'bookmarks' } },
     { key: 'memories', label: 'Memories', icon: 'fa-clock-rotate-left', route: { name: 'memories' } },
     { key: 'birthdays', label: 'Birthdays', icon: 'fa-gift', route: { name: 'birthdays' } },
-    { key: 'events', label: 'Events', icon: 'fa-calendar-days', route: { name: 'events' } },
+    { key: 'events', label: 'Events', icon: 'fa-calendar-days', route: null },
     { key: 'adCentre', label: 'Ad Centre', icon: 'fa-bullhorn', route: { name: 'adCentre' } },
     { key: 'wallet', label: 'Wallet', icon: 'fa-wallet', route: { name: 'wallet' } },
     { key: 'referrals', label: 'Referrals', icon: 'fa-user-plus', route: { name: 'referrals' } },
-    { key: 'feeds', label: 'Feeds', icon: 'fa-table-cells-large', route: { name: 'feeds' } },
+    { key: 'feeds', label: 'Feeds', icon: 'fa-table-cells-large', route: null },
 ];
 const MENU_TILE_COLORS = {
     dashboard: 'bg-blue-100 text-blue-600', messages: 'bg-fuchsia-100 text-fuchsia-600',
@@ -6053,232 +5684,6 @@ function BirthdaysScreen({ go }) {
         upcoming.length > 0 && React.createElement("div", null,
             React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mb-2" }, "Upcoming"),
             React.createElement("div", { className: "space-y-2" }, upcoming.map(Row))));
-}
-/* ============================== DASHBOARD ============================== */
-function useOwnPostsCount(uid) {
-    const [count, setCount] = useState(null);
-    useEffect(() => {
-        if (!uid) return;
-        const unsub = db.collection('posts').where('authorId', '==', uid).limit(500)
-            .onSnapshot(snap => setCount(snap.docs.filter(d => !d.data().hiddenByAdmin).length), () => setCount(0));
-        return unsub;
-    }, [uid]);
-    return count;
-}
-function useReferralsCount(uid) {
-    const [count, setCount] = useState(null);
-    useEffect(() => {
-        if (!uid) return;
-        const unsub = db.collection('referrals').where('referrerId', '==', uid).limit(500)
-            .onSnapshot(snap => setCount(snap.docs.length), () => setCount(0));
-        return unsub;
-    }, [uid]);
-    return count;
-}
-function DashboardStatCard({ icon, color, label, value, onClick }) {
-    return React.createElement("button", { onClick: onClick, className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-4 text-left w-full" },
-        React.createElement("div", { className: "w-9 h-9 rounded-lg flex items-center justify-center mb-3 " + color },
-            React.createElement("i", { className: "fa-solid " + icon })),
-        React.createElement("p", { className: "text-xl font-extrabold leading-tight" }, value === null ? React.createElement("span", { className: "inline-block w-8 h-5 rounded skeleton" }) : value),
-        React.createElement("p", { className: "text-xs text-slate-400 mt-0.5" }, label));
-}
-function DashboardScreen({ go }) {
-    const { profile } = useAuth();
-    const friendships = useFriendships(profile.id);
-    const friendsCount = friendships === null ? null : friendships.filter(f => f.status === 'accepted').length;
-    const pendingCount = friendships === null ? null : friendships.filter(f => f.status === 'pending' && f.requestedBy !== profile.id).length;
-    const postsCount = useOwnPostsCount(profile.id);
-    const unreadMessages = useUnreadMessages(profile.id);
-    const unreadNotifications = useUnreadNotifications(profile.id);
-    const referralsCount = useReferralsCount(profile.id);
-    return React.createElement("div", null,
-        React.createElement("div", { className: "flex items-center gap-3 mb-4" },
-            React.createElement("button", { onClick: () => go({ name: 'menu' }) }, React.createElement("i", { className: "fa-solid fa-arrow-left" })),
-            React.createElement("h2", { className: "font-display text-lg font-bold" }, "Dashboard")),
-        React.createElement("div", { className: "flex items-center gap-3 bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3 mb-4" },
-            React.createElement(Avatar, { user: profile, size: 12 }),
-            React.createElement("div", { className: "flex-1 min-w-0" },
-                React.createElement("p", { className: "font-bold text-base truncate" }, profile.displayName || profile.username),
-                React.createElement("p", { className: "text-xs text-slate-400" }, "@", profile.username))),
-        React.createElement("div", { className: "grid grid-cols-2 gap-3 mb-3" },
-            React.createElement(DashboardStatCard, { icon: "fa-user-group", color: "bg-emerald-100 text-emerald-600", label: "Friends" + (pendingCount ? " \u00B7 " + pendingCount + " pending" : ""), value: friendsCount, onClick: () => go({ name: 'search' }) }),
-            React.createElement(DashboardStatCard, { icon: "fa-images", color: "bg-pink-100 text-pink-600", label: "Posts you've shared", value: postsCount, onClick: () => go({ name: 'profile', uid: profile.id }) }),
-            React.createElement(DashboardStatCard, { icon: "fa-comment-dots", color: "bg-fuchsia-100 text-fuchsia-600", label: "Unread messages", value: unreadMessages === undefined ? 0 : unreadMessages, onClick: () => go({ name: 'messages' }) }),
-            React.createElement(DashboardStatCard, { icon: "fa-bell", color: "bg-amber-100 text-amber-600", label: "Unread notifications", value: unreadNotifications === undefined ? 0 : unreadNotifications, onClick: () => go({ name: 'notifications' }) }),
-            React.createElement(DashboardStatCard, { icon: "fa-wallet", color: "bg-blue-100 text-blue-600", label: "Wallet balance", value: formatNaira(profile.walletBalance || 0), onClick: () => go({ name: 'wallet' }) }),
-            React.createElement(DashboardStatCard, { icon: "fa-user-plus", color: "bg-violet-100 text-violet-600", label: "People you've referred", value: referralsCount, onClick: () => go({ name: 'referrals' }) })),
-        React.createElement("div", { className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl divide-y divide-slate-100 dark:divide-ink-700 overflow-hidden" },
-            [
-                ['fa-flag', 'Your Pages', { name: 'myPages' }],
-                ['fa-people-group', 'Your Groups', { name: 'groups' }],
-                ['fa-store', 'Marketplace', { name: 'marketplace' }],
-                ['fa-bullhorn', 'Ad Centre', { name: 'adCentre' }],
-            ].map(([icon, label, route]) => React.createElement("button", { key: label, onClick: () => go(route), className: "w-full flex items-center gap-3 px-4 py-3 text-left" },
-                React.createElement("i", { className: "fa-solid " + icon + " text-slate-400 w-5" }),
-                React.createElement("span", { className: "flex-1 text-sm font-semibold" }, label),
-                React.createElement("i", { className: "fa-solid fa-chevron-right text-slate-300 text-xs" })))));
-}
-/* ============================== EVENTS ============================== */
-function useUpcomingEvents() {
-    const [events, setEvents] = useState(null);
-    useEffect(() => {
-        const now = firebase.firestore.Timestamp.now();
-        const unsub = db.collection('events').where('startAt', '>=', now).orderBy('startAt', 'asc').limit(100)
-            .onSnapshot(snap => setEvents(snap.docs.map(d => Object.assign({ id: d.id }, d.data()))), () => setEvents([]));
-        return unsub;
-    }, []);
-    return events;
-}
-function useMyEventRsvp(eventId, uid) {
-    const [status, setStatus] = useState(undefined);
-    useEffect(() => {
-        if (!eventId || !uid) return;
-        const unsub = db.collection('events').doc(eventId).collection('rsvps').doc(uid)
-            .onSnapshot(s => setStatus(s.exists ? s.data().status : null), () => setStatus(null));
-        return unsub;
-    }, [eventId, uid]);
-    return status;
-}
-async function uploadEventCover(uid, file) {
-    const compressed = await compressImage(file, 1280, 0.82);
-    const ref = storage.ref(`events/${uid}/${Date.now()}.jpg`);
-    await ref.put(compressed, { contentType: 'image/jpeg' });
-    return ref.getDownloadURL();
-}
-async function createEvent(uid, fields, coverFile) {
-    const coverURL = coverFile ? await uploadEventCover(uid, coverFile) : null;
-    await db.collection('events').add({
-        title: fields.title.trim(), description: (fields.description || '').trim(), location: (fields.location || '').trim(),
-        startAt: firebase.firestore.Timestamp.fromDate(new Date(fields.startAt)), coverURL,
-        createdBy: uid, goingCount: 0, interestedCount: 0, createdAt: FieldValue.serverTimestamp()
-    });
-}
-async function setEventRsvp(eventId, uid, status) {
-    const ref = db.collection('events').doc(eventId);
-    const rsvpRef = ref.collection('rsvps').doc(uid);
-    const prevSnap = await rsvpRef.get();
-    const prev = prevSnap.exists ? prevSnap.data().status : null;
-    if (prev === status) { // tapping the same status again clears it
-        await rsvpRef.delete();
-        if (prev === 'going') ref.update({ goingCount: FieldValue.increment(-1) }).catch(() => { });
-        if (prev === 'interested') ref.update({ interestedCount: FieldValue.increment(-1) }).catch(() => { });
-        return;
-    }
-    await rsvpRef.set({ uid, status, at: FieldValue.serverTimestamp() });
-    if (prev === 'going') ref.update({ goingCount: FieldValue.increment(-1) }).catch(() => { });
-    if (prev === 'interested') ref.update({ interestedCount: FieldValue.increment(-1) }).catch(() => { });
-    if (status === 'going') ref.update({ goingCount: FieldValue.increment(1) }).catch(() => { });
-    if (status === 'interested') ref.update({ interestedCount: FieldValue.increment(1) }).catch(() => { });
-}
-async function deleteEvent(eventId) { await db.collection('events').doc(eventId).delete(); }
-function EventCard({ ev, go }) {
-    const { profile } = useAuth();
-    const toast = useToast();
-    const myStatus = useMyEventRsvp(ev.id, profile.id);
-    const dt = ev.startAt && ev.startAt.toDate ? ev.startAt.toDate() : null;
-    const rsvp = async (status) => { try { await setEventRsvp(ev.id, profile.id, status); } catch (e) { toast(e.message, 'error'); } };
-    const remove = async () => { if (!confirm('Delete this event?')) return; try { await deleteEvent(ev.id); toast('Event deleted', 'success'); } catch (e) { toast(e.message, 'error'); } };
-    return React.createElement("div", { className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl overflow-hidden mb-3" },
-        ev.coverURL && React.createElement("img", { src: ev.coverURL, className: "w-full h-36 object-cover cursor-zoom-in", onClick: () => openLightbox(ev.coverURL) }),
-        React.createElement("div", { className: "p-3.5" },
-            React.createElement("div", { className: "flex items-start justify-between gap-2" },
-                React.createElement("div", { className: "min-w-0" },
-                    dt && React.createElement("p", { className: "text-[11px] font-bold text-brand-600 dark:text-brand-400 uppercase tracking-wide" }, dt.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }), " \u00B7 ", dt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })),
-                    React.createElement("p", { className: "font-bold text-[15px] truncate mt-0.5" }, ev.title),
-                    ev.location && React.createElement("p", { className: "text-xs text-slate-400 mt-0.5 truncate" }, React.createElement("i", { className: "fa-solid fa-location-dot mr-1" }), ev.location)),
-                ev.createdBy === profile.id && React.createElement("button", { onClick: remove, className: "text-slate-300 hover:text-red-500 shrink-0" }, React.createElement("i", { className: "fa-solid fa-trash text-sm" }))),
-            ev.description && React.createElement("p", { className: "text-sm text-slate-600 dark:text-slate-300 mt-2 whitespace-pre-wrap break-words" }, ev.description),
-            React.createElement("p", { className: "text-xs text-slate-400 mt-2" }, ev.goingCount || 0, " going \u00B7 ", ev.interestedCount || 0, " interested"),
-            React.createElement("div", { className: "flex gap-2 mt-3" },
-                React.createElement("button", { onClick: () => rsvp('going'), className: "flex-1 rounded-lg py-2 text-xs font-bold " + (myStatus === 'going' ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, React.createElement("i", { className: "fa-solid fa-check mr-1.5" }), "Going"),
-                React.createElement("button", { onClick: () => rsvp('interested'), className: "flex-1 rounded-lg py-2 text-xs font-bold " + (myStatus === 'interested' ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, React.createElement("i", { className: "fa-solid fa-star mr-1.5" }), "Interested"))));
-}
-function EventsScreen({ go }) {
-    const events = useUpcomingEvents();
-    return React.createElement("div", null,
-        React.createElement("div", { className: "flex items-center justify-between mb-4 gap-3" },
-            React.createElement("div", { className: "flex items-center gap-3 min-w-0" },
-                React.createElement("button", { onClick: () => go({ name: 'menu' }) }, React.createElement("i", { className: "fa-solid fa-arrow-left" })),
-                React.createElement("h2", { className: "font-display text-lg font-bold" }, "Events")),
-            React.createElement("button", { onClick: () => go({ name: 'eventForm' }), className: "bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold px-3.5 py-2 rounded-full shrink-0" }, React.createElement("i", { className: "fa-solid fa-plus mr-1.5" }), "Create")),
-        events === null && React.createElement(PostSkeleton, null),
-        events !== null && events.length === 0 && React.createElement("div", { className: "text-center text-slate-400 py-16" },
-            React.createElement("i", { className: "fa-solid fa-calendar-days text-4xl mb-3 opacity-40" }),
-            React.createElement("p", { className: "text-sm" }, "No upcoming events yet."),
-            React.createElement("button", { onClick: () => go({ name: 'eventForm' }), className: "mt-3 text-brand-600 font-semibold text-sm" }, "Create the first one")),
-        (events || []).map(ev => React.createElement(EventCard, { key: ev.id, ev: ev, go: go })));
-}
-function EventFormScreen({ go }) {
-    const { profile } = useAuth();
-    const toast = useToast();
-    const [title, setTitle] = useState('');
-    const [description, setDescription] = useState('');
-    const [location, setLocation] = useState('');
-    const [startAt, setStartAt] = useState('');
-    const [coverFile, setCoverFile] = useState(null);
-    const [coverPreview, setCoverPreview] = useState(null);
-    const [busy, setBusy] = useState(false);
-    const fileRef = useRef();
-    const submit = async () => {
-        if (!title.trim()) { toast('Give your event a title', 'error'); return; }
-        if (!startAt) { toast('Pick a date and time', 'error'); return; }
-        if (new Date(startAt) < new Date()) { toast('Pick a date and time in the future', 'error'); return; }
-        setBusy(true);
-        try {
-            await createEvent(profile.id, { title, description, location, startAt }, coverFile);
-            toast('Event created', 'success');
-            go({ name: 'events' });
-        } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
-    };
-    return React.createElement("div", null,
-        React.createElement("div", { className: "flex items-center gap-3 mb-4" },
-            React.createElement("button", { onClick: () => go({ name: 'events' }) }, React.createElement("i", { className: "fa-solid fa-arrow-left" })),
-            React.createElement("h2", { className: "font-display text-lg font-bold" }, "Create event")),
-        React.createElement("div", { className: "space-y-3 max-w-md" },
-            React.createElement("div", { onClick: () => fileRef.current.click(), className: "h-36 rounded-xl bg-slate-100 dark:bg-ink-700 flex items-center justify-center cursor-pointer overflow-hidden" },
-                coverPreview ? React.createElement("img", { src: coverPreview, className: "w-full h-full object-cover" }) :
-                    React.createElement("div", { className: "text-center text-slate-400" }, React.createElement("i", { className: "fa-solid fa-image text-2xl mb-1" }), React.createElement("p", { className: "text-xs" }, "Add cover photo (optional)"))),
-            React.createElement("input", { ref: fileRef, type: "file", accept: "image/*", hidden: true, onChange: e => { const f = e.target.files[0]; if (f) { setCoverFile(f); setCoverPreview(URL.createObjectURL(f)); } } }),
-            React.createElement("input", { value: title, onChange: e => setTitle(e.target.value), placeholder: "Event title", className: "w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
-            React.createElement("input", { type: "datetime-local", value: startAt, onChange: e => setStartAt(e.target.value), className: "w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
-            React.createElement("input", { value: location, onChange: e => setLocation(e.target.value), placeholder: "Location (optional)", className: "w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
-            React.createElement("textarea", { value: description, onChange: e => setDescription(e.target.value), placeholder: "What's this event about?", rows: 4, className: "w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm resize-none" }),
-            React.createElement("button", { onClick: submit, disabled: busy, className: "w-full bg-brand-600 hover:bg-brand-700 text-white rounded-xl py-3 text-sm font-semibold disabled:opacity-60" }, busy ? 'Creating\u2026' : 'Create event')));
-}
-/* ============================== FEEDS ============================== */
-const FEEDS_TABS = [
-    { key: 'all', label: 'All' },
-    { key: 'image', label: 'Photos' },
-    { key: 'video', label: 'Videos' },
-    { key: 'text', label: 'Text' },
-];
-function FeedsScreen({ go }) {
-    const [posts, setPosts] = useState(null);
-    const [tab, setTab] = useState('all');
-    useEffect(() => {
-        const unsub = db.collection('posts').orderBy('createdAt', 'desc').limit(60)
-            .onSnapshot(snap => setPosts(snap.docs.map(d => Object.assign({ id: d.id }, d.data()))
-                .filter(p => !p.hiddenByAdmin && !p.groupId && !p.isAd)), () => setPosts([]));
-        return unsub;
-    }, []);
-    const filtered = useMemo(() => {
-        if (!posts) return [];
-        if (tab === 'all') return posts;
-        if (tab === 'image') return posts.filter(p => (p.images || []).length > 0);
-        if (tab === 'video') return posts.filter(p => p.videoURL);
-        if (tab === 'text') return posts.filter(p => (p.images || []).length === 0 && !p.videoURL);
-        return posts;
-    }, [posts, tab]);
-    return React.createElement("div", null,
-        React.createElement("div", { className: "flex items-center gap-3 mb-3" },
-            React.createElement("button", { onClick: () => go({ name: 'menu' }) }, React.createElement("i", { className: "fa-solid fa-arrow-left" })),
-            React.createElement("h2", { className: "font-display text-lg font-bold" }, "Feeds")),
-        React.createElement("div", { className: "flex gap-2 mb-4 overflow-x-auto" }, FEEDS_TABS.map(t => React.createElement("button", { key: t.key, onClick: () => setTab(t.key), className: "px-3.5 py-1.5 rounded-full text-xs font-bold shrink-0 " + (tab === t.key ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, t.label))),
-        posts === null && React.createElement(React.Fragment, null, [1, 2, 3].map(i => React.createElement(PostSkeleton, { key: i }))),
-        posts !== null && filtered.length === 0 && React.createElement("div", { className: "text-center text-slate-400 py-16" },
-            React.createElement("i", { className: "fa-solid fa-table-cells-large text-4xl mb-3 opacity-40" }),
-            React.createElement("p", { className: "text-sm" }, "Nothing here yet.")),
-        filtered.map(p => React.createElement(PostCard, { key: p.id, post: p, go: go })));
 }
 /* ============================== PROFILE ============================== */
 function computeWorkDuration(workStart) {
@@ -9063,11 +8468,6 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
         catch (e) { toast('Could not delete message', 'error'); }
     };
     const copyText = (m) => { var _a; (_a = navigator.clipboard) === null || _a === void 0 ? void 0 : _a.writeText(m.text || ''); toast('Copied', 'success'); };
-    const initiateCall = async (type) => {
-        if (blocked) { toast("You can't call this user.", 'error'); return; }
-        try { await startOutgoingCall(profile, otherUid, otherUser, type); }
-        catch (e) { toast(e.message, 'error'); }
-    };
     const react = async (m, emoji) => {
         var _a;
         const key = 'reactions.' + profile.id;
@@ -9092,9 +8492,9 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
             React.createElement("div", { className: "flex-1 min-w-0 cursor-pointer", onClick: () => go(identityRoute) },
                 React.createElement("p", { className: "font-semibold text-sm truncate" }, displayIdentity.displayName),
                 React.createElement("p", { className: "text-xs text-slate-400 truncate" }, pageId ? "Page \u00B7 messages are received by the Page owner" : (((_a = chatDoc === null || chatDoc === void 0 ? void 0 : chatDoc.typing) === null || _a === void 0 ? void 0 : _a[otherUid]) ? React.createElement("span", { className: "text-[#0d9488]" }, "typing\u2026") : lastSeenLabel(otherUser)))),
-            !pageId && React.createElement("button", { onClick: () => initiateCall('voice'), title: "Voice call", className: "text-[#0d9488] w-9 h-9 rounded-full hover:bg-[#0d9488]/10 flex items-center justify-center" },
+            !pageId && React.createElement("button", { className: "text-[#0d9488] w-9 h-9 rounded-full hover:bg-[#0d9488]/10 flex items-center justify-center" },
                 React.createElement("i", { className: "fa-solid fa-phone" })),
-            !pageId && React.createElement("button", { onClick: () => initiateCall('video'), title: "Video call", className: "text-[#0d9488] w-9 h-9 rounded-full hover:bg-[#0d9488]/10 flex items-center justify-center" },
+            !pageId && React.createElement("button", { className: "text-[#0d9488] w-9 h-9 rounded-full hover:bg-[#0d9488]/10 flex items-center justify-center" },
                 React.createElement("i", { className: "fa-solid fa-video" })),
             !pageId && React.createElement("div", { className: "relative shrink-0" },
                 React.createElement("button", { onClick: () => setSettingsOpen(a => !a), className: "text-[#0d9488] w-9 h-9 rounded-full hover:bg-[#0d9488]/10 flex items-center justify-center" },
@@ -12777,10 +12177,11 @@ function DatingChatScreen({ matchId, go }) {
         }
     };
     const block = async () => { if (!confirm('Block this person? You will no longer see each other.')) return; await blockDatingUser(profile.id, other.id); toast('Blocked', 'success'); go({ name: 'dating' }); };
-    const startCall = async (type) => {
+    const startCall = (type) => {
         if (!canStartDatingCall(myDp)) { setCallGateType(type); return; }
-        try { await startOutgoingCall(profile, other.id, other, type); }
-        catch (e) { toast(e.message, 'error'); }
+        // Calling itself isn't implemented in this file — wire this up to your calling
+        // provider (e.g. Agora, Twilio Video, Daily) once you have one configured.
+        toast((type === 'video' ? 'Video' : 'Voice') + ' call starting with ' + other.displayName + '\u2026', 'success');
     };
     if (match === undefined || other === undefined) return React.createElement("div", { className: "py-16 flex justify-center" }, React.createElement("div", { className: "w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" }));
     if (!match || !other) return React.createElement("p", { className: "text-center text-slate-400 py-16" }, "This match is no longer available.");
