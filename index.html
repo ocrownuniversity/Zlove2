@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Odoife</title>
+<title>Lokiface</title>
 <link rel="icon" href="data:," />
 
 <!-- Load diagnostics: tracks each external resource so we can pinpoint exactly what fails to load -->
@@ -86,7 +86,7 @@
 <body class="bg-slate-50 dark:bg-ink-900 text-slate-900 dark:text-slate-100 transition-colors">
 <div id="root">
   <div style="font-family: sans-serif; max-width: 480px; margin: 10vh auto; padding: 24px; text-align: center; color:#334155;">
-    <div style="font-size:15px; line-height:1.5;">Loading Odoife…</div>
+    <div style="font-size:15px; line-height:1.5;">Loading Lokiface…</div>
   </div>
 </div>
 <script>
@@ -337,7 +337,7 @@ function MusicPlayBadge({ music, size }) {
             setPlaying(false);
         }
         else {
-            document.querySelectorAll('audio[data-odoife-music]').forEach(a => { if (a !== el)
+            document.querySelectorAll('audio[data-lokiface-music]').forEach(a => { if (a !== el)
                 a.pause(); });
             el.play().catch(() => { });
             setPlaying(true);
@@ -347,7 +347,7 @@ function MusicPlayBadge({ music, size }) {
     return React.createElement(React.Fragment, null,
         React.createElement("button", { onClick: toggle, title: playing ? 'Pause' : 'Play', className: `w-${dim} h-${dim} rounded-full bg-pink-600 text-white flex items-center justify-center shrink-0`, style: { width: dim * 4, height: dim * 4 } },
             React.createElement("i", { className: (playing ? "fa-solid fa-pause" : "fa-solid fa-play") + " text-[9px]" })),
-        React.createElement("audio", { ref: audioRef, src: music.url, "data-odoife-music": "true", preload: "none", onEnded: () => setPlaying(false), onPause: () => setPlaying(false) }));
+        React.createElement("audio", { ref: audioRef, src: music.url, "data-lokiface-music": "true", preload: "none", onEnded: () => setPlaying(false), onPause: () => setPlaying(false) }));
 }
 // "Feeling / activity" options shown when a user taps that item in the composer.
 const FEELINGS_LIST = [
@@ -1424,7 +1424,7 @@ function usePageWithdrawals(pageId) {
  * Storage layout: reels/{authorId}/{reelId}/video.mp4, reels/{authorId}/{reelId}/thumb.jpg
  */
 const REEL_PRIVACY_OPTIONS = [
-    { key: 'public', label: 'Public', icon: 'fa-earth-americas', desc: 'Anyone on Odoife can watch' },
+    { key: 'public', label: 'Public', icon: 'fa-earth-americas', desc: 'Anyone on Lokiface can watch' },
     { key: 'followers', label: 'Followers Only', icon: 'fa-user-group', desc: 'Only your followers can watch' },
     { key: 'friends', label: 'Friends Only', icon: 'fa-user-check', desc: 'Only accepted friends can watch' },
     { key: 'private', label: 'Private', icon: 'fa-lock', desc: 'Only you can watch' },
@@ -1660,26 +1660,26 @@ function normalizeWebsiteUrl(url) {
     if (!url) return '';
     return /^https?:\/\//i.test(url) ? url : 'https://' + url;
 }
-// The official "Odoife" identity that only the super admin can post as (see the "Post as
-// Odoife" admin panel tab) — implemented as an ordinary fanPage under a fixed, well-known id,
+// The official "Lokiface" identity that only the super admin can post as (see the "Post as
+// Lokiface" admin panel tab) — implemented as an ordinary fanPage under a fixed, well-known id,
 // so it gets every bit of existing Page infrastructure for free: verified badge, post rendering,
-// follow button, profile page, etc. Nobody else can ever own it since ensureOdoifeOfficialPage
+// follow button, profile page, etc. Nobody else can ever own it since ensureLokifaceOfficialPage
 // is the only path that creates it, and it always sets ownerId to the acting admin.
-const ODOIFE_OFFICIAL_PAGE_ID = 'odoife-official';
-async function ensureOdoifeOfficialPage(adminUid) {
-    const ref = db.collection('fanPages').doc(ODOIFE_OFFICIAL_PAGE_ID);
+const LOKIFACE_OFFICIAL_PAGE_ID = 'lokiface-official';
+async function ensureLokifaceOfficialPage(adminUid) {
+    const ref = db.collection('fanPages').doc(LOKIFACE_OFFICIAL_PAGE_ID);
     const snap = await ref.get();
     if (snap.exists) return;
     await ref.set(Object.assign({
-        ownerId: adminUid, displayName: 'Odoife', username: 'odoife',
-        category: 'Community', bio: 'Official updates from the Odoife team.',
+        ownerId: adminUid, displayName: 'Lokiface', username: 'lokiface',
+        category: 'Community', bio: 'Official updates from the Lokiface team.',
         photoURL: null, coverURL: null, verified: true, suspended: false,
         followersCount: 0, postsCount: 0, reelsCount: 0, createdAt: FieldValue.serverTimestamp()
     }, cleanPageContactFields({})));
-    // Reserve the @odoife handle and the "Odoife" name the same way a normal Page creation
+    // Reserve the @lokiface handle and the "Lokiface" name the same way a normal Page creation
     // does, so nobody else can register a Page that collides with the official one.
-    await db.collection('pageUsernames').doc('odoife').set({ pageId: ODOIFE_OFFICIAL_PAGE_ID }).catch(() => { });
-    await db.collection('pageNames').doc(normalizePageNameKey('Odoife')).set({ pageId: ODOIFE_OFFICIAL_PAGE_ID }).catch(() => { });
+    await db.collection('pageUsernames').doc('lokiface').set({ pageId: LOKIFACE_OFFICIAL_PAGE_ID }).catch(() => { });
+    await db.collection('pageNames').doc(normalizePageNameKey('Lokiface')).set({ pageId: LOKIFACE_OFFICIAL_PAGE_ID }).catch(() => { });
 }
 async function createFanPage(profileId, fields) {
     const uname = fields.username.toLowerCase();
@@ -2599,21 +2599,21 @@ function Game2048Screen({ go }) {
 const LEGAL_UPDATED = 'July 28, 2026';
 const LEGAL_PAGES = {
     about: {
-        title: 'About Odoife',
+        title: 'About Lokiface',
         subtitle: 'Where your circle actually shows up.',
         sections: [
             { heading: 'Our story', body: [
-                'Odoife started from a simple frustration: social feeds had stopped being social. Timelines were full of strangers, algorithms buried the people we actually cared about, and it became harder to just check in with friends and family. We built Odoife to put real connection back at the center of the experience.',
-                'Today, Odoife is a place to share moments, follow the people who matter to you, and keep conversations real-time — without the noise of an endless feed of content from accounts you never chose to follow.'
+                'Lokiface started from a simple frustration: social feeds had stopped being social. Timelines were full of strangers, algorithms buried the people we actually cared about, and it became harder to just check in with friends and family. We built Lokiface to put real connection back at the center of the experience.',
+                'Today, Lokiface is a place to share moments, follow the people who matter to you, and keep conversations real-time — without the noise of an endless feed of content from accounts you never chose to follow.'
             ] },
             { heading: 'What we believe', body: [
                 'We believe your feed should be made of people, not strangers. We believe messaging should feel instant and private. And we believe a platform is only as good as the trust its community has in it, which is why we invest heavily in safety, moderation, and giving people control over their own experience.'
             ] },
-            { heading: 'What Odoife offers', body: [
+            { heading: 'What Lokiface offers', body: [
                 'A home feed built around the people you follow, direct and group messaging with photos, videos, voice notes and documents, a profile you can make your own, and simple tools to save, bookmark and revisit the posts you love.'
             ] },
             { heading: 'Where we are headed', body: [
-                'Odoife is under active development. We ship improvements regularly based on community feedback, and we are committed to being transparent about how the platform works and how it evolves.'
+                'Lokiface is under active development. We ship improvements regularly based on community feedback, and we are committed to being transparent about how the platform works and how it evolves.'
             ] }
         ]
     },
@@ -2622,24 +2622,24 @@ const LEGAL_PAGES = {
         subtitle: 'Last updated: ' + LEGAL_UPDATED,
         sections: [
             { heading: '1. Overview', body: [
-                'This Privacy Policy explains how Odoife ("we", "us", "our") collects, uses, shares, and protects information when you use our website and app (the "Service"). By creating an account or using Odoife, you agree to the practices described here.'
+                'This Privacy Policy explains how Lokiface ("we", "us", "our") collects, uses, shares, and protects information when you use our website and app (the "Service"). By creating an account or using Lokiface, you agree to the practices described here.'
             ] },
             { heading: '2. Information we collect', body: [
                 'Account information: your email address, display name, username, password (stored in encrypted form), and optional profile details such as bio, location, occupation, date of birth, gender, and relationship status.',
-                'Content you create: posts, photos, videos, comments, messages, reactions, and any other content you upload or share on Odoife.',
+                'Content you create: posts, photos, videos, comments, messages, reactions, and any other content you upload or share on Lokiface.',
                 'Usage information: how you interact with the Service, such as pages viewed, features used, and the people you follow, message, or engage with.',
                 'Device and log information: IP address, browser type, operating system, and general diagnostic data that helps us keep the Service reliable and secure.'
             ] },
             { heading: '3. How we use information', body: [
                 'To provide, operate, and maintain the Service, including your feed, messaging, notifications, and profile.',
-                'To keep Odoife safe, including detecting and preventing fraud, abuse, spam, and violations of our Terms of Service or Community Guidelines.',
+                'To keep Lokiface safe, including detecting and preventing fraud, abuse, spam, and violations of our Terms of Service or Community Guidelines.',
                 'To communicate with you about your account, security alerts, and updates to our policies.',
                 'To improve and personalize the Service based on aggregated and anonymized usage patterns.'
             ] },
             { heading: '4. How information is shared', body: [
                 'Your public profile, posts, and comments are visible to other users according to your privacy and audience settings.',
                 'We do not sell your personal information to third parties.',
-                'We may share information with service providers who help us operate Odoife (such as hosting and storage providers), who are contractually required to protect your information.',
+                'We may share information with service providers who help us operate Lokiface (such as hosting and storage providers), who are contractually required to protect your information.',
                 'We may disclose information if required by law, to protect the rights and safety of our users, or to investigate violations of our policies.'
             ] },
             { heading: '5. Your choices and rights', body: [
@@ -2651,7 +2651,7 @@ const LEGAL_PAGES = {
                 'We retain your information for as long as your account is active, or as needed to provide the Service, comply with legal obligations, and resolve disputes. We use industry-standard safeguards, including encryption in transit, to protect your information, though no online service can guarantee absolute security.'
             ] },
             { heading: '7. Children\'s privacy', body: [
-                'Odoife is not directed to children under 13, and we do not knowingly collect personal information from children under 13. If you believe a child has created an account, please contact us so we can take appropriate action.'
+                'Lokiface is not directed to children under 13, and we do not knowingly collect personal information from children under 13. If you believe a child has created an account, please contact us so we can take appropriate action.'
             ] },
             { heading: '8. Changes to this policy', body: [
                 'We may update this Privacy Policy from time to time. If we make material changes, we will notify you through the Service or by other reasonable means before the changes take effect.'
@@ -2666,32 +2666,32 @@ const LEGAL_PAGES = {
         subtitle: 'Last updated: ' + LEGAL_UPDATED,
         sections: [
             { heading: '1. Acceptance of terms', body: [
-                'These Terms of Service ("Terms") govern your access to and use of Odoife. By creating an account, you confirm that you can form a binding contract, that you meet the minimum age requirement in your jurisdiction (and in any case are at least 13 years old), and that you agree to these Terms and our Privacy Policy.'
+                'These Terms of Service ("Terms") govern your access to and use of Lokiface. By creating an account, you confirm that you can form a binding contract, that you meet the minimum age requirement in your jurisdiction (and in any case are at least 13 years old), and that you agree to these Terms and our Privacy Policy.'
             ] },
             { heading: '2. Your account', body: [
                 'You are responsible for maintaining the confidentiality of your login credentials and for all activity that happens under your account. You must provide accurate information when registering and keep it up to date. Notify us immediately if you suspect unauthorized use of your account.'
             ] },
             { heading: '3. Acceptable use', body: [
-                'You agree not to use Odoife to: violate any law or regulation; harass, threaten, or bully other users; impersonate any person or entity; post content that infringes intellectual property rights; distribute spam, malware, or unauthorized advertising; or attempt to gain unauthorized access to the Service or other accounts.',
+                'You agree not to use Lokiface to: violate any law or regulation; harass, threaten, or bully other users; impersonate any person or entity; post content that infringes intellectual property rights; distribute spam, malware, or unauthorized advertising; or attempt to gain unauthorized access to the Service or other accounts.',
                 'Full details on prohibited content and behavior are set out in our Community Guidelines and Content Policy, which are part of these Terms.'
             ] },
             { heading: '4. Your content', body: [
-                'You retain ownership of the content you post on Odoife. By posting content, you grant Odoife a worldwide, non-exclusive, royalty-free license to host, store, reproduce, and display that content solely for the purpose of operating and improving the Service. You are solely responsible for the content you share.'
+                'You retain ownership of the content you post on Lokiface. By posting content, you grant Lokiface a worldwide, non-exclusive, royalty-free license to host, store, reproduce, and display that content solely for the purpose of operating and improving the Service. You are solely responsible for the content you share.'
             ] },
             { heading: '5. Content moderation and enforcement', body: [
                 'We may review, remove, or restrict access to content that violates these Terms, our Community Guidelines, or our Content Policy. We may suspend or terminate accounts that repeatedly or seriously violate our policies, with or without prior notice, depending on the severity of the violation.'
             ] },
             { heading: '6. Termination', body: [
-                'You may stop using Odoife and delete your account at any time. We may suspend or terminate your access to the Service if you violate these Terms, to protect other users, or to comply with legal obligations.'
+                'You may stop using Lokiface and delete your account at any time. We may suspend or terminate your access to the Service if you violate these Terms, to protect other users, or to comply with legal obligations.'
             ] },
             { heading: '7. Disclaimers', body: [
-                'Odoife is provided "as is" and "as available" without warranties of any kind, whether express or implied. We do not guarantee that the Service will be uninterrupted, secure, or error-free.'
+                'Lokiface is provided "as is" and "as available" without warranties of any kind, whether express or implied. We do not guarantee that the Service will be uninterrupted, secure, or error-free.'
             ] },
             { heading: '8. Limitation of liability', body: [
-                'To the fullest extent permitted by law, Odoife and its team will not be liable for any indirect, incidental, special, or consequential damages arising from your use of the Service.'
+                'To the fullest extent permitted by law, Lokiface and its team will not be liable for any indirect, incidental, special, or consequential damages arising from your use of the Service.'
             ] },
             { heading: '9. Changes to these terms', body: [
-                'We may update these Terms from time to time. Continued use of Odoife after changes take effect constitutes acceptance of the revised Terms. Material changes will be communicated through the Service.'
+                'We may update these Terms from time to time. Continued use of Lokiface after changes take effect constitutes acceptance of the revised Terms. Material changes will be communicated through the Service.'
             ] },
             { heading: '10. Contact us', body: [
                 'Questions about these Terms can be directed to us through our Contact Us page.'
@@ -2703,7 +2703,7 @@ const LEGAL_PAGES = {
         subtitle: 'Building a place people feel good about being part of.',
         sections: [
             { heading: 'Our purpose', body: [
-                'Odoife exists to help people stay connected with the friends, family, and communities they care about. These guidelines describe the behavior we expect from everyone on Odoife so that the platform stays welcoming, safe, and genuine.'
+                'Lokiface exists to help people stay connected with the friends, family, and communities they care about. These guidelines describe the behavior we expect from everyone on Lokiface so that the platform stays welcoming, safe, and genuine.'
             ] },
             { heading: 'Be respectful', body: [
                 'Treat others the way you would want to be treated. Harassment, bullying, hate speech, threats of violence, and targeted abuse of any kind are not allowed, whether directed at a public figure or a private individual.'
@@ -2718,7 +2718,7 @@ const LEGAL_PAGES = {
                 'Only post content you have the right to share. Do not upload copyrighted material, trademarks, or other protected works without permission from the rights holder.'
             ] },
             { heading: 'No spam or manipulation', body: [
-                'Do not use Odoife to distribute spam, run deceptive schemes, or manipulate the platform through fake engagement, bots, or coordinated inauthentic behavior.'
+                'Do not use Lokiface to distribute spam, run deceptive schemes, or manipulate the platform through fake engagement, bots, or coordinated inauthentic behavior.'
             ] },
             { heading: 'Reporting and enforcement', body: [
                 'If you see something that violates these guidelines, you can report the post, message, or account directly from within the app. Violations may result in content removal, temporary restrictions, or permanent suspension, depending on severity and history. See our Content Policy for more detail on how we evaluate specific types of content.'
@@ -2730,18 +2730,18 @@ const LEGAL_PAGES = {
         subtitle: 'Last updated: ' + LEGAL_UPDATED,
         sections: [
             { heading: 'What cookies are', body: [
-                'Cookies are small text files stored on your device that help websites and apps remember information about your visit. Odoife uses cookies and similar technologies, such as local storage, to make the Service work properly and to improve your experience.'
+                'Cookies are small text files stored on your device that help websites and apps remember information about your visit. Lokiface uses cookies and similar technologies, such as local storage, to make the Service work properly and to improve your experience.'
             ] },
             { heading: 'How we use them', body: [
                 'Essential: needed for core functionality such as keeping you signed in, remembering your theme preference (light or dark mode), and maintaining basic security.',
                 'Preferences: remember choices you have made, such as display settings, so you don\'t have to set them again on every visit.',
-                'Analytics: help us understand, in aggregate, how people use Odoife so we can improve performance and features. We do not use analytics data to build advertising profiles.'
+                'Analytics: help us understand, in aggregate, how people use Lokiface so we can improve performance and features. We do not use analytics data to build advertising profiles.'
             ] },
             { heading: 'Managing cookies', body: [
-                'Most browsers let you control cookies through their settings, including blocking or deleting them. Note that disabling essential cookies may prevent parts of Odoife, such as staying signed in, from working correctly.'
+                'Most browsers let you control cookies through their settings, including blocking or deleting them. Note that disabling essential cookies may prevent parts of Lokiface, such as staying signed in, from working correctly.'
             ] },
             { heading: 'Third-party services', body: [
-                'Some functionality on Odoife, such as authentication and storage, is powered by trusted infrastructure providers. These providers may set their own cookies or use similar technologies in accordance with their own privacy practices.'
+                'Some functionality on Lokiface, such as authentication and storage, is powered by trusted infrastructure providers. These providers may set their own cookies or use similar technologies in accordance with their own privacy practices.'
             ] },
             { heading: 'Changes to this policy', body: [
                 'We may update this Cookie Policy as our use of cookies evolves. Material changes will be reflected on this page with an updated date.'
@@ -2750,12 +2750,12 @@ const LEGAL_PAGES = {
     },
     content: {
         title: 'Content Policy',
-        subtitle: 'What can and cannot be shared on Odoife.',
+        subtitle: 'What can and cannot be shared on Lokiface.',
         sections: [
             { heading: 'Purpose', body: [
-                'This Content Policy explains, in practical terms, what kinds of posts, comments, media, and messages are and are not allowed on Odoife. It works together with our Community Guidelines and Terms of Service.'
+                'This Content Policy explains, in practical terms, what kinds of posts, comments, media, and messages are and are not allowed on Lokiface. It works together with our Community Guidelines and Terms of Service.'
             ] },
-            { heading: 'Not allowed on Odoife', body: [
+            { heading: 'Not allowed on Lokiface', body: [
                 'Sexually explicit content involving minors, or any content that sexualizes minors in any way — this is never permitted, and accounts will be removed and reported to the appropriate authorities.',
                 'Graphic violence, gore, or content that glorifies or promotes violence, terrorism, or self-harm.',
                 'Hate speech or content that attacks people based on race, ethnicity, national origin, religion, disability, gender, gender identity, sexual orientation, or serious illness.',
@@ -2770,7 +2770,7 @@ const LEGAL_PAGES = {
                 'Post only content you created or have permission to share. Give credit where it is due, and respect copyright and trademark rights.'
             ] },
             { heading: 'How we enforce this policy', body: [
-                'We rely on a combination of user reports and review processes to identify content that violates this policy. Depending on the severity, we may remove content, limit its visibility, apply a warning, or suspend the account responsible. Accounts with repeated or severe violations may be permanently removed from Odoife.'
+                'We rely on a combination of user reports and review processes to identify content that violates this policy. Depending on the severity, we may remove content, limit its visibility, apply a warning, or suspend the account responsible. Accounts with repeated or severe violations may be permanently removed from Lokiface.'
             ] },
             { heading: 'Appeals', body: [
                 'If you believe a moderation decision about your content was made in error, you can reach out through our Contact Us page to request a review.'
@@ -2779,10 +2779,10 @@ const LEGAL_PAGES = {
     },
     help: {
         title: 'Help Center',
-        subtitle: 'Answers and support for using Odoife.',
+        subtitle: 'Answers and support for using Lokiface.',
         sections: [
             { heading: 'Getting started', body: [
-                'New to Odoife? Create an account with your email or Google account, choose a unique username, and start following people you know. Your home feed will show posts from the people you follow, and you can use Search to find friends by name or username.'
+                'New to Lokiface? Create an account with your email or Google account, choose a unique username, and start following people you know. Your home feed will show posts from the people you follow, and you can use Search to find friends by name or username.'
             ] },
             { heading: 'Managing your account', body: [
                 'You can update your display name, bio, profile photo, cover photo, and other details from your profile at any time by selecting Edit Profile. To change your theme, use the light/dark mode toggle in the sidebar or menu.'
@@ -2794,7 +2794,7 @@ const LEGAL_PAGES = {
                 'You can block a user from their profile to stop them from messaging or interacting with you. You can also report posts, comments, or accounts that violate our Community Guidelines or Content Policy directly from within the app.'
             ] },
             { heading: 'Common issues', body: [
-                'If the app isn\'t loading, check your internet connection and try refreshing the page. Some browser extensions, VPNs, or private DNS settings can block the services Odoife depends on — try temporarily disabling them if you run into persistent loading issues.'
+                'If the app isn\'t loading, check your internet connection and try refreshing the page. Some browser extensions, VPNs, or private DNS settings can block the services Lokiface depends on — try temporarily disabling them if you run into persistent loading issues.'
             ] },
             { heading: 'Still need help?', body: [
                 'If you can\'t find what you\'re looking for here, check our Frequently Asked Questions or reach out through our Contact Us page — we\'re happy to help.'
@@ -2806,16 +2806,16 @@ const LEGAL_PAGES = {
         subtitle: 'We would love to hear from you.',
         sections: [
             { heading: 'General support', body: [
-                'For account help, technical issues, or general questions about using Odoife, email us at support@zlove.app. We aim to respond within 2–3 business days.'
+                'For account help, technical issues, or general questions about using Lokiface, email us at Lokiface@gmail.com. We aim to respond within 2–3 business days.'
             ] },
             { heading: 'Trust & safety', body: [
-                'To report content or behavior that violates our Community Guidelines or Content Policy, please use the in-app Report option wherever possible, or email safety@zlove.app for urgent concerns.'
+                'To report content or behavior that violates our Community Guidelines or Content Policy, please use the in-app Report option wherever possible, or email Lokiface@gmail.com for urgent concerns.'
             ] },
             { heading: 'Privacy requests', body: [
-                'For questions about your data, or to request access to or deletion of your information, email privacy@zlove.app.'
+                'For questions about your data, or to request access to or deletion of your information, email Lokiface@gmail.com.'
             ] },
             { heading: 'Press and partnerships', body: [
-                'For media inquiries or partnership opportunities, reach out to press@zlove.app.'
+                'For media inquiries or partnership opportunities, reach out to Lokiface@gmail.com.'
             ] },
             { heading: 'Before you write in', body: [
                 'Many common questions are already answered in our Help Center and Frequently Asked Questions — take a look there first, you might find a faster answer.'
@@ -2826,14 +2826,14 @@ const LEGAL_PAGES = {
         title: 'Frequently Asked Questions',
         subtitle: 'Quick answers to common questions.',
         faqs: [
-            { q: 'Is Odoife free to use?', a: 'Yes. Creating an account and using the core features of Odoife — posting, following, and messaging — is free.' },
+            { q: 'Is Lokiface free to use?', a: 'Yes. Creating an account and using the core features of Lokiface — posting, following, and messaging — is free.' },
             { q: 'How do I reset my password?', a: 'From the sign-in screen, use the "Forgot password" option if available, or contact support through our Contact Us page for help recovering your account.' },
-            { q: 'Can I make my account private?', a: 'Odoife is continuing to expand its privacy controls. In the meantime, you can block individual users and control who you message. Check your profile settings for the latest available options.' },
+            { q: 'Can I make my account private?', a: 'Lokiface is continuing to expand its privacy controls. In the meantime, you can block individual users and control who you message. Check your profile settings for the latest available options.' },
             { q: 'How do I delete a post?', a: 'Open the post, select the menu icon, and choose Delete. Deleted posts cannot be recovered.' },
             { q: 'How do I report a user or a post?', a: 'Use the report option available on posts, comments, and profiles. Our team reviews reports against our Community Guidelines and Content Policy.' },
             { q: 'How do I delete my account?', a: 'Contact us through our Contact Us page with your registered email address and we will guide you through permanently deleting your account and associated data.' },
-            { q: 'Why can\'t I message someone?', a: 'You may have been blocked by that user, or they may have restricted who can message them. Messaging availability depends on the other person\'s settings and your relationship on Odoife.' },
-            { q: 'Does Odoife sell my data?', a: 'No. We do not sell your personal information to third parties. See our Privacy Policy for full detail on how information is used.' }
+            { q: 'Why can\'t I message someone?', a: 'You may have been blocked by that user, or they may have restricted who can message them. Messaging availability depends on the other person\'s settings and your relationship on Lokiface.' },
+            { q: 'Does Lokiface sell my data?', a: 'No. We do not sell your personal information to third parties. See our Privacy Policy for full detail on how information is used.' }
         ]
     }
 };
@@ -2930,7 +2930,7 @@ function App() {
 function SplashScreen() {
     return (React.createElement("div", { className: "h-screen flex items-center justify-center bg-white dark:bg-ink-900" },
         React.createElement("div", { className: "flex items-center gap-2 text-brand-600 dark:text-brand-400" },
-            React.createElement("span", { className: "font-display font-extrabold text-2xl" }, "Odoife"))));
+            React.createElement("span", { className: "font-display font-extrabold text-2xl" }, "Lokiface"))));
 }
 function SuspendedScreen() {
     return (React.createElement("div", { className: "h-screen flex flex-col items-center justify-center gap-4 text-center px-6 bg-white dark:bg-ink-900" },
@@ -2952,7 +2952,7 @@ function Footer({ compact }) {
                 React.createElement(PageLink, { pageKey: l.key, className: "hover:text-brand-600 dark:hover:text-brand-400" }, l.label),
                 i < FOOTER_MORE_LINKS.length - 1 && React.createElement("span", null, "\u00B7")))),
             React.createElement("span", { className: "ml-auto" },
-                "\u00A9 ", new Date().getFullYear(), " Odoife"))));
+                "\u00A9 ", new Date().getFullYear(), " Lokiface"))));
 }
 function StaticPageOverlay({ pageKey, onClose }) {
     const page = LEGAL_PAGES[pageKey];
@@ -2966,7 +2966,7 @@ function StaticPageOverlay({ pageKey, onClose }) {
     return (React.createElement("div", { className: "fixed inset-0 z-[70] bg-slate-50 dark:bg-ink-900 overflow-y-auto" },
         React.createElement("header", { className: "sticky top-0 z-10 backdrop-blur bg-white/90 dark:bg-ink-900/90 border-b border-slate-100 dark:border-ink-800 px-4 py-3 flex items-center justify-between" },
             React.createElement("div", { className: "flex items-center gap-2 text-brand-600 dark:text-brand-400" },
-                React.createElement("span", { className: "font-display font-extrabold text-lg" }, "Odoife")),
+                React.createElement("span", { className: "font-display font-extrabold text-lg" }, "Lokiface")),
             React.createElement("button", { onClick: onClose, className: "w-9 h-9 rounded-full flex items-center justify-center text-slate-400 hover:bg-slate-100 dark:hover:bg-ink-800" },
                 React.createElement("i", { className: "fa-solid fa-xmark text-lg" }))),
         React.createElement("main", { className: "max-w-2xl mx-auto px-5 md:px-6 py-10" },
@@ -3076,16 +3076,16 @@ function AuthScreen() {
             React.createElement("div", { className: "absolute bottom-0 right-0 w-80 h-80 rounded-full bg-white/10 blur-3xl" }),
             React.createElement("div", { className: "relative text-white px-12 max-w-md" },
                 React.createElement("div", { className: "flex items-center gap-2 mb-8" },
-                    React.createElement("span", { className: "font-display font-extrabold text-3xl" }, "Odoife")),
+                    React.createElement("span", { className: "font-display font-extrabold text-3xl" }, "Lokiface")),
                 React.createElement("h1", { className: "font-display text-4xl font-bold leading-tight mb-4" }, "Where your circle actually shows up."),
                 React.createElement("p", { className: "text-brand-100 text-lg" }, "Share moments, follow people you care about, and keep the feed real-time."))),
         React.createElement("div", { className: "flex-1 flex items-center justify-center px-5 py-10 overflow-y-auto" },
             React.createElement("div", { className: "w-full max-w-sm" },
 
                 React.createElement("div", { className: "text-center mb-7" },
-                    React.createElement("h1", { className: "font-display font-extrabold text-4xl text-brand-600 mb-5" }, "Odoife"),
+                    React.createElement("h1", { className: "font-display font-extrabold text-4xl text-brand-600 mb-5" }, "Lokiface"),
                     React.createElement("h2", { className: "font-display text-2xl font-bold mb-1" }, mode === 'login' ? 'Welcome back' : 'Create your account'),
-                    React.createElement("p", { className: "text-slate-500 dark:text-slate-400 text-sm" }, mode === 'login' ? 'Sign in to continue' : 'Join Odoife in seconds')),
+                    React.createElement("p", { className: "text-slate-500 dark:text-slate-400 text-sm" }, mode === 'login' ? 'Sign in to continue' : 'Join Lokiface in seconds')),
 
                 React.createElement("button", { onClick: handleGoogle, disabled: busy || needsConsent, className: "w-full flex items-center justify-center gap-3 border border-slate-200 dark:border-ink-700 rounded-2xl py-3.5 font-semibold text-sm shadow-sm hover:shadow-md hover:-translate-y-px transition disabled:opacity-50" },
                     React.createElement("i", { className: "fa-brands fa-google text-red-500" }),
@@ -3114,7 +3114,7 @@ function AuthScreen() {
                     mode === 'signup' && (React.createElement("label", { className: "flex items-start gap-2 text-xs text-slate-500 leading-relaxed select-none" },
                         React.createElement("input", { type: "checkbox", checked: agreed, onChange: e => setAgreed(e.target.checked), className: "mt-0.5 shrink-0" }),
                         React.createElement("span", null,
-                            "I agree to Odoife's ",
+                            "I agree to Lokiface's ",
                             React.createElement(PageLink, { pageKey: "terms" }, "Terms of Service"),
                             " and ",
                             React.createElement(PageLink, { pageKey: "privacy" }, "Privacy Policy"),
@@ -3131,7 +3131,7 @@ function AuthScreen() {
                         React.createElement("span", { className: "shrink-0 w-11 h-11 rounded-full bg-white dark:bg-ink-700 flex items-center justify-center shadow-sm" },
                             React.createElement("i", { className: "fa-solid fa-user-plus text-brand-600" })),
                         React.createElement("div", null,
-                            React.createElement("h3", { className: "font-display font-bold text-base mb-0.5" }, "New to Odoife?"),
+                            React.createElement("h3", { className: "font-display font-bold text-base mb-0.5" }, "New to Lokiface?"),
                             React.createElement("p", { className: "text-sm text-slate-500 dark:text-slate-400 leading-snug" }, "Join millions of people sharing photos, videos, pages and groups."))),
                     React.createElement("button", { type: "button", onClick: () => setMode('signup'), className: "w-full bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl py-3 font-bold text-sm shadow-md shadow-emerald-600/20 transition" }, "Create Account")),
 
@@ -3142,7 +3142,7 @@ function AuthScreen() {
                         React.createElement(PageLink, { pageKey: "terms", className: "hover:text-brand-600 dark:hover:text-brand-400" }, "Terms"),
                         React.createElement("span", { className: "text-slate-300 dark:text-ink-600" }, "\u00B7"),
                         React.createElement(PageLink, { pageKey: "help", className: "hover:text-brand-600 dark:hover:text-brand-400" }, "Help")),
-                    React.createElement("p", { className: "text-xs text-slate-400" }, "\u00A9 ", new Date().getFullYear(), " Odoife"))))));
+                    React.createElement("p", { className: "text-xs text-slate-400" }, "\u00A9 ", new Date().getFullYear(), " Lokiface"))))));
 }
 /* ============================== ONBOARDING ============================== */
 const NIGERIAN_STATES = [
@@ -3293,7 +3293,7 @@ function MainApp({ route, setRoute }) {
     return (React.createElement("div", { className: "min-h-screen flex" },
         React.createElement("aside", { className: "hidden md:flex flex-col w-64 shrink-0 border-r border-slate-100 dark:border-ink-800 px-4 py-6 sticky top-0 h-screen" },
             React.createElement("div", { className: "flex items-center gap-2 px-2 mb-8 text-brand-600 dark:text-brand-400" },
-                React.createElement("span", { className: "font-display font-extrabold text-3xl" }, "Odoife")),
+                React.createElement("span", { className: "font-display font-extrabold text-3xl" }, "Lokiface")),
             React.createElement("nav", { className: "space-y-1 flex-1" }, nav.map(n => (React.createElement("button", { key: n.name, onClick: () => go(Object.assign({ name: n.name }, (n.params || {}))), className: "w-full flex items-center gap-3 px-3 py-3 rounded-xl text-base font-bold transition " +
                     (route.name === n.name ? "bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400" : "hover:bg-slate-50 dark:hover:bg-ink-800 text-slate-600 dark:text-slate-300") },
                 React.createElement("i", { className: "fa-solid " + n.icon + " w-6 text-xl" }),
@@ -3309,7 +3309,7 @@ function MainApp({ route, setRoute }) {
             route.name !== 'menu' && React.createElement("header", { className: "sticky top-0 z-30 bg-white dark:bg-ink-900 border-b border-slate-200 dark:border-ink-800 md:hidden" },
                 React.createElement("div", { className: "px-3 py-2 flex items-center justify-between" },
                     React.createElement("div", { className: "flex items-center gap-1.5 text-brand-600 dark:text-brand-400" },
-                        React.createElement("span", { className: "font-display font-extrabold text-3xl tracking-tight" }, "Odoife")),
+                        React.createElement("span", { className: "font-display font-extrabold text-3xl tracking-tight" }, "Lokiface")),
                     React.createElement("div", { className: "flex items-center gap-2" },
                         React.createElement("button", { onClick: () => go({ name: 'home' }), className: "w-9 h-9 rounded-full bg-slate-100 dark:bg-ink-800 flex items-center justify-center text-ink-900 dark:text-slate-200" },
                             React.createElement("i", { className: "fa-solid fa-plus text-base" })),
@@ -3421,7 +3421,7 @@ function MenuScreen({ go, theme, setTheme }) {
     const [helpOpen, setHelpOpen] = useState(false);
     const soon = (label) => toast((label || 'This feature') + ' is coming soon', 'info');
     const openTile = (tile) => tile.route ? go(tile.route) : soon(tile.label);
-    const doLogout = () => { if (confirm('Log out of Odoife?')) auth.signOut(); };
+    const doLogout = () => { if (confirm('Log out of Lokiface?')) auth.signOut(); };
     return (React.createElement("div", { className: "min-h-screen md:min-h-0 bg-slate-50 dark:bg-ink-900 -mx-2 md:mx-0" },
         React.createElement("div", { className: "sticky top-0 z-20 bg-white dark:bg-ink-900 border-b border-slate-100 dark:border-ink-800 px-3 py-2.5 flex items-center justify-between" },
             React.createElement("div", { className: "flex items-center gap-3" },
@@ -4002,7 +4002,7 @@ function ShareSheet({ post, onClose }) {
     };
     const soon = () => toast('Coming soon', 'info');
     if (step === 'timeline') {
-        return React.createElement(BottomSheet, { title: "Share to Odoife", onClose: onClose },
+        return React.createElement(BottomSheet, { title: "Share to Lokiface", onClose: onClose },
             React.createElement("div", { className: "p-2" },
                 React.createElement("textarea", { autoFocus: true, value: comment, onChange: e => setComment(e.target.value), placeholder: "Say something about this\u2026", className: "w-full bg-slate-50 dark:bg-ink-700 rounded-lg p-3 text-sm resize-none mb-3", rows: 3 }),
                 React.createElement("button", { onClick: shareToTimelineNow, disabled: busy, className: "w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white text-sm font-semibold py-2.5 rounded-lg" }, busy ? 'Sharing…' : 'Share now')));
@@ -4028,7 +4028,7 @@ function ShareSheet({ post, onClose }) {
                     React.createElement("span", { className: "text-sm font-semibold flex-1 truncate" }, g.name)))));
     }
     const rows = [
-        { icon: 'fa-regular fa-pen-to-square', label: 'Share to Odoife', onClick: () => setStep('timeline') },
+        { icon: 'fa-regular fa-pen-to-square', label: 'Share to Lokiface', onClick: () => setStep('timeline') },
         { icon: 'fa-regular fa-circle-plus', label: 'Share to your story now', onClick: soon },
         { icon: 'fa-solid fa-user-plus', label: "Share to a friend's profile", onClick: soon },
         { icon: 'fa-solid fa-people-group', label: 'Share in a group', onClick: () => setStep('group') },
@@ -4104,7 +4104,7 @@ function ReelShareSheet({ reel, onClose }) {
     const moreOptions = async () => {
         if (navigator.share) {
             try {
-                await navigator.share({ url: reelLink, text: reel.caption || 'Check out this reel on Odoife' });
+                await navigator.share({ url: reelLink, text: reel.caption || 'Check out this reel on Lokiface' });
                 await logExternalShare();
             } catch (e) { }
             onClose();
@@ -4432,7 +4432,7 @@ function PostCard({ post, go, groupCtx, autoOpenComments, sponsored }) {
         return React.createElement(PostSkeleton, null);
     const audienceMeta = postAudienceMeta(post);
     // An "official" post is any Page post where the Page itself carries Anthropic-style
-    // verification (fanPages.verified — set for the Odoife identity via ensureOdoifeOfficialPage,
+    // verification (fanPages.verified — set for the Lokiface identity via ensureLokifaceOfficialPage,
     // and toggleable for any other Page from the Super Admin > Pages panel). These get a
     // visually distinct treatment (glow border, gradient badge, display-font body copy) so
     // they read at a glance as an authoritative account post rather than an ordinary Page post.
@@ -4516,7 +4516,7 @@ function PostCard({ post, go, groupCtx, autoOpenComments, sponsored }) {
             React.createElement("div", { className: "bg-gradient-to-r from-rose-500 to-brand-600 rounded-xl p-4 text-white flex items-center gap-3" },
                 React.createElement("i", { className: "fa-solid fa-heart text-2xl shrink-0" }),
                 React.createElement("div", { className: "flex-1 min-w-0" },
-                    React.createElement("p", { className: "font-bold text-sm" }, "Odoife Dating"),
+                    React.createElement("p", { className: "font-bold text-sm" }, "Lokiface Dating"),
                     React.createElement("p", { className: "text-xs text-white/85" }, "Find genuine matches near you.")),
                 React.createElement("button", { onClick: () => go({ name: 'dating' }), className: "shrink-0 bg-white text-rose-600 text-xs font-bold px-3 py-2 rounded-full" }, "Join now"))),
         sponsored && React.createElement("div", { className: "px-3 sm:px-4 mb-2" },
@@ -4915,7 +4915,7 @@ function initialsOf(name) {
 }
 function PeopleYouMayKnowCard({ u, go, meId, myFriendIds, onDismiss }) {
     const mutualCount = useMutualFriendsCount(myFriendIds, u.id);
-    const displayName = u.displayName || u.username || 'Odoife user';
+    const displayName = u.displayName || u.username || 'Lokiface user';
     const photo = React.createElement("img", { src: u.photoURL || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(displayName)}&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`, className: "w-full h-full object-cover" });
     return React.createElement("div", { className: "relative rounded-lg overflow-hidden border border-slate-200 dark:border-ink-700 bg-white dark:bg-ink-800 fade-in" },
         React.createElement("button", { onClick: () => onDismiss(u.id), title: "Remove", className: "absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-full bg-black/40 hover:bg-black/60 text-white flex items-center justify-center text-xs" },
@@ -4924,7 +4924,7 @@ function PeopleYouMayKnowCard({ u, go, meId, myFriendIds, onDismiss }) {
         React.createElement("div", { className: "p-2.5" },
             React.createElement("p", { className: "font-semibold text-[15px] leading-tight truncate cursor-pointer", onClick: () => go({ name: 'profile', uid: u.id }) }, displayName),
             React.createElement("p", { className: "text-[13px] text-slate-500 dark:text-slate-400 truncate mb-2.5" },
-                mutualCount > 0 ? (mutualCount + " mutual friend" + (mutualCount > 1 ? "s" : "")) : (u.username ? ("@" + u.username) : "New on Odoife")),
+                mutualCount > 0 ? (mutualCount + " mutual friend" + (mutualCount > 1 ? "s" : "")) : (u.username ? ("@" + u.username) : "New on Lokiface")),
             React.createElement("div", { className: "flex" }, React.createElement(FriendActionButton, { meId: meId, otherId: u.id })),
             React.createElement("button", { onClick: () => onDismiss(u.id), className: "w-full mt-1.5 py-2 rounded-md bg-slate-100 dark:bg-ink-700 text-slate-800 dark:text-slate-200 text-[15px] font-semibold hover:bg-slate-200 dark:hover:bg-ink-600 transition" }, "Remove")));
 }
@@ -5179,7 +5179,7 @@ function SearchScreen({ go, route }) {
     const [messaging, setMessaging] = useState(null);
     const [ptab, setPtab] = useState((route === null || route === void 0 ? void 0 : route.tab) || 'suggested');
     const friendships = useFriendships(profile.id);
-    // Live directory of everyone on Odoife, used both as search fallback and as
+    // Live directory of everyone on Lokiface, used both as search fallback and as
     // "People you may know" suggestions when the search box is empty.
     useEffect(() => {
         const unsub = db.collection('users').limit(200)
@@ -5280,7 +5280,7 @@ function SearchScreen({ go, route }) {
             React.createElement("div", { className: "flex gap-2 mb-4" }, TABS.map(([k, l]) => (React.createElement("button", { key: k, onClick: () => setPtab(k), className: "flex-1 py-2 rounded-full text-xs font-semibold border " + (ptab === k ? "bg-brand-600 text-white border-brand-600" : "border-slate-200 dark:border-ink-700 text-slate-500") }, l)))),
             ptab === 'suggested' && (React.createElement("div", null,
                 allUsers === null && React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026"),
-                allUsers !== null && suggestions.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-10" }, "No other users on Odoife yet. Invite someone!"),
+                allUsers !== null && suggestions.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-10" }, "No other users on Lokiface yet. Invite someone!"),
                 React.createElement("div", { className: "space-y-2" }, suggestions.map(u => React.createElement(PersonRow, { key: u.id, u: u }))))),
             ptab === 'requests' && (React.createElement("div", null,
                 friendships === null && React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026"),
@@ -5292,7 +5292,7 @@ function SearchScreen({ go, route }) {
                 React.createElement("div", { className: "space-y-2" }, friendUsers.map(u => React.createElement(PersonRow, { key: u.id, u: u })))))))));
 }
 /* ============================== NOTIFICATIONS ============================== */
-const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', reply: 'replied to your comment', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', ad_campaign_pending: 'submitted a new ad campaign for review', listing_created: 'published a new marketplace listing', new_listing: 'listed a new product on Marketplace', listing_promotion_pending: 'requested to promote a marketplace listing', timeline_post: 'wrote something on your timeline', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group', dating_invite: 'invited you to join Odoife Dating', friend_birthday: '\uD83C\uDF82 is celebrating a birthday today \u2014 wish them well!',
+const NOTIF_TEXT = { like: 'reacted to your post', comment: 'commented on your post', reply: 'replied to your comment', follow: 'started following you', share: 'shared your post', message: 'sent you a message', tag: 'tagged you', friend_request: 'sent you a friend request', friend_accept: 'accepted your friend request', listing_offer: 'made an offer on your listing', offer_accepted: 'accepted your offer', offer_declined: 'declined your offer', listing_sold: 'marked a listing you saved as sold', listing_approved: 'Your listing was approved and is now live', listing_removed: 'Your listing was removed by an admin', ad_approved: 'Your ad promotion was approved and your listing is now sponsored', ad_declined: 'Your ad promotion request was declined', ad_campaign_pending: 'submitted a new ad campaign for review', listing_created: 'published a new marketplace listing', new_listing: 'listed a new product on Marketplace', listing_promotion_pending: 'requested to promote a marketplace listing', timeline_post: 'wrote something on your timeline', page_follow: 'started following your Page', reel_like: 'liked your reel', reel_comment: 'commented on your reel', reel_reply: 'replied to a comment on your reel', reel_share: 'shared your reel', group_join_request: 'requested to join your group', group_request_approved: 'Your request to join the group was approved', group_request_rejected: 'Your request to join the group was declined', group_invite: 'invited you to join a group', group_made_admin: 'made you an admin of the group', group_made_moderator: 'made you a moderator of the group', group_role_changed: 'updated your role in the group', group_announcement: 'posted a new announcement', group_event: 'created a new event in a group', dating_invite: 'invited you to join Lokiface Dating', friend_birthday: '\uD83C\uDF82 is celebrating a birthday today \u2014 wish them well!',
     kyc_approved: 'Your Page KYC verification was approved', kyc_rejected: 'Your Page KYC verification was rejected',
     followers_milestone: 'Your Page reached 1,000 followers', monetization_eligible: 'Your Page is now eligible for monetization',
     monetization_approved: 'Your Page monetization application was approved', monetization_rejected: 'Your Page monetization application was rejected',
@@ -5452,7 +5452,7 @@ function BirthdaysScreen({ go }) {
     const Row = (f) => React.createElement("div", { key: f.id, className: "flex items-center gap-3 bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3" },
         React.createElement(Avatar, { user: f, size: 12, onClick: () => go({ name: 'profile', uid: f.id }) }),
         React.createElement("div", { className: "flex-1 min-w-0 cursor-pointer", onClick: () => go({ name: 'profile', uid: f.id }) },
-            React.createElement("p", { className: "font-semibold text-sm truncate" }, f.displayName || f.username || 'Odoife user'),
+            React.createElement("p", { className: "font-semibold text-sm truncate" }, f.displayName || f.username || 'Lokiface user'),
             React.createElement("p", { className: "text-xs text-slate-400" }, f._daysUntil === 0 ? 'Today' : (f._daysUntil === 1 ? 'Tomorrow' : MONTH_NAMES[f._month - 1] + ' ' + f._day))),
         React.createElement("button", { onClick: () => go({ name: 'profile', uid: f.id }), className: "shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full " + (f._daysUntil === 0 ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, f._daysUntil === 0 ? 'Wish' : 'View'));
     return React.createElement("div", null,
@@ -5734,7 +5734,7 @@ function ProfileScreen({ uid, go }) {
                         "Edit profile"),
                     React.createElement("button", { onClick: () => go({ name: 'myPages' }), className: "bg-slate-100 dark:bg-ink-700 hover:bg-slate-200 dark:hover:bg-ink-600 rounded-xl w-11 h-11 flex items-center justify-center text-sm shrink-0", title: "Your Pages" },
                         React.createElement("i", { className: "fa-solid fa-flag" })),
-                    React.createElement("button", { onClick: () => confirm('Log out of Odoife?') && auth.signOut(), className: "bg-red-50 dark:bg-red-900/20 text-red-500 rounded-xl w-11 h-11 flex items-center justify-center text-sm shrink-0" },
+                    React.createElement("button", { onClick: () => confirm('Log out of Lokiface?') && auth.signOut(), className: "bg-red-50 dark:bg-red-900/20 text-red-500 rounded-xl w-11 h-11 flex items-center justify-center text-sm shrink-0" },
                         React.createElement("i", { className: "fa-solid fa-arrow-right-from-bracket" })))) : (React.createElement("div", { className: "flex items-center gap-2 flex-wrap" },
                     React.createElement(FriendActionButton, { meId: me.id, otherId: uid }),
                     React.createElement("button", { onClick: toggleFollow, className: "rounded-xl py-2.5 px-3 text-sm font-semibold " + (following ? "bg-slate-100 dark:bg-ink-700" : "bg-slate-100 dark:bg-ink-700") }, following ? 'Following' : 'Follow'),
@@ -6112,11 +6112,11 @@ function PageFormScreen({ id, go }) {
                                 React.createElement("i", { className: "fa-solid fa-clock mr-1.5" }),
                                 "Your request to rename to \u201c", pendingNameChangeRequest.requestedName, "\u201d is pending admin review.")
                             : React.createElement("button", { type: "button", onClick: () => setShowNameChangeSheet(true), className: "text-xs font-semibold text-brand-500 hover:underline mt-1.5" }, "Request a name change"))
-                    : React.createElement("input", { value: displayName, onChange: e => setDisplayName(e.target.value), required: true, className: inputCls, placeholder: "e.g. Odoife Coffee Co." })),
+                    : React.createElement("input", { value: displayName, onChange: e => setDisplayName(e.target.value), required: true, className: inputCls, placeholder: "e.g. Lokiface Coffee Co." })),
             !isEdit && React.createElement(PageFormField, { label: "Page username" },
                 React.createElement("div", { className: "relative mt-1" },
                     React.createElement("span", { className: "absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm" }, "@"),
-                    React.createElement("input", { value: username, onChange: e => setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, '')), required: true, className: "w-full pl-7 pr-3 py-2.5 sm:py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm", placeholder: "odoifecoffee" }))),
+                    React.createElement("input", { value: username, onChange: e => setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, '')), required: true, className: "w-full pl-7 pr-3 py-2.5 sm:py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm", placeholder: "lokifacecoffee" }))),
             React.createElement(PageFormField, { label: "Category" },
                 React.createElement("select", { value: category, onChange: e => setCategory(e.target.value), className: inputCls },
                     PAGE_CATEGORIES.map(c => React.createElement("option", { key: c, value: c }, c)))),
@@ -6176,7 +6176,7 @@ function PageNameChangeRequestSheet({ page, onClose }) {
             React.createElement("p", { className: "text-xs text-slate-400 mb-4" }, "Name changes require admin approval. Your Page keeps its current name until this request is approved."),
             React.createElement("form", { onSubmit: submit, className: "space-y-4" },
                 React.createElement(PageFormField, { label: "New Page name" },
-                    React.createElement("input", { value: requestedName, onChange: e => setRequestedName(e.target.value), required: true, className: "w-full mt-1 px-3 py-2.5 sm:py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm", placeholder: "e.g. Odoife Coffee Co." })),
+                    React.createElement("input", { value: requestedName, onChange: e => setRequestedName(e.target.value), required: true, className: "w-full mt-1 px-3 py-2.5 sm:py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm", placeholder: "e.g. Lokiface Coffee Co." })),
                 React.createElement(PageFormField, { label: "Reason for change" },
                     React.createElement("textarea", { value: reason, onChange: e => setReason(e.target.value), rows: 3, className: "w-full mt-1 px-3 py-2.5 sm:py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm", placeholder: "Why are you renaming this Page? (minimum 20 characters)" }),
                     React.createElement("p", { className: "text-[11px] mt-1 " + (reasonOk ? "text-slate-400" : "text-red-500") }, reasonLen, " / ", PAGE_NAME_CHANGE_MIN_REASON_LENGTH, " characters minimum")),
@@ -6742,7 +6742,7 @@ function SuperAdminApp({ theme, setTheme }) {
         { key: 'referrals', label: 'Referrals', icon: 'fa-user-plus' },
         { key: 'marketplace', label: 'Marketplace' + (pendingListingCount ? ' (' + pendingListingCount + ')' : ''), icon: 'fa-store' },
         { key: 'reports', label: 'Reports', icon: 'fa-flag' },
-        { key: 'postAsOdoife', label: 'Post as Odoife', icon: 'fa-pen-nib' },
+        { key: 'postAsLokiface', label: 'Post as Lokiface', icon: 'fa-pen-nib' },
         { key: 'announcements', label: 'Announcements', icon: 'fa-bullhorn' },
         { key: 'settings', label: 'Site Settings', icon: 'fa-gear' },
         { key: 'auditlog', label: 'Audit Log', icon: 'fa-clock-rotate-left' },
@@ -7091,8 +7091,8 @@ function SuperAdminPanel({ tab, adminUid, adminEmail }) {
     if (tab === 'referrals') {
         return React.createElement(AdminReferralsPanel, { adminUid: adminUid, adminEmail: adminEmail });
     }
-    if (tab === 'postAsOdoife') {
-        return React.createElement(AdminPostAsOdoifeForm, { adminUid: adminUid, adminEmail: adminEmail });
+    if (tab === 'postAsLokiface') {
+        return React.createElement(AdminPostAsLokifaceForm, { adminUid: adminUid, adminEmail: adminEmail });
     }
     if (tab === 'announcements') {
         return React.createElement(AdminAnnouncementForm, { adminUid: adminUid, adminEmail: adminEmail });
@@ -7607,11 +7607,11 @@ function AdminPostRow({ post, adminUid, adminEmail }) {
 }
 /* ============================== SUPER ADMIN: ANNOUNCEMENTS ============================== */
 /* Lets the super admin publish an actual timeline post (not just a notification, unlike
-   Announcements below) as the official "Odoife" identity — likes, comments, shares, the
+   Announcements below) as the official "Lokiface" identity — likes, comments, shares, the
    verified badge, all the normal post machinery, because it's really just a Page post under the
-   hood (see ensureOdoifeOfficialPage). Self-contained rather than reusing the consumer app's
+   hood (see ensureLokifaceOfficialPage). Self-contained rather than reusing the consumer app's
    CreatePostScreen because the admin panel doesn't share that app's go() router. */
-function AdminPostAsOdoifeForm({ adminUid, adminEmail }) {
+function AdminPostAsLokifaceForm({ adminUid, adminEmail }) {
     const [text, setText] = useState('');
     const [file, setFile] = useState(null);
     const [preview, setPreview] = useState(null);
@@ -7619,14 +7619,14 @@ function AdminPostAsOdoifeForm({ adminUid, adminEmail }) {
     const fileRef = useRef();
     const toast = useToast();
     // Live doc for the official Page so the avatar/cover uploader below always reflects what's
-    // actually saved, and so we know whether ensureOdoifeOfficialPage has run yet at all.
-    const [odoifePage, setOdoifePage] = useState(undefined);
+    // actually saved, and so we know whether ensureLokifaceOfficialPage has run yet at all.
+    const [lokifacePage, setLokifacePage] = useState(undefined);
     const [photoBusy, setPhotoBusy] = useState(false);
     const avatarRef = useRef();
     const coverRef = useRef();
     useEffect(() => {
-        const unsub = db.collection('fanPages').doc(ODOIFE_OFFICIAL_PAGE_ID)
-            .onSnapshot(s => setOdoifePage(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setOdoifePage(null));
+        const unsub = db.collection('fanPages').doc(LOKIFACE_OFFICIAL_PAGE_ID)
+            .onSnapshot(s => setLokifacePage(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setLokifacePage(null));
         return unsub;
     }, []);
     const pickFile = (e) => {
@@ -7635,13 +7635,13 @@ function AdminPostAsOdoifeForm({ adminUid, adminEmail }) {
         setFile(f);
         setPreview(URL.createObjectURL(f));
     };
-    const uploadOdoifePhoto = async (f, kind) => {
+    const uploadLokifacePhoto = async (f, kind) => {
         if (!f) return;
         setPhotoBusy(true);
         try {
-            await ensureOdoifeOfficialPage(adminUid);
-            await uploadPageImage(ODOIFE_OFFICIAL_PAGE_ID, f, kind);
-            logAdminAction(adminUid, adminEmail, kind === 'avatars' ? 'update_odoife_photo' : 'update_odoife_cover', 'page', ODOIFE_OFFICIAL_PAGE_ID, null);
+            await ensureLokifaceOfficialPage(adminUid);
+            await uploadPageImage(LOKIFACE_OFFICIAL_PAGE_ID, f, kind);
+            logAdminAction(adminUid, adminEmail, kind === 'avatars' ? 'update_lokiface_photo' : 'update_lokiface_cover', 'page', LOKIFACE_OFFICIAL_PAGE_ID, null);
             toast(kind === 'avatars' ? 'Profile picture updated' : 'Cover photo updated', 'success');
         }
         catch (e) { toast(e.message, 'error'); }
@@ -7652,45 +7652,45 @@ function AdminPostAsOdoifeForm({ adminUid, adminEmail }) {
         if (!text.trim() && !file) return;
         setBusy(true);
         try {
-            await ensureOdoifeOfficialPage(adminUid);
+            await ensureLokifaceOfficialPage(adminUid);
             let imageUrl = null;
             if (file) {
                 const compressed = await compressImage(file);
-                const ref = storage.ref(`posts/${ODOIFE_OFFICIAL_PAGE_ID}/${Date.now()}.jpg`);
+                const ref = storage.ref(`posts/${LOKIFACE_OFFICIAL_PAGE_ID}/${Date.now()}.jpg`);
                 await ref.put(compressed, { contentType: 'image/jpeg' });
                 imageUrl = await ref.getDownloadURL();
             }
             await db.collection('posts').add({
-                authorId: adminUid, pageId: ODOIFE_OFFICIAL_PAGE_ID,
+                authorId: adminUid, pageId: LOKIFACE_OFFICIAL_PAGE_ID,
                 text: text.trim(), images: imageUrl ? [imageUrl] : [],
                 bold: false, bgStyle: null, taggedUsers: [], audience: 'public',
                 createdAt: FieldValue.serverTimestamp(), likesCount: 0, commentsCount: 0, sharesCount: 0
             });
-            db.collection('fanPages').doc(ODOIFE_OFFICIAL_PAGE_ID).update({ postsCount: FieldValue.increment(1) }).catch(() => { });
-            logAdminAction(adminUid, adminEmail, 'post_as_odoife', 'post', null, text.trim().slice(0, 80));
-            toast('Posted to the timeline as Odoife', 'success');
+            db.collection('fanPages').doc(LOKIFACE_OFFICIAL_PAGE_ID).update({ postsCount: FieldValue.increment(1) }).catch(() => { });
+            logAdminAction(adminUid, adminEmail, 'post_as_lokiface', 'post', null, text.trim().slice(0, 80));
+            toast('Posted to the timeline as Lokiface', 'success');
             setText(''); setFile(null); setPreview(null);
         }
         catch (e2) { toast(e2.message, 'error'); }
         finally { setBusy(false); }
     };
     return React.createElement("div", null,
-        React.createElement("h2", { className: "font-display text-lg font-bold mb-1" }, "Post as Odoife"),
-        React.createElement("p", { className: "text-xs text-slate-400 mb-4" }, "Publishes a real, verified post to everyone's home timeline under the official \"Odoife\" Page \u2014 with likes, comments, and shares, unlike Announcements below which only sends a notification."),
+        React.createElement("h2", { className: "font-display text-lg font-bold mb-1" }, "Post as Lokiface"),
+        React.createElement("p", { className: "text-xs text-slate-400 mb-4" }, "Publishes a real, verified post to everyone's home timeline under the official \"Lokiface\" Page \u2014 with likes, comments, and shares, unlike Announcements below which only sends a notification."),
         React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-4 border border-slate-100 dark:border-ink-700 max-w-lg mb-4" },
             React.createElement("h3", { className: "font-display text-sm font-bold mb-3 flex items-center gap-1.5" }, React.createElement("i", { className: "fa-solid fa-image text-brand-600 text-xs" }), "Official Page identity"),
             React.createElement("div", { className: "h-20 rounded-lg bg-gradient-to-r from-sky-500 via-brand-600 to-emerald-500 relative overflow-hidden mb-[-2rem]" },
-                (odoifePage && odoifePage.coverURL) && React.createElement("img", { src: odoifePage.coverURL, className: "w-full h-full object-cover" }),
+                (lokifacePage && lokifacePage.coverURL) && React.createElement("img", { src: lokifacePage.coverURL, className: "w-full h-full object-cover" }),
                 React.createElement("button", { type: "button", disabled: photoBusy, onClick: () => coverRef.current.click(), className: "absolute bottom-1.5 right-1.5 bg-white/90 dark:bg-ink-700/90 w-7 h-7 rounded-full flex items-center justify-center shadow text-[11px]" }, React.createElement("i", { className: "fa-solid fa-camera" })),
-                React.createElement("input", { ref: coverRef, type: "file", accept: "image/*", hidden: true, onChange: e => uploadOdoifePhoto(e.target.files[0], 'covers') })),
+                React.createElement("input", { ref: coverRef, type: "file", accept: "image/*", hidden: true, onChange: e => uploadLokifacePhoto(e.target.files[0], 'covers') })),
             React.createElement("div", { className: "flex items-end gap-3 pl-2" },
                 React.createElement("div", { className: "relative shrink-0" },
                     React.createElement("div", { className: "w-16 h-16 rounded-xl ring-4 ring-white dark:ring-ink-800 overflow-hidden bg-slate-100 dark:bg-ink-700" },
-                        React.createElement(Avatar, { user: odoifePage || { displayName: 'Odoife' }, size: 16 })),
+                        React.createElement(Avatar, { user: lokifacePage || { displayName: 'Lokiface' }, size: 16 })),
                     React.createElement("button", { type: "button", disabled: photoBusy, onClick: () => avatarRef.current.click(), className: "absolute -bottom-1 -right-1 bg-white dark:bg-ink-700 w-7 h-7 rounded-full flex items-center justify-center shadow border border-slate-200 dark:border-ink-600 text-[11px]" }, React.createElement("i", { className: "fa-solid fa-camera" })),
-                    React.createElement("input", { ref: avatarRef, type: "file", accept: "image/*", hidden: true, onChange: e => uploadOdoifePhoto(e.target.files[0], 'avatars') })),
+                    React.createElement("input", { ref: avatarRef, type: "file", accept: "image/*", hidden: true, onChange: e => uploadLokifacePhoto(e.target.files[0], 'avatars') })),
                 React.createElement("div", { className: "pb-1" },
-                    React.createElement("p", { className: "text-sm font-bold flex items-center gap-1" }, "Odoife", React.createElement("i", { className: "fa-solid fa-badge-check text-sky-500 text-xs" })),
+                    React.createElement("p", { className: "text-sm font-bold flex items-center gap-1" }, "Lokiface", React.createElement("i", { className: "fa-solid fa-badge-check text-sky-500 text-xs" })),
                     React.createElement("p", { className: "text-[11px] text-slate-400" }, photoBusy ? 'Uploading\u2026' : "Tap either camera icon to set the profile picture or cover shown on every official post.")))),
         React.createElement("form", { onSubmit: send, className: "bg-white dark:bg-ink-800 rounded-xl p-4 border border-slate-100 dark:border-ink-700 max-w-lg" },
             React.createElement("textarea", { value: text, onChange: e => setText(e.target.value), placeholder: "What's the announcement\u2026", rows: 4, className: "w-full mb-3 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-700 bg-transparent text-sm resize-none" }),
@@ -9434,9 +9434,9 @@ async function rejectJoinRequest(group, uid) {
     db.collection('groups').doc(group.id).update({ pendingCount: FieldValue.increment(-1) }).catch(() => { });
     db.collection('notifications').doc(uid).collection('items').add({ type: 'group_request_rejected', groupId: group.id, read: false, createdAt: FieldValue.serverTimestamp() }).catch(() => { });
 }
-/* Invite an existing Odoife member (someone already on the main website, not necessarily on
+/* Invite an existing Lokiface member (someone already on the main website, not necessarily on
    Dating yet) to check out Dating — just an in-app notification with a link to the Dating tab.
-   For people who aren't Odoife members at all, see DatingInviteSheet's "Invite via link" side,
+   For people who aren't Lokiface members at all, see DatingInviteSheet's "Invite via link" side,
    which shares a message + signup link outside the app instead (WhatsApp/SMS/copy/native share). */
 async function inviteToDating(inviterId, inviteeUid) {
     await db.collection('notifications').doc(inviteeUid).collection('items').add({ type: 'dating_invite', fromUserId: inviterId, read: false, createdAt: FieldValue.serverTimestamp() });
@@ -11235,8 +11235,8 @@ function DatingProfileSetupStep({ dp }) {
 /* ================= main feature: Discover / Likes / Matches / Me ================= */
 /* ---- Invite people to Dating ----
    Two audiences, handled differently:
-   1. Existing Odoife members (friends) — get an in-app notification linking to Dating.
-   2. Anyone else, including people with no Odoife account at all — get a share-able invite
+   1. Existing Lokiface members (friends) — get an in-app notification linking to Dating.
+   2. Anyone else, including people with no Lokiface account at all — get a share-able invite
       message + link they can receive over WhatsApp, SMS, or however the member sends it. */
 function DatingInviteSheet({ onClose }) {
     const { profile } = useAuth();
@@ -11258,7 +11258,7 @@ function DatingInviteSheet({ onClose }) {
         catch (e) { toast(e.message, 'error'); }
     };
     const inviteLink = window.location.href.split('#')[0].split('?')[0];
-    const inviteMessage = (profile.displayName || 'A friend') + ' invited you to join Odoife Dating \u2014 find genuine matches near you. Sign up free: ' + inviteLink;
+    const inviteMessage = (profile.displayName || 'A friend') + ' invited you to join Lokiface Dating \u2014 find genuine matches near you. Sign up free: ' + inviteLink;
     const copyMessage = () => { navigator.clipboard && navigator.clipboard.writeText(inviteMessage); toast('Invite message copied', 'success'); };
     const shareWhatsapp = () => window.open('https://wa.me/?text=' + encodeURIComponent(inviteMessage), '_blank');
     const shareNative = async () => { if (navigator.share) { try { await navigator.share({ text: inviteMessage }); } catch (e) { } } else copyMessage(); };
@@ -11267,7 +11267,7 @@ function DatingInviteSheet({ onClose }) {
     const postToTimeline = async () => {
         setPosting(true);
         try {
-            await postDatingInvite(profile.id, (profile.displayName || 'I') + ' just joined Odoife Dating \u2014 come find your match with me! \uD83D\uDC95');
+            await postDatingInvite(profile.id, (profile.displayName || 'I') + ' just joined Lokiface Dating \u2014 come find your match with me! \uD83D\uDC95');
             setPosted(true);
             toast('Posted to your timeline!', 'success');
         } catch (e) { toast(e.message, 'error'); }
@@ -11277,13 +11277,13 @@ function DatingInviteSheet({ onClose }) {
         React.createElement("div", { className: "px-1 pb-3 mb-3 border-b border-slate-100 dark:border-ink-700" },
             React.createElement("button", { disabled: posting || posted, onClick: postToTimeline, className: "w-full mb-3 bg-gradient-to-r from-rose-500 to-brand-600 disabled:opacity-60 text-white rounded-xl py-2.5 text-sm font-semibold flex items-center justify-center gap-2" },
                 React.createElement("i", { className: "fa-solid " + (posted ? "fa-check" : "fa-heart") }), posted ? 'Posted to your timeline' : posting ? 'Posting\u2026' : 'Post invite to my timeline'),
-            React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mb-2" }, "Invite anyone \u2014 even if they're not on Odoife"),
+            React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mb-2" }, "Invite anyone \u2014 even if they're not on Lokiface"),
             React.createElement("div", { className: "bg-slate-50 dark:bg-ink-700 rounded-xl p-3 text-sm text-slate-600 dark:text-slate-300 mb-2" }, inviteMessage),
             React.createElement("div", { className: "flex gap-2" },
                 React.createElement("button", { onClick: shareWhatsapp, className: "flex-1 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl py-2 text-xs font-semibold flex items-center justify-center gap-1.5" }, React.createElement("i", { className: "fa-brands fa-whatsapp" }), "WhatsApp"),
                 React.createElement("button", { onClick: copyMessage, className: "flex-1 bg-slate-100 dark:bg-ink-700 rounded-xl py-2 text-xs font-semibold flex items-center justify-center gap-1.5" }, React.createElement("i", { className: "fa-regular fa-copy" }), "Copy"),
                 navigator.share && React.createElement("button", { onClick: shareNative, className: "flex-1 bg-slate-100 dark:bg-ink-700 rounded-xl py-2 text-xs font-semibold flex items-center justify-center gap-1.5" }, React.createElement("i", { className: "fa-solid fa-share-nodes" }), "Share"))),
-        React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 px-1" }, "Invite friends already on Odoife"),
+        React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 px-1" }, "Invite friends already on Lokiface"),
         React.createElement("input", { autoFocus: true, value: fq, onChange: e => setFq(e.target.value), placeholder: "Search friends\u2026", className: "w-full px-3 py-2 rounded-full bg-slate-50 dark:bg-ink-700 text-sm mb-2 mx-1 focus:outline-none" }),
         friends === null && React.createElement("p", { className: "text-center text-sm text-slate-400 py-6" }, "Loading\u2026"),
         friends && friends.length === 0 && React.createElement("p", { className: "text-center text-sm text-slate-400 py-6" }, "No friends yet \u2014 use the invite link above instead."),
@@ -12554,7 +12554,7 @@ function CreateCampaignSheet({ go, onClose }) {
             React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-lg p-5 text-center", onClick: e => e.stopPropagation() },
                 React.createElement("i", { className: "fa-solid fa-flag text-3xl text-brand-600 mb-3" }),
                 React.createElement("h3", { className: "font-display font-bold text-lg mb-2" }, "You need a Page to run ads"),
-                React.createElement("p", { className: "text-sm text-slate-400 mb-4" }, "Only Pages can run ads on Odoife \u2014 create a free Page first, then come back here to launch your campaign."),
+                React.createElement("p", { className: "text-sm text-slate-400 mb-4" }, "Only Pages can run ads on Lokiface \u2014 create a free Page first, then come back here to launch your campaign."),
                 React.createElement("button", { onClick: () => { onClose(); go && go({ name: 'pageForm' }); }, className: "w-full bg-brand-600 hover:bg-brand-700 text-white rounded-xl py-3 font-semibold text-sm mb-2" }, React.createElement("i", { className: "fa-solid fa-plus mr-1.5" }), "Create a Page"),
                 React.createElement("button", { onClick: onClose, className: "w-full text-center text-xs text-slate-400" }, "Cancel")));
     }
@@ -12953,7 +12953,7 @@ function ReferralScreen({ go }) {
     };
     const shareLink = () => {
         if (!link) return;
-        if (navigator.share) navigator.share({ title: 'Join Odoife', text: 'Join me on Odoife!', url: link }).catch(() => { });
+        if (navigator.share) navigator.share({ title: 'Join Lokiface', text: 'Join me on Lokiface!', url: link }).catch(() => { });
         else copyLink();
     };
     return React.createElement("div", null,
