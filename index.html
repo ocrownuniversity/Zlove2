@@ -1045,6 +1045,18 @@ function usePendingListingCount() {
     }, []);
     return count;
 }
+// Live count of referral withdrawal requests awaiting review, shown as a badge on the Super
+// Admin "Referrals" tab so a pending payout request (with the user's bank/Zmonie details) is
+// never missed — mirrors usePendingAdCount()/usePendingListingCount() above.
+function usePendingReferralWithdrawalCount() {
+    const [count, setCount] = useState(0);
+    useEffect(() => {
+        const unsub = db.collection('referralWithdrawals').where('status', '==', 'pending')
+            .onSnapshot(snap => setCount(snap.size), () => setCount(0));
+        return unsub;
+    }, []);
+    return count;
+}
 // Live follow status for the signed-in user against one Page. Reads a single doc
 // (uid_pageId) rather than the whole pageFollows-for-this-page query, so every button on
 // the site (page profile, timeline posts, Page cards) stays in sync the instant a follow
@@ -6762,6 +6774,7 @@ function SuperAdminApp({ theme, setTheme }) {
     const pendingDatingKycCount = usePendingDatingKycCount();
     const pendingAdCount = usePendingAdCount();
     const pendingListingCount = usePendingListingCount();
+    const pendingReferralWithdrawalCount = usePendingReferralWithdrawalCount();
     const SA_TABS = [
         { key: 'dashboard', label: 'Dashboard', icon: 'fa-gauge-high' },
         { key: 'users', label: 'Users', icon: 'fa-users' },
@@ -6773,7 +6786,7 @@ function SuperAdminApp({ theme, setTheme }) {
         { key: 'monetization', label: 'Monetization', icon: 'fa-sack-dollar' },
         { key: 'ads', label: 'Ads' + (pendingAdCount ? ' (' + pendingAdCount + ')' : ''), icon: 'fa-bullhorn' },
         { key: 'wallet', label: 'Wallet', icon: 'fa-wallet' },
-        { key: 'referrals', label: 'Referrals', icon: 'fa-user-plus' },
+        { key: 'referrals', label: 'Referrals' + (pendingReferralWithdrawalCount ? ' (' + pendingReferralWithdrawalCount + ')' : ''), icon: 'fa-user-plus' },
         { key: 'marketplace', label: 'Marketplace' + (pendingListingCount ? ' (' + pendingListingCount + ')' : ''), icon: 'fa-store' },
         { key: 'reports', label: 'Reports', icon: 'fa-flag' },
         { key: 'postAsLokiface', label: 'Post as Lokiface', icon: 'fa-pen-nib' },
@@ -13140,21 +13153,38 @@ function AdminReferralsPanel({ adminUid, adminEmail }) {
         React.createElement("h2", { className: "font-display text-lg font-bold mb-3 flex items-center gap-2" }, React.createElement("i", { className: "fa-solid fa-user-plus text-brand-600" }), "Referral Management"),
         React.createElement("div", { className: "flex gap-2 mb-4 flex-wrap" }, [['overview', 'Overview'], ['withdrawals', 'Withdrawals'], ['users', 'Users'], ['settings', 'Settings']].map(([k, l]) => React.createElement("button", { key: k, onClick: () => setSubtab(k), className: "px-3 py-1.5 rounded-full text-xs font-semibold " + (subtab === k ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, l))),
         subtab === 'overview' && React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
-            [['Total referrals', totalReferrals], ['Successful', successfulReferrals], ['Pending', totalReferrals - successfulReferrals], ['Total paid out', formatNaira(totalPaidOut)]].map(([l, v]) => React.createElement("div", { key: l, className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-4" },
+            [['Total referrals', totalReferrals], ['Successful', successfulReferrals], ['Pending', totalReferrals - successfulReferrals], ['Total paid out', formatNaira(totalPaidOut)], ['Pending withdrawal requests', withdrawals.filter(w => w.status === 'pending').length]].map(([l, v]) => React.createElement("div", { key: l, className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-4" },
                 React.createElement("p", { className: "text-xl font-extrabold" }, v), React.createElement("p", { className: "text-xs text-slate-400" }, l)))),
         subtab === 'withdrawals' && React.createElement("div", null,
-            React.createElement("div", { className: "flex gap-2 mb-3" }, ['pending', 'approved', 'rejected', 'all'].map(f => React.createElement("button", { key: f, onClick: () => setWithdrawalFilter(f), className: "px-3 py-1 rounded-full text-xs font-semibold " + (withdrawalFilter === f ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, f))),
+            React.createElement("div", { className: "flex items-center justify-between mb-3 gap-3 flex-wrap" },
+                React.createElement("div", { className: "flex gap-2" }, ['pending', 'approved', 'rejected', 'all'].map(f => React.createElement("button", { key: f, onClick: () => setWithdrawalFilter(f), className: "px-3 py-1 rounded-full text-xs font-semibold " + (withdrawalFilter === f ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, f))),
+                React.createElement("button", { onClick: () => exportToCsv('referral-withdrawals.csv', withdrawals.map(w => ({ id: w.id, uid: w.uid, username: w.username || '', email: w.userEmail || '', amount: w.amount, status: w.status, zmonieAccountNumber: w.zmonieAccountNumber || '', zmonieAccountName: w.zmonieAccountName || '', requestedAt: formatPostDate(w.requestedAt) }))), className: "text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-100 dark:bg-ink-700" }, React.createElement("i", { className: "fa-solid fa-file-arrow-down mr-1.5" }), "Export CSV")),
             withdrawals.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No withdrawal requests in this filter."),
-            withdrawals.map(w => React.createElement("div", { key: w.id, className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3 mb-2" },
-                React.createElement("div", { className: "flex items-center justify-between mb-1" },
-                    React.createElement("p", { className: "font-bold text-sm" }, formatNaira(w.amount)),
-                    React.createElement("span", { className: "text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-ink-700" }, w.status)),
-                React.createElement("p", { className: "text-xs text-slate-500" }, w.username || w.userEmail || w.uid),
-                React.createElement("p", { className: "text-xs text-slate-400 mb-2" }, "Zmonie: ", w.zmonieAccountNumber, " \u00B7 ", w.zmonieAccountName, " \u00B7 ", timeAgo(w.requestedAt)),
-                w.rejectionReason && React.createElement("p", { className: "text-xs text-red-500 mb-2" }, "Rejected: ", w.rejectionReason),
-                w.status === 'pending' && React.createElement("div", { className: "flex gap-2" },
-                    React.createElement("button", { onClick: () => approve(w), className: "flex-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg py-1.5 text-xs font-semibold" }, "Approve"),
-                    React.createElement("button", { onClick: () => reject(w), className: "flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-1.5 text-xs font-semibold" }, "Reject"))))),
+            withdrawals.map(w => React.createElement("div", { key: w.id, className: "bg-white dark:bg-ink-800 border " + (w.status === 'pending' ? "border-amber-200 dark:border-amber-800/50" : "border-slate-100 dark:border-ink-700") + " rounded-xl p-4 mb-2" },
+                React.createElement("div", { className: "flex items-center justify-between mb-2" },
+                    React.createElement("p", { className: "font-extrabold text-lg" }, formatNaira(w.amount)),
+                    React.createElement("span", { className: "text-xs font-semibold px-2 py-0.5 rounded-full " + (w.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : w.status === 'rejected' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700') }, w.status)),
+                React.createElement("div", { className: "grid grid-cols-2 gap-x-3 gap-y-2 mb-2" },
+                    React.createElement("div", null,
+                        React.createElement("p", { className: "text-[10px] font-semibold uppercase tracking-wide text-slate-400" }, "Requested by"),
+                        React.createElement("p", { className: "text-sm font-semibold truncate" }, w.username ? '@' + w.username : (w.userEmail || w.uid)),
+                        w.username && w.userEmail && React.createElement("p", { className: "text-[11px] text-slate-400 truncate" }, w.userEmail)),
+                    React.createElement("div", null,
+                        React.createElement("p", { className: "text-[10px] font-semibold uppercase tracking-wide text-slate-400" }, "Requested"),
+                        React.createElement("p", { className: "text-sm" }, timeAgo(w.requestedAt))),
+                    React.createElement("div", null,
+                        React.createElement("p", { className: "text-[10px] font-semibold uppercase tracking-wide text-slate-400" }, "Zmonie account number"),
+                        React.createElement("div", { className: "flex items-center gap-1.5" },
+                            React.createElement("p", { className: "text-sm font-mono font-semibold" }, w.zmonieAccountNumber || '\u2014'),
+                            w.zmonieAccountNumber && React.createElement("button", { onClick: () => { navigator.clipboard.writeText(w.zmonieAccountNumber).then(() => toast('Account number copied', 'success')).catch(() => { }); }, title: "Copy account number", className: "text-slate-400 hover:text-brand-600" }, React.createElement("i", { className: "fa-regular fa-copy text-xs" })))),
+                    React.createElement("div", null,
+                        React.createElement("p", { className: "text-[10px] font-semibold uppercase tracking-wide text-slate-400" }, "Zmonie account name"),
+                        React.createElement("p", { className: "text-sm font-semibold" }, w.zmonieAccountName || '\u2014'))),
+                w.reviewedByEmail && React.createElement("p", { className: "text-[11px] text-slate-400 mb-1" }, (w.status === 'approved' ? 'Approved' : 'Reviewed') + ' by ' + w.reviewedByEmail + (w.reviewedAt ? ' \u00B7 ' + timeAgo(w.reviewedAt) : '')),
+                w.rejectionReason && React.createElement("p", { className: "text-xs text-red-500 mb-2" }, "Rejection reason: ", w.rejectionReason),
+                w.status === 'pending' && React.createElement("div", { className: "flex gap-2 mt-2" },
+                    React.createElement("button", { onClick: () => approve(w), className: "flex-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg py-2 text-xs font-semibold" }, "Approve"),
+                    React.createElement("button", { onClick: () => reject(w), className: "flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-2 text-xs font-semibold" }, "Reject"))))),
         subtab === 'users' && React.createElement("div", null,
             React.createElement("input", { value: search, onChange: e => setSearch(e.target.value), placeholder: "Search by username or email\u2026", className: "w-full mb-3 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
             filteredUsers.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No matching users."),
