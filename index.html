@@ -734,7 +734,8 @@ function lastSeenLabel(user) {
         return 'Active now';
     if (!(user === null || user === void 0 ? void 0 : user.lastSeen))
         return '';
-    return 'Last seen ' + timeAgo(user.lastSeen);
+    const ago = timeAgo(user.lastSeen);
+    return ago === 'now' ? 'Active now' : 'Active ' + ago + ' ago';
 }
 function setPresence(uid, online) {
     if (!uid)
@@ -2150,11 +2151,19 @@ async function adminUpdateUserFields(uid, fields) { await db.collection('users')
 /* ============================== SUPER ADMIN: REPORTS (generic) ============================== */
 // Generic report bucket for content types that don't have their own dedicated collection yet
 // (listings/sellers keep their existing listingReports/sellerReports collections above).
-async function reportContent(targetType, targetId, targetOwnerId, reporterId, reason) {
-    await db.collection('reports').add({
+async function reportContent(targetType, targetId, targetOwnerId, reporterId, reason, extra) {
+    const payload = {
         targetType, targetId, targetOwnerId: targetOwnerId || null, reporterId, reason,
         status: 'open', createdAt: FieldValue.serverTimestamp()
-    });
+    };
+    // "Something else" reports can carry a free-text explanation plus up to a few photo URLs
+    // (already uploaded to Storage by the caller) so admins have real evidence to act on instead
+    // of just a bare reason string.
+    if (extra && extra.details)
+        payload.details = String(extra.details).slice(0, 2000);
+    if (extra && Array.isArray(extra.images) && extra.images.length)
+        payload.images = extra.images.slice(0, 4);
+    await db.collection('reports').add(payload);
 }
 /* ============================== SUPER ADMIN: ANNOUNCEMENTS ============================== */
 async function broadcastAnnouncement(adminUid, title, message, audienceUids) {
@@ -7258,7 +7267,12 @@ function AdminGenericReportRow({ report, adminUid, adminEmail }) {
     };
     return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
         React.createElement("p", { className: "text-sm font-semibold" }, (report.targetType || 'content').replace(/^\w/, c => c.toUpperCase()), " report"),
-        React.createElement("p", { className: "text-xs text-slate-400 mb-2" }, "Reported by ", React.createElement(AdminUserLabel, { uid: report.reporterId }), ": ", report.reason),
+        React.createElement("p", { className: "text-xs text-slate-400 mb-1" }, "Reported by ", React.createElement(AdminUserLabel, { uid: report.reporterId }), ": ", report.reason),
+        // "Something else" reports carry a free-text explanation the reporter typed, plus up to 4
+        // photos — surfaced here in full (not truncated) so admins can actually act on them.
+        report.details && React.createElement("p", { className: "text-sm bg-slate-50 dark:bg-ink-700 rounded-lg p-2.5 mb-2 whitespace-pre-wrap break-words" }, report.details),
+        Array.isArray(report.images) && report.images.length > 0 && React.createElement("div", { className: "flex flex-wrap gap-2 mb-2" },
+            report.images.map((url, i) => React.createElement("img", { key: url, src: url, onClick: () => openLightbox(report.images, i), loading: "lazy", className: "w-16 h-16 rounded-lg object-cover border border-slate-200 dark:border-ink-600 cursor-zoom-in" }))),
         React.createElement("button", { disabled: busy, onClick: resolve, className: "text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-500 text-white" }, "Mark Resolved"));
 }
 /* ============================== SUPER ADMIN: USER ROW ============================== */
@@ -8000,6 +8014,8 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
     const [progress, setProgress] = useState(0);
     const [activeMenuId, setActiveMenuId] = useState(null);
     const [forwardMsg, setForwardMsg] = useState(null);
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [reportUserOpen, setReportUserOpen] = useState(false);
     const bottomRef = useRef();
     const typingTimeout = useRef();
     const recorderRef = useRef();
@@ -8073,6 +8089,25 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
     const iBlockedThem = (profile.blockedUsers || []).includes(otherUid);
     const theyBlockedMe = ((otherUser === null || otherUser === void 0 ? void 0 : otherUser.blockedUsers) || []).includes(profile.id);
     const blocked = iBlockedThem || theyBlockedMe;
+    const toggleBlockInChat = async () => {
+        setSettingsOpen(false);
+        const ref = db.collection('users').doc(profile.id);
+        try {
+            if (iBlockedThem) {
+                await ref.update({ blockedUsers: FieldValue.arrayRemove(otherUid) });
+                toast('Unblocked ' + (otherUser.displayName || 'user'), 'success');
+            }
+            else {
+                if (!confirm('Block ' + (otherUser.displayName || 'this user') + '? They will no longer be able to message you.'))
+                    return;
+                await ref.update({ blockedUsers: FieldValue.arrayUnion(otherUid) });
+                toast('Blocked ' + (otherUser.displayName || 'user'), 'success');
+            }
+        }
+        catch (e) {
+            toast(e.message, 'error');
+        }
+    };
     const onTextChange = (v) => {
         setText(v);
         if (!chatReady)
@@ -8221,7 +8256,16 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
             !pageId && React.createElement("button", { className: "text-[#0d9488] w-9 h-9 rounded-full hover:bg-[#0d9488]/10 flex items-center justify-center" },
                 React.createElement("i", { className: "fa-solid fa-phone" })),
             !pageId && React.createElement("button", { className: "text-[#0d9488] w-9 h-9 rounded-full hover:bg-[#0d9488]/10 flex items-center justify-center" },
-                React.createElement("i", { className: "fa-solid fa-video" }))),
+                React.createElement("i", { className: "fa-solid fa-video" })),
+            !pageId && React.createElement("div", { className: "relative shrink-0" },
+                React.createElement("button", { onClick: () => setSettingsOpen(a => !a), className: "text-[#0d9488] w-9 h-9 rounded-full hover:bg-[#0d9488]/10 flex items-center justify-center" },
+                    React.createElement("i", { className: "fa-solid fa-gear" })),
+                settingsOpen && (React.createElement(React.Fragment, null,
+                    React.createElement("div", { className: "fixed inset-0 z-10", onClick: () => setSettingsOpen(false) }),
+                    React.createElement("div", { className: "absolute right-0 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-600 z-20 w-44" },
+                        React.createElement("button", { onClick: () => { setSettingsOpen(false); go(identityRoute); }, className: "w-full text-left px-4 py-2.5 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, React.createElement("i", { className: "fa-regular fa-user mr-2 text-slate-400" }), "View profile"),
+                        React.createElement("button", { onClick: toggleBlockInChat, className: "w-full text-left px-4 py-2.5 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, React.createElement("i", { className: "fa-solid fa-ban mr-2 text-slate-400" }), iBlockedThem ? 'Unblock' : 'Block'),
+                        React.createElement("button", { onClick: () => { setSettingsOpen(false); setReportUserOpen(true); }, className: "w-full text-left px-4 py-2.5 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, React.createElement("i", { className: "fa-solid fa-flag mr-2" }), "Report")))))),
         React.createElement("div", { className: "flex-1 overflow-y-auto px-4 py-4 space-y-1 bg-white dark:bg-ink-800" },
             messages === null && React.createElement("p", { className: "text-sm text-slate-400 text-center" }, "Loading\u2026"),
             (messages === null || messages === void 0 ? void 0 : messages.length) === 0 && (React.createElement("div", { className: "text-center text-slate-400 py-10" },
@@ -8276,13 +8320,14 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
                     React.createElement("input", { value: text, onChange: e => onTextChange(e.target.value), onKeyDown: e => { if (e.key === 'Enter' && !e.shiftKey) {
                             e.preventDefault();
                             sendText();
-                        } }, disabled: blocked, placeholder: blocked ? "You can't message this user" : "Aa", className: "w-full bg-[#F0F0F0] dark:bg-ink-700 rounded-full pl-4 pr-9 py-2 text-sm disabled:opacity-50" }),
+                        } }, disabled: blocked, placeholder: blocked ? "You can't message this user" : "Message", className: "w-full bg-[#F0F0F0] dark:bg-ink-700 rounded-full pl-4 pr-9 py-2 text-sm disabled:opacity-50" }),
                     React.createElement("button", { onClick: () => { setEmojiOpen(a => !a); setAttachOpen(false); }, disabled: blocked, className: "absolute right-2 text-[#0d9488] w-6 h-6 flex items-center justify-center disabled:opacity-40" },
                         React.createElement("i", { className: "fa-regular fa-face-smile" }))),
                 text.trim() ? (React.createElement("button", { onClick: sendText, className: "text-[#0d9488] rounded-full w-9 h-9 flex items-center justify-center shrink-0 text-xl" },
                     React.createElement("i", { className: "fa-solid fa-paper-plane" }))) : (React.createElement("button", { onClick: startRecording, disabled: blocked, className: "text-[#0d9488] w-9 h-9 flex items-center justify-center disabled:opacity-40 text-xl" },
                     React.createElement("i", { className: "fa-solid fa-microphone" })))))),
-        forwardMsg && React.createElement(ForwardModal, { message: forwardMsg, onClose: () => setForwardMsg(null) })));
+        forwardMsg && React.createElement(ForwardModal, { message: forwardMsg, onClose: () => setForwardMsg(null) }),
+        reportUserOpen && React.createElement(ReportReasonSheet, { targetType: "user", targetId: otherUid, targetOwnerId: otherUid, onClose: () => setReportUserOpen(false) })));
 }
 function ForwardModal({ message, onClose }) {
     const { profile } = useAuth();
@@ -9713,10 +9758,18 @@ function ReportReasonSheet({ targetType, targetId, targetOwnerId, onClose }) {
     const { profile } = useAuth();
     const toast = useToast();
     const [busy, setBusy] = useState(false);
-    const submit = async (reason) => {
+    // Two steps: pick a reason, then — only for "Something else" — describe it in your own
+    // words and optionally attach photo evidence, since a bare reason string isn't enough for
+    // an admin to act on when the built-in categories don't fit.
+    const [step, setStep] = useState('reasons');
+    const [details, setDetails] = useState('');
+    const [images, setImages] = useState([]);
+    const [uploading, setUploading] = useState(false);
+    const fileInputRef = useRef();
+    const submit = async (reason, extra) => {
         setBusy(true);
         try {
-            await reportContent(targetType, targetId, targetOwnerId, profile.id, reason);
+            await reportContent(targetType, targetId, targetOwnerId, profile.id, reason, extra);
             toast('Thanks — our team will review this', 'success');
             onClose();
         }
@@ -9727,9 +9780,60 @@ function ReportReasonSheet({ targetType, targetId, targetOwnerId, onClose }) {
             setBusy(false);
         }
     };
+    const pickReason = (r) => {
+        if (r === 'Something else') { setStep('details'); return; }
+        submit(r);
+    };
+    const handleFiles = async (fileList) => {
+        const room = 4 - images.length;
+        if (room <= 0) { toast('You can attach up to 4 photos', 'error'); return; }
+        const files = Array.from(fileList).slice(0, room);
+        setUploading(true);
+        try {
+            for (const file of files) {
+                if (!file.type.startsWith('image/')) { toast('Only images can be attached', 'error'); continue; }
+                if (file.size > 8 * 1024 * 1024) { toast(file.name + ' is too large (max 8MB)', 'error'); continue; }
+                const blob = await compressImage(file, 1400, 0.82);
+                const path = `reportEvidence/${profile.id}/${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
+                const ref = storage.ref(path);
+                await ref.put(blob);
+                const url = await ref.getDownloadURL();
+                setImages(prev => [...prev, url]);
+            }
+        }
+        catch (e) {
+            toast('Could not upload image: ' + e.message, 'error');
+        }
+        finally {
+            setUploading(false);
+        }
+    };
+    const removeImage = (url) => setImages(prev => prev.filter(u => u !== url));
+    const submitDetails = () => {
+        if (!details.trim()) { toast('Please describe what\'s wrong', 'error'); return; }
+        submit('Something else', { details: details.trim(), images });
+    };
+    if (step === 'details') {
+        return React.createElement(BottomSheet, { title: "Tell us more", onClose: onClose },
+            React.createElement("p", { className: "text-xs text-slate-400 px-2 pb-2" }, "Describe what's wrong \u2014 our team can only act on reports we understand."),
+            React.createElement("textarea", { value: details, onChange: e => setDetails(e.target.value), rows: 4, autoFocus: true, placeholder: "What happened?", className: "w-full bg-slate-50 dark:bg-ink-700 rounded-lg p-3 text-sm resize-none mx-2 mb-3", style: { width: 'calc(100% - 1rem)' } }),
+            React.createElement("div", { className: "px-2 mb-3" },
+                React.createElement("p", { className: "text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-1.5" }, "Attach photos (optional)"),
+                React.createElement("div", { className: "flex flex-wrap gap-2" },
+                    images.map(url => React.createElement("div", { key: url, className: "relative w-16 h-16 rounded-lg overflow-hidden border border-slate-200 dark:border-ink-600" },
+                        React.createElement("img", { src: url, className: "w-full h-full object-cover" }),
+                        React.createElement("button", { onClick: () => removeImage(url), className: "absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/60 text-white text-[10px] flex items-center justify-center" }, "\u2715"))),
+                    images.length < 4 && React.createElement("button", { onClick: () => fileInputRef.current.click(), disabled: uploading, className: "w-16 h-16 rounded-lg border-2 border-dashed border-slate-300 dark:border-ink-600 text-slate-400 flex flex-col items-center justify-center gap-0.5 disabled:opacity-50" },
+                        uploading ? React.createElement("div", { className: "w-4 h-4 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" }) : React.createElement("i", { className: "fa-solid fa-camera text-sm" }),
+                        !uploading && React.createElement("span", { className: "text-[9px]" }, "Add")),
+                    React.createElement("input", { ref: fileInputRef, type: "file", accept: "image/*", multiple: true, hidden: true, onChange: e => { if (e.target.files.length) handleFiles(e.target.files); e.target.value = ''; } }))),
+            React.createElement("div", { className: "flex gap-2 px-2 pb-1" },
+                React.createElement("button", { onClick: () => setStep('reasons'), disabled: busy, className: "flex-1 py-2.5 rounded-xl bg-slate-100 dark:bg-ink-700 text-sm font-semibold" }, "Back"),
+                React.createElement("button", { onClick: submitDetails, disabled: busy || uploading || !details.trim(), className: "flex-1 py-2.5 rounded-xl bg-red-500 text-white text-sm font-semibold disabled:opacity-50" }, busy ? 'Submitting\u2026' : 'Submit Report')));
+    }
     return React.createElement(BottomSheet, { title: "Report " + targetType, onClose: onClose },
         React.createElement("p", { className: "text-xs text-slate-400 px-2 pb-1" }, "Why are you reporting this?"),
-        REPORT_REASONS_LIST().map(r => React.createElement("button", { key: r, disabled: busy, onClick: () => submit(r), className: "w-full text-left px-3 py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-ink-700 text-sm" }, r)));
+        REPORT_REASONS_LIST().map(r => React.createElement("button", { key: r, disabled: busy, onClick: () => pickReason(r), className: "w-full text-left px-3 py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-ink-700 text-sm flex items-center justify-between" }, r, r === 'Something else' && React.createElement("i", { className: "fa-solid fa-chevron-right text-slate-300 text-xs" }))));
 }
 // Preview card for a group that was shared to someone's personal timeline (Post -> Share sheet
 // doesn't currently offer this for whole groups, but GroupScreen's "Share" button does).
