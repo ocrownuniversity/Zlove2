@@ -3757,6 +3757,10 @@ function CreatePostScreen({ go, route }) {
         if (route === null || route === void 0 ? void 0 : route.openPhotoPicker) {
             setTimeout(() => { var _a; return (_a = fileRef.current) === null || _a === void 0 ? void 0 : _a.click(); }, 150);
         }
+        if (route === null || route === void 0 ? void 0 : route.initialFile) {
+            setFiles(f => [...f, route.initialFile]);
+            setPreviews(p => [...p, URL.createObjectURL(route.initialFile)]);
+        }
     }, []);
     useEffect(() => {
         if ((route === null || route === void 0 ? void 0 : route.pageId) && myPages) {
@@ -12798,6 +12802,83 @@ function generateReferralCode() {
 function referralLinkFor(code) {
     return window.location.origin + window.location.pathname + '?ref=' + code;
 }
+// Renders a shareable "withdrawal receipt" card as a PNG (via canvas), so a user with an
+// approved referral withdrawal can post visual proof of a real payout to their timeline —
+// social proof that the platform actually pays out, not just a text claim. The account number
+// is masked to its last 4 digits since this image is going out publicly.
+function maskAccountNumber(num) {
+    const s = String(num || '');
+    return s.length <= 4 ? s : '\u2022\u2022\u2022\u2022\u2022\u2022' + s.slice(-4);
+}
+async function generateWithdrawalReceiptImage(w, profile) {
+    const W = 900, H = 1150;
+    const canvas = document.createElement('canvas');
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    // Background
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, '#0d9488'); bg.addColorStop(0.001, '#0d9488'); bg.addColorStop(0.32, '#0d9488');
+    ctx.fillStyle = '#f8fafc'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, 340);
+    // Brand
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '800 46px Sora, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Lokiface', W / 2, 90);
+    // Success check circle
+    ctx.beginPath(); ctx.arc(W / 2, 190, 54, 0, Math.PI * 2); ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(W / 2, 190, 40, 0, Math.PI * 2); ctx.fillStyle = '#ffffff'; ctx.fill();
+    ctx.strokeStyle = '#0d9488'; ctx.lineWidth = 7; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath(); ctx.moveTo(W / 2 - 18, 190); ctx.lineTo(W / 2 - 5, 205); ctx.lineTo(W / 2 + 20, 172); ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 30px Inter, sans-serif';
+    ctx.fillText('Withdrawal Successful', W / 2, 275);
+    ctx.font = '400 18px Inter, sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.fillText('Referral earnings payout', W / 2, 308);
+    // White card
+    const cardX = 60, cardY = 300, cardW = W - 120, cardH = 760;
+    ctx.fillStyle = '#ffffff';
+    (function roundRect(x, y, w, h, r) {
+        ctx.beginPath();
+        ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); ctx.fill();
+    })(cardX, cardY, cardW, cardH, 24);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '600 20px Inter, sans-serif';
+    ctx.fillText('AMOUNT PAID', W / 2, cardY + 70);
+    ctx.fillStyle = '#0d9488';
+    ctx.font = '800 72px Sora, sans-serif';
+    ctx.fillText(formatNaira(w.amount), W / 2, cardY + 150);
+    // Divider
+    ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(cardX + 40, cardY + 195); ctx.lineTo(cardX + cardW - 40, cardY + 195); ctx.stroke();
+    // Detail rows
+    ctx.textAlign = 'left';
+    const rows = [
+        ['Paid to', (profile.displayName || profile.username || 'Lokiface user')],
+        ['Zmonie account', maskAccountNumber(w.zmonieAccountNumber)],
+        ['Reference', (w.id || '').slice(0, 10).toUpperCase()],
+        ['Date', formatPostDate(w.reviewedAt || w.requestedAt)],
+        ['Status', 'APPROVED \u2713'],
+    ];
+    let ry = cardY + 250;
+    rows.forEach(([label, value]) => {
+        ctx.fillStyle = '#94a3b8'; ctx.font = '600 20px Inter, sans-serif';
+        ctx.fillText(label, cardX + 40, ry);
+        ctx.fillStyle = '#0f172a'; ctx.font = '700 22px Inter, sans-serif';
+        ctx.textAlign = 'right'; ctx.fillText(value, cardX + cardW - 40, ry);
+        ctx.textAlign = 'left';
+        ry += 62;
+    });
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = '500 17px Inter, sans-serif';
+    ctx.fillText('Verified payout \u2014 join Lokiface and earn from your referrals too', W / 2, H - 40);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png', 0.95));
+    return new File([blob], 'lokiface-withdrawal-receipt.png', { type: 'image/png' });
+}
 // Tries to attach a fresh referral code to a user, retrying on code collisions. Returns true on
 // success, false if it ran out of attempts or every attempt hit a real error (e.g. blocked by
 // Firestore security rules or offline) — logged to the console so it's diagnosable instead of
@@ -13015,6 +13096,22 @@ function ReferralScreen({ go }) {
             initialText: '\uD83C\uDF89 I just earned a referral bonus on Lokiface! Join using my link and start earning too \u2014 sign up here: ' + link
         });
     };
+    const [generatingReceiptId, setGeneratingReceiptId] = useState(null);
+    // Real proof of a real payout: renders the withdrawal as a branded receipt image the user can
+    // post to their own timeline, so followers see actual evidence the platform pays out — not
+    // just a claim in a caption. Only offered once a withdrawal is 'approved' (i.e. actually paid).
+    const shareWithdrawalReceipt = async (w) => {
+        setGeneratingReceiptId(w.id);
+        try {
+            const file = await generateWithdrawalReceiptImage(w, profile);
+            go({
+                name: 'createPost',
+                initialFile: file,
+                initialText: '\u2705 Just got paid ' + formatNaira(w.amount) + ' from my Lokiface referral earnings! This platform really pays. Join with my link and start earning too: ' + link
+            });
+        } catch (e) { toast('Could not generate receipt \u2014 try again.', 'error'); }
+        finally { setGeneratingReceiptId(null); }
+    };
     return React.createElement("div", null,
         React.createElement("div", { className: "flex items-center gap-2 mb-4" },
             React.createElement("button", { onClick: () => go({ name: 'menu' }), className: "text-slate-400" }, React.createElement("i", { className: "fa-solid fa-arrow-left text-lg" })),
@@ -13068,7 +13165,11 @@ function ReferralScreen({ go }) {
                     React.createElement("p", { className: "text-sm font-bold" }, formatNaira(w.amount)),
                     React.createElement("span", { className: "text-[11px] font-semibold px-2 py-0.5 rounded-full " + (w.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : w.status === 'rejected' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700') }, w.status)),
                 React.createElement("p", { className: "text-[11px] text-slate-400" }, "Zmonie: ", w.zmonieAccountNumber, " \u00B7 ", w.zmonieAccountName, " \u00B7 ", timeAgo(w.requestedAt)),
-                w.rejectionReason && React.createElement("p", { className: "text-[11px] text-red-500 mt-1" }, "Reason: ", w.rejectionReason)))),
+                w.rejectionReason && React.createElement("p", { className: "text-[11px] text-red-500 mt-1" }, "Reason: ", w.rejectionReason),
+                w.status === 'approved' && React.createElement("button", { onClick: () => shareWithdrawalReceipt(w), disabled: generatingReceiptId === w.id, className: "mt-2 w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg py-2 text-xs font-semibold" },
+                    generatingReceiptId === w.id
+                        ? React.createElement(React.Fragment, null, React.createElement("i", { className: "fa-solid fa-circle-notch fa-spin" }), "Preparing receipt\u2026")
+                        : React.createElement(React.Fragment, null, React.createElement("i", { className: "fa-solid fa-receipt" }), "Share withdrawal receipt to timeline"))))),
         withdrawOpen && React.createElement(WithdrawReferralSheet, { profile: profile, cfg: cfg, onClose: () => setWithdrawOpen(false) }));
 }
 function WithdrawReferralSheet({ profile, cfg, onClose }) {
