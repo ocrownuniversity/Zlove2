@@ -81,6 +81,9 @@
   .tile-pop { animation: tilePop 150ms ease-in-out; }
   @keyframes tileAppear { 0% { transform: scale(0); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
   .tile-new { animation: tileAppear 150ms ease-in-out; }
+  @keyframes msgIn { from { opacity:0; transform: translateY(6px) scale(.98); } to { opacity:1; transform:none; } }
+  .msg-in { animation: msgIn .18s ease-out; }
+  @keyframes waveBar { 0%,100% { transform: scaleY(0.4); } 50% { transform: scaleY(1); } }
 </style>
 </head>
 <body class="bg-slate-50 dark:bg-ink-900 text-slate-900 dark:text-slate-100 transition-colors">
@@ -454,7 +457,9 @@ function PostMetaLine({ post }) {
 function formatRichText(text) {
     if (!text)
         return null;
-    const parts = String(text).split(/(\*\*[^*]+\*\*|\*[^*]+\*|@[a-zA-Z0-9_.]+)/g).filter(p => p !== '');
+    // Also splits out raw URLs (http://, https://, www.) as their own tokens so they can be
+    // rendered as real, clickable, sanitized <a> tags instead of plain text.
+    const parts = String(text).split(/(\*\*[^*]+\*\*|\*[^*]+\*|@[a-zA-Z0-9_.]+|(?:https?:\/\/|www\.)[^\s<>"']+)/g).filter(p => p !== '');
     return parts.map((part, i) => {
         if (part.length > 4 && part.startsWith('**') && part.endsWith('**')) {
             return React.createElement('b', { key: i }, part.slice(2, -2));
@@ -465,8 +470,105 @@ function formatRichText(text) {
         if (part.startsWith('@') && part.length > 1) {
             return React.createElement('span', { key: i, className: 'text-brand-600 dark:text-brand-400 font-semibold' }, part);
         }
+        if (/^(https?:\/\/|www\.)/i.test(part)) {
+            // Strip trailing punctuation that's part of the sentence, not the URL (e.g. "see
+            // https://x.com!" shouldn't turn the "!" into part of the link).
+            const trailing = part.match(/[.,!?;:)\]]+$/);
+            const clean = trailing ? part.slice(0, -trailing[0].length) : part;
+            const href = clean.startsWith('www.') ? 'https://' + clean : clean;
+            try {
+                const parsed = new URL(href);
+                // Only http/https are ever rendered as a link — this is what keeps a pasted
+                // "javascript:..." or other exotic scheme from becoming a clickable XSS vector.
+                if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+                    return React.createElement(React.Fragment, { key: i },
+                        React.createElement('a', { href: href, target: '_blank', rel: 'noopener noreferrer nofollow', onClick: (e) => e.stopPropagation(), className: 'text-brand-600 dark:text-brand-400 underline break-all' }, clean),
+                        trailing ? trailing[0] : null);
+                }
+            }
+            catch (e) { /* not a valid URL — fall through and render as plain text */ }
+        }
         return part;
     });
+}
+// Pulls every distinct http(s)/www link out of a block of text, sanitized and de-duplicated, for
+// feeding into LinkPreviewList below. Shared by posts, comments, replies, and chat messages.
+function extractUrls(text) {
+    if (!text)
+        return [];
+    const found = String(text).match(/(?:https?:\/\/|www\.)[^\s<>"']+/gi) || [];
+    const seen = new Set();
+    const out = [];
+    for (let raw of found) {
+        const trailing = raw.match(/[.,!?;:)\]]+$/);
+        const clean = trailing ? raw.slice(0, -trailing[0].length) : raw;
+        const href = clean.startsWith('www.') ? 'https://' + clean : clean;
+        if (seen.has(href))
+            continue;
+        try {
+            const parsed = new URL(href);
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+                continue;
+        }
+        catch (e) { continue; }
+        seen.add(href);
+        out.push(href);
+    }
+    return out;
+}
+// In-memory cache (per page load) so the same link doesn't get re-fetched for every message/post
+// that shares it. Uses Microlink's public metadata API since this app has no backend of its own
+// to safely fetch and parse a third-party page's Open Graph tags.
+const _linkPreviewCache = new Map();
+function fetchLinkPreview(url) {
+    if (_linkPreviewCache.has(url))
+        return _linkPreviewCache.get(url);
+    const p = fetch('https://api.microlink.io/?url=' + encodeURIComponent(url) + '&meta=true')
+        .then(r => r.json())
+        .then(j => (j && j.status === 'success') ? j.data : null)
+        .catch(() => null);
+    _linkPreviewCache.set(url, p);
+    return p;
+}
+// A single Facebook/WhatsApp/Telegram-style link card: favicon + site name, title, description,
+// thumbnail — or, if Open Graph data can't be fetched, a clean fallback showing just the domain.
+function LinkPreviewCard({ url }) {
+    const [data, setData] = useState(undefined); // undefined = loading, null = no metadata available
+    useEffect(() => {
+        let alive = true;
+        fetchLinkPreview(url).then(d => { if (alive)
+            setData(d); });
+        return () => { alive = false; };
+    }, [url]);
+    let domain = '';
+    try { domain = new URL(url).hostname.replace(/^www\./, ''); } catch (e) { return null; }
+    const favicon = 'https://www.google.com/s2/favicons?sz=64&domain=' + domain;
+    if (data === undefined) {
+        return React.createElement("div", { className: "mt-2 max-w-sm rounded-xl border border-slate-100 dark:border-ink-600 overflow-hidden bg-slate-50 dark:bg-ink-700" },
+            React.createElement("div", { className: "h-28 skeleton" }),
+            React.createElement("div", { className: "p-2.5 space-y-1.5" },
+                React.createElement("div", { className: "h-2.5 w-2/3 rounded skeleton" }),
+                React.createElement("div", { className: "h-2 w-1/3 rounded skeleton" })));
+    }
+    const image = data && data.image && data.image.url;
+    const title = data && data.title;
+    const description = data && data.description;
+    return React.createElement("a", { href: url, target: "_blank", rel: "noopener noreferrer nofollow", onClick: (e) => e.stopPropagation(), className: "mt-2 max-w-sm rounded-xl border border-slate-100 dark:border-ink-600 overflow-hidden bg-white dark:bg-ink-800 hover:bg-slate-50 dark:hover:bg-ink-700 transition block no-underline" },
+        image && React.createElement("img", { src: image, loading: "lazy", className: "w-full h-32 object-cover bg-slate-100 dark:bg-ink-700", onError: e => { e.target.style.display = 'none'; } }),
+        React.createElement("div", { className: "p-2.5" },
+            React.createElement("div", { className: "flex items-center gap-1.5 mb-1" },
+                React.createElement("img", { src: favicon, className: "w-3.5 h-3.5 rounded-sm", onError: e => { e.target.style.display = 'none'; } }),
+                React.createElement("span", { className: "text-[11px] text-slate-400 uppercase tracking-wide truncate" }, (data && data.publisher) || domain)),
+            title ? React.createElement("p", { className: "text-sm font-semibold text-[#050505] dark:text-white line-clamp-2" }, title) : React.createElement("p", { className: "text-sm font-semibold text-brand-600 dark:text-brand-400 truncate" }, url),
+            description && React.createElement("p", { className: "text-xs text-slate-400 mt-0.5 line-clamp-2" }, description)));
+}
+// Renders up to `max` link preview cards for every link found in `text` — drop this under any
+// post/comment/message body to get automatic rich previews.
+function LinkPreviewList({ text, max }) {
+    const urls = useMemo(() => extractUrls(text), [text]);
+    if (!urls.length)
+        return null;
+    return React.createElement(React.Fragment, null, urls.slice(0, max || 2).map(u => React.createElement(LinkPreviewCard, { key: u, url: u })));
 }
 // Truncates long text to a preview and lets the user expand/collapse it with a "See more"/"See less" toggle.
 function ExpandableText({ text, className, limit }) {
@@ -476,7 +578,9 @@ function ExpandableText({ text, className, limit }) {
         return null;
     const isLong = String(text).length > maxChars;
     const shown = expanded || !isLong ? text : String(text).slice(0, maxChars).trimEnd() + '…';
-    return React.createElement("p", { className: className }, formatRichText(shown), isLong && React.createElement("span", { onClick: (e) => { e.stopPropagation(); setExpanded(v => !v); }, className: "text-brand-600 dark:text-brand-400 font-semibold cursor-pointer ml-1 select-none" }, expanded ? ' See less' : ' See more'));
+    return React.createElement("div", null,
+        React.createElement("p", { className: className }, formatRichText(shown), isLong && React.createElement("span", { onClick: (e) => { e.stopPropagation(); setExpanded(v => !v); }, className: "text-brand-600 dark:text-brand-400 font-semibold cursor-pointer ml-1 select-none" }, expanded ? ' See less' : ' See more')),
+        React.createElement(LinkPreviewList, { text: shown }));
 }
 /* ---- global zoomable image lightbox: any image on the site can call openLightbox(src|[srcs], index) ---- */
 let _lightboxSetState = null;
@@ -2885,6 +2989,370 @@ function ToastProvider({ children }) {
                 (t.type === 'error' ? 'bg-red-500' : t.type === 'success' ? 'bg-emerald-500' : 'bg-ink-800') }, t.message))))));
 }
 /* ============================== APP ROOT ============================== */
+/* ============================== VOICE & VIDEO CALLING ==============================
+   Peer-to-peer WebRTC calls, signaled entirely through Firestore — no server or Cloud
+   Function required, since only Firestore + Auth + Storage are available here.
+
+   Firestore layout used (new, does not touch any existing collection):
+     calls/{callId}                — one doc per call attempt
+       callerId, calleeId, callerName, callerPhoto, calleeName, calleePhoto,
+       type ('voice'|'video'), status ('ringing'|'accepted'|'rejected'|'busy'|'missed'|'ended'),
+       offer{type,sdp}, answer{type,sdp}, createdAt, updatedAt
+     calls/{callId}/candidates/{auto} — ICE candidates, { from: uid, candidate }
+
+   Add these Security Rules (Firestore console → Rules) so only the two participants on
+   a call can read/write it:
+
+     match /calls/{callId} {
+       allow create: if request.auth != null && request.auth.uid == request.resource.data.callerId;
+       allow read: if request.auth != null &&
+         (request.auth.uid == resource.data.callerId || request.auth.uid == resource.data.calleeId);
+       allow update: if request.auth != null &&
+         (request.auth.uid == resource.data.callerId || request.auth.uid == resource.data.calleeId);
+       match /candidates/{candidateId} {
+         allow read, create: if request.auth != null;
+       }
+     }
+
+   Optional cleanup: Firestore supports a free TTL policy (Console → Firestore →
+   TTL) on the `updatedAt` field of `calls` so old call docs auto-delete after a day —
+   no Cloud Function needed.
+
+   NAT traversal: Google's free public STUN servers, plus the free OpenRelay TURN
+   servers (openrelay.metered.ca) as a fallback for callers behind strict NATs/firewalls
+   where a direct peer-to-peer connection can't be established. OpenRelay's free tier is
+   shared publicly and rate-limited — fine to get started, but swap in your own TURN
+   credentials below (e.g. a free Metered.ca or Cloudflare Calls account) if calls start
+   failing to connect under real traffic. */
+const ICE_SERVERS = {
+    iceServers: [
+        { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] },
+        { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+        { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+        { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+    ]
+};
+const RING_TIMEOUT_MS = 45000;
+// Tiny module-level store (outside React) so any component can trigger/observe the
+// active call without needing a Context Provider wrapped around the whole app.
+const callStore = (function () {
+    let state = { call: null };
+    let listeners = [];
+    return {
+        get: () => state,
+        set: (patch) => { state = Object.assign({}, state, typeof patch === 'function' ? patch(state) : patch); listeners.forEach(l => l(state)); },
+        subscribe: (fn) => { listeners.push(fn); return () => { listeners = listeners.filter(l => l !== fn); }; }
+    };
+})();
+function useCallState() {
+    const [s, setS] = useState(callStore.get());
+    useEffect(() => callStore.subscribe(setS), []);
+    return s;
+}
+function makeRingtone(freq) {
+    let ctx = null, interval = null;
+    return {
+        start() {
+            try {
+                ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const beep = () => {
+                    if (!ctx) return;
+                    const osc = ctx.createOscillator(), gain = ctx.createGain();
+                    osc.type = 'sine'; osc.frequency.value = freq || 440;
+                    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.05);
+                    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.85);
+                    osc.connect(gain); gain.connect(ctx.destination);
+                    osc.start(); osc.stop(ctx.currentTime + 0.9);
+                };
+                beep();
+                interval = setInterval(beep, 1600);
+            } catch (e) { /* Web Audio unsupported/blocked — call still works, just silent */ }
+        },
+        stop() {
+            clearInterval(interval); interval = null;
+            if (ctx) { try { ctx.close(); } catch (e) { } ctx = null; }
+        }
+    };
+}
+let __ringtone = null;
+let __session = null; // { pc, localStream, callId, role, otherUid, callDocUnsub, candidatesUnsub, ringTimeout }
+function __teardownSession() {
+    if (__ringtone) { __ringtone.stop(); __ringtone = null; }
+    if (!__session) return;
+    const s = __session;
+    __session = null;
+    if (s.ringTimeout) clearTimeout(s.ringTimeout);
+    if (s.callDocUnsub) s.callDocUnsub();
+    if (s.candidatesUnsub) s.candidatesUnsub();
+    try { s.pc && s.pc.close(); } catch (e) { }
+    try { (s.localStream ? s.localStream.getTracks() : []).forEach(t => t.stop()); } catch (e) { }
+}
+function endActiveCall(reason) {
+    const s = __session;
+    if (s && s.callId) {
+        db.collection('calls').doc(s.callId).update({ status: reason || 'ended', updatedAt: FieldValue.serverTimestamp() }).catch(() => { });
+    }
+    __teardownSession();
+    callStore.set({ call: null });
+}
+function declineIncomingCall(callId) {
+    if (__ringtone) { __ringtone.stop(); __ringtone = null; }
+    const current = callStore.get().call;
+    if (current && current.incomingUnsub) current.incomingUnsub();
+    db.collection('calls').doc(callId).update({ status: 'rejected', updatedAt: FieldValue.serverTimestamp() }).catch(() => { });
+    callStore.set({ call: null });
+}
+function attachRemoteTrackHandlers(pc) {
+    const remoteStream = new MediaStream();
+    pc.ontrack = (e) => {
+        (e.streams[0] ? e.streams[0].getTracks() : [e.track]).forEach(t => { if (!remoteStream.getTracks().includes(t)) remoteStream.addTrack(t); });
+        callStore.set(s => ({ call: s.call ? Object.assign({}, s.call, { remoteStream }) : s.call }));
+    };
+    return remoteStream;
+}
+function watchConnectionState(pc) {
+    pc.onconnectionstatechange = () => {
+        const st = pc.connectionState;
+        if (st === 'connected') {
+            callStore.set(s => (s.call && s.call.status !== 'connected') ? { call: Object.assign({}, s.call, { status: 'connected', connectedAt: Date.now() }) } : s);
+        } else if (st === 'failed' || st === 'closed') {
+            if (__session) endActiveCall('ended');
+        }
+    };
+}
+async function startOutgoingCall(profile, otherUid, otherUser, type) {
+    if (__session || callStore.get().call) throw new Error('You are already on a call.');
+    if (!otherUid || otherUid === profile.id) throw new Error('Invalid call target.');
+    let localStream;
+    try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: type === 'video' ? { facingMode: 'user' } : false });
+    } catch (e) {
+        throw new Error('Could not access your ' + (type === 'video' ? 'camera/microphone' : 'microphone') + '. Please allow permission and try again.');
+    }
+    const pc = new RTCPeerConnection(ICE_SERVERS);
+    localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+    const remoteStream = attachRemoteTrackHandlers(pc);
+    watchConnectionState(pc);
+    const callRef = db.collection('calls').doc();
+    pc.onicecandidate = (e) => { if (e.candidate) callRef.collection('candidates').add({ from: profile.id, candidate: e.candidate.toJSON(), createdAt: FieldValue.serverTimestamp() }).catch(() => { }); };
+    const otherPhoto = otherUser.photoURL || (otherUser.photos && otherUser.photos[0]) || null;
+    __session = { pc, localStream, callId: callRef.id, role: 'caller', otherUid };
+    callStore.set({
+        call: { id: callRef.id, role: 'caller', type, status: 'ringing', peer: { id: otherUid, name: otherUser.displayName, photo: otherPhoto }, localStream, remoteStream, muted: false, cameraOff: false }
+    });
+    try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await callRef.set({
+            callerId: profile.id, calleeId: otherUid,
+            callerName: profile.displayName || 'Someone', callerPhoto: profile.photoURL || null,
+            calleeName: otherUser.displayName || '', calleePhoto: otherPhoto,
+            type, status: 'ringing', offer: { type: offer.type, sdp: offer.sdp }, answer: null,
+            createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp()
+        });
+    } catch (e) {
+        __teardownSession(); callStore.set({ call: null });
+        throw new Error('Could not start the call: ' + e.message);
+    }
+    __ringtone = makeRingtone(480);
+    __ringtone.start();
+    __session.candidatesUnsub = callRef.collection('candidates').where('from', '==', otherUid).onSnapshot(snap => {
+        snap.docChanges().forEach(ch => { if (ch.type === 'added') { const d = ch.doc.data(); pc.addIceCandidate(new RTCIceCandidate(d.candidate)).catch(() => { }); } });
+    });
+    __session.callDocUnsub = callRef.onSnapshot(async (snap) => {
+        if (!snap.exists || !__session || __session.callId !== callRef.id) return;
+        const data = snap.data();
+        if (data.status === 'accepted' && data.answer && !pc.currentRemoteDescription) {
+            if (__ringtone) { __ringtone.stop(); __ringtone = null; }
+            if (__session.ringTimeout) clearTimeout(__session.ringTimeout);
+            try { await pc.setRemoteDescription(new RTCSessionDescription(data.answer)); } catch (e) { }
+            callStore.set(s => ({ call: s.call ? Object.assign({}, s.call, { status: 'connecting' }) : s.call }));
+        } else if (data.status === 'rejected' || data.status === 'busy' || data.status === 'ended' || data.status === 'missed') {
+            callStore.set({ call: null }); __teardownSession();
+        }
+    });
+    __session.ringTimeout = setTimeout(() => {
+        if (__session && __session.callId === callRef.id) {
+            callRef.update({ status: 'missed', updatedAt: FieldValue.serverTimestamp() }).catch(() => { });
+            callStore.set({ call: null }); __teardownSession();
+        }
+    }, RING_TIMEOUT_MS);
+}
+function listenForIncomingCalls(profile) {
+    return db.collection('calls').where('calleeId', '==', profile.id).where('status', '==', 'ringing')
+        .onSnapshot(snap => {
+            snap.docChanges().forEach(ch => {
+                if (ch.type !== 'added') return;
+                const data = ch.doc.data();
+                const ageMs = data.createdAt && data.createdAt.toDate ? (Date.now() - data.createdAt.toDate().getTime()) : 0;
+                if (ageMs > RING_TIMEOUT_MS) return; // stale ringing doc left over from a previous session
+                if (__session || callStore.get().call) { // already on/showing a call — auto-decline as busy
+                    db.collection('calls').doc(ch.doc.id).update({ status: 'busy', updatedAt: FieldValue.serverTimestamp() }).catch(() => { });
+                    return;
+                }
+                __ringtone = makeRingtone(392);
+                __ringtone.start();
+                const incomingUnsub = db.collection('calls').doc(ch.doc.id).onSnapshot(s2 => {
+                    if (!s2.exists) return;
+                    const d2 = s2.data();
+                    const cur = callStore.get().call;
+                    if (d2.status !== 'ringing' && cur && cur.id === ch.doc.id && cur.status === 'ringing-incoming') {
+                        if (__ringtone) { __ringtone.stop(); __ringtone = null; }
+                        callStore.set({ call: null });
+                    }
+                });
+                callStore.set({ call: { id: ch.doc.id, role: 'callee', status: 'ringing-incoming', type: data.type, peer: { id: data.callerId, name: data.callerName, photo: data.callerPhoto }, incomingUnsub } });
+            });
+        }, () => { });
+}
+async function acceptIncomingCall(profile) {
+    const current = callStore.get().call;
+    if (!current || current.role !== 'callee') return;
+    const callId = current.id;
+    if (__ringtone) { __ringtone.stop(); __ringtone = null; }
+    if (current.incomingUnsub) current.incomingUnsub();
+    const callRef = db.collection('calls').doc(callId);
+    const snap = await callRef.get();
+    if (!snap.exists || snap.data().status !== 'ringing') { callStore.set({ call: null }); throw new Error('This call is no longer available.'); }
+    const data = snap.data();
+    let localStream;
+    try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: data.type === 'video' ? { facingMode: 'user' } : false });
+    } catch (e) {
+        await callRef.update({ status: 'rejected', updatedAt: FieldValue.serverTimestamp() });
+        callStore.set({ call: null });
+        throw new Error('Could not access your ' + (data.type === 'video' ? 'camera/microphone' : 'microphone') + '. Please allow permission and try again.');
+    }
+    const pc = new RTCPeerConnection(ICE_SERVERS);
+    localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+    const remoteStream = attachRemoteTrackHandlers(pc);
+    watchConnectionState(pc);
+    pc.onicecandidate = (e) => { if (e.candidate) callRef.collection('candidates').add({ from: profile.id, candidate: e.candidate.toJSON(), createdAt: FieldValue.serverTimestamp() }).catch(() => { }); };
+    __session = { pc, localStream, callId, role: 'callee', otherUid: data.callerId };
+    callStore.set({ call: { id: callId, role: 'callee', type: data.type, status: 'connecting', peer: { id: data.callerId, name: data.callerName, photo: data.callerPhoto }, localStream, remoteStream, muted: false, cameraOff: false } });
+    try {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        await callRef.update({ answer: { type: answer.type, sdp: answer.sdp }, status: 'accepted', updatedAt: FieldValue.serverTimestamp() });
+    } catch (e) {
+        __teardownSession(); callStore.set({ call: null });
+        throw new Error('Could not connect the call: ' + e.message);
+    }
+    __session.candidatesUnsub = callRef.collection('candidates').where('from', '==', data.callerId).onSnapshot(snap2 => {
+        snap2.docChanges().forEach(ch => { if (ch.type === 'added') { const d = ch.doc.data(); pc.addIceCandidate(new RTCIceCandidate(d.candidate)).catch(() => { }); } });
+    });
+    __session.callDocUnsub = callRef.onSnapshot(s3 => {
+        if (!s3.exists || !__session) return;
+        if (s3.data().status === 'ended') { callStore.set({ call: null }); __teardownSession(); }
+    });
+}
+function toggleCallMute() {
+    if (!__session) return;
+    const track = __session.localStream.getAudioTracks()[0];
+    if (!track) return;
+    track.enabled = !track.enabled;
+    callStore.set(s => ({ call: s.call ? Object.assign({}, s.call, { muted: !track.enabled }) : s.call }));
+}
+function toggleCallCamera() {
+    if (!__session) return;
+    const track = __session.localStream.getVideoTracks()[0];
+    if (!track) return;
+    track.enabled = !track.enabled;
+    callStore.set(s => ({ call: s.call ? Object.assign({}, s.call, { cameraOff: !track.enabled }) : s.call }));
+}
+async function switchCallCamera() {
+    if (!__session) return;
+    const current = __session.localStream.getVideoTracks()[0];
+    if (!current) return;
+    const facing = (current.getSettings().facingMode === 'environment') ? 'user' : 'environment';
+    try {
+        const newStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: false });
+        const newTrack = newStream.getVideoTracks()[0];
+        const sender = __session.pc.getSenders().find(s => s.track && s.track.kind === 'video');
+        if (sender) await sender.replaceTrack(newTrack);
+        current.stop();
+        __session.localStream.removeTrack(current);
+        __session.localStream.addTrack(newTrack);
+        callStore.set(s => ({ call: s.call ? Object.assign({}, s.call) : s.call })); // same object refs, just nudge a re-render
+    } catch (e) { /* device likely only has one camera — ignore */ }
+}
+function CallTimer({ connectedAt }) {
+    const [now, setNow] = useState(Date.now());
+    useEffect(() => { const i = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(i); }, []);
+    if (!connectedAt) return null;
+    const secs = Math.max(0, Math.floor((now - connectedAt) / 1000));
+    return React.createElement("span", null, String(Math.floor(secs / 60)).padStart(2, '0') + ':' + String(secs % 60).padStart(2, '0'));
+}
+function CallAvatarPhoto({ peer, size }) {
+    const src = peer.photo || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(peer.name || '?')}&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`;
+    return React.createElement("img", { src: src, className: "rounded-full object-cover bg-slate-700", style: { width: size, height: size } });
+}
+function IncomingCallModal({ call }) {
+    const toast = useToast();
+    const [busy, setBusy] = useState(false);
+    const { profile } = useAuth();
+    const accept = async () => { setBusy(true); try { await acceptIncomingCall(profile); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); } };
+    const decline = () => declineIncomingCall(call.id);
+    return React.createElement("div", { className: "fixed inset-0 z-[200] bg-ink-900/98 flex flex-col items-center justify-center text-white px-6" },
+        React.createElement("div", { className: "absolute inset-0 flex items-center justify-center" },
+            React.createElement("div", { className: "w-56 h-56 rounded-full bg-brand-500/10 animate-ping absolute" })),
+        React.createElement("div", { className: "relative z-10 flex flex-col items-center" },
+            React.createElement(CallAvatarPhoto, { peer: call.peer, size: 112 }),
+            React.createElement("p", { className: "mt-5 font-display text-xl font-bold" }, call.peer.name || 'Someone'),
+            React.createElement("p", { className: "mt-1 text-sm text-slate-300" }, "Incoming ", call.type === 'video' ? 'video call' : 'voice call', "\u2026"),
+            React.createElement("div", { className: "flex items-center gap-10 mt-12" },
+                React.createElement("button", { onClick: decline, disabled: busy, className: "w-16 h-16 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center shadow-lg disabled:opacity-60" },
+                    React.createElement("i", { className: "fa-solid fa-phone-slash text-xl" })),
+                React.createElement("button", { onClick: accept, disabled: busy, className: "w-16 h-16 rounded-full bg-emerald-500 hover:bg-emerald-600 flex items-center justify-center shadow-lg disabled:opacity-60" },
+                    React.createElement("i", { className: (call.type === 'video' ? "fa-solid fa-video" : "fa-solid fa-phone") + " text-xl" })))));
+}
+function CallScreen({ call }) {
+    const localVideoRef = useRef(null);
+    const remoteVideoRef = useRef(null);
+    const remoteAudioRef = useRef(null);
+    useEffect(() => { if (localVideoRef.current) localVideoRef.current.srcObject = call.localStream || null; }, [call.localStream]);
+    useEffect(() => { if (remoteVideoRef.current) remoteVideoRef.current.srcObject = call.remoteStream || null; }, [call.remoteStream, call.type]);
+    useEffect(() => { if (remoteAudioRef.current) remoteAudioRef.current.srcObject = call.remoteStream || null; }, [call.remoteStream, call.type]);
+    const isVideo = call.type === 'video';
+    const statusLabel = call.status === 'connected' ? React.createElement(CallTimer, { connectedAt: call.connectedAt })
+        : call.status === 'connecting' ? 'Connecting\u2026'
+            : call.role === 'caller' ? 'Ringing\u2026' : 'Connecting\u2026';
+    return React.createElement("div", { className: "fixed inset-0 z-[200] bg-ink-900 text-white flex flex-col" },
+        isVideo && React.createElement("video", { ref: remoteVideoRef, autoPlay: true, playsInline: true, className: "absolute inset-0 w-full h-full object-cover bg-ink-900" }),
+        !isVideo && React.createElement("audio", { ref: remoteAudioRef, autoPlay: true }),
+        (!isVideo || call.status !== 'connected') && React.createElement("div", { className: "absolute inset-0 flex flex-col items-center justify-center" + (isVideo ? " bg-ink-900/60" : "") },
+            React.createElement(CallAvatarPhoto, { peer: call.peer, size: 128 }),
+            React.createElement("p", { className: "mt-5 font-display text-xl font-bold" }, call.peer.name || 'Someone'),
+            React.createElement("p", { className: "mt-1 text-sm text-slate-300" }, statusLabel)),
+        isVideo && call.status === 'connected' && React.createElement("p", { className: "absolute top-6 left-0 right-0 text-center text-sm font-semibold text-white drop-shadow" }, call.peer.name, " \u00B7 ", statusLabel),
+        isVideo && !call.cameraOff && React.createElement("video", { ref: localVideoRef, autoPlay: true, playsInline: true, muted: true, className: "absolute bottom-28 right-4 w-28 h-40 rounded-2xl object-cover border-2 border-white/20 shadow-lg bg-ink-800" }),
+        React.createElement("div", { className: "relative z-10 mt-auto pb-10 pt-6 flex items-center justify-center gap-5" },
+            React.createElement("button", { onClick: toggleCallMute, className: "w-14 h-14 rounded-full flex items-center justify-center " + (call.muted ? "bg-white text-ink-900" : "bg-white/15 hover:bg-white/25") },
+                React.createElement("i", { className: "fa-solid " + (call.muted ? "fa-microphone-slash" : "fa-microphone") })),
+            isVideo && React.createElement("button", { onClick: toggleCallCamera, className: "w-14 h-14 rounded-full flex items-center justify-center " + (call.cameraOff ? "bg-white text-ink-900" : "bg-white/15 hover:bg-white/25") },
+                React.createElement("i", { className: "fa-solid " + (call.cameraOff ? "fa-video-slash" : "fa-video") })),
+            isVideo && React.createElement("button", { onClick: switchCallCamera, className: "w-14 h-14 rounded-full flex items-center justify-center bg-white/15 hover:bg-white/25" },
+                React.createElement("i", { className: "fa-solid fa-camera-rotate" })),
+            React.createElement("button", { onClick: () => endActiveCall('ended'), className: "w-16 h-16 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center shadow-lg" },
+                React.createElement("i", { className: "fa-solid fa-phone-slash text-xl" }))));
+}
+// Mounted once inside MainApp — listens for incoming calls addressed to the signed-in
+// user and renders the incoming-call / in-call full-screen overlays on top of everything.
+function CallOverlayHost() {
+    const { profile } = useAuth();
+    const { call } = useCallState();
+    useEffect(() => {
+        if (!(profile && profile.id)) return;
+        const unsub = listenForIncomingCalls(profile);
+        return () => { unsub && unsub(); if (__session) endActiveCall('ended'); };
+    }, [profile && profile.id]);
+    if (!call) return null;
+    if (call.role === 'callee' && call.status === 'ringing-incoming') return React.createElement(IncomingCallModal, { call: call });
+    return React.createElement(CallScreen, { call: call });
+}
+
 function App() {
     const [firebaseUser, setFirebaseUser] = useState(undefined); // undefined = loading
     const [profile, setProfile] = useState(null);
@@ -2937,6 +3405,14 @@ function App() {
             return;
         notifyFriendsOfBirthdayIfDue(profile);
     }, [profile === null || profile === void 0 ? void 0 : profile.id, profile === null || profile === void 0 ? void 0 : profile.dob, profile === null || profile === void 0 ? void 0 : profile.lastBirthdayNotifiedYear]);
+    // Catches up any Paystack payment that was charged but never got credited last time (see
+    // reconcilePendingPaystackPayments) — runs once as soon as we know who's signed in, i.e.
+    // "once he enters the website back".
+    useEffect(() => {
+        if (!(profile === null || profile === void 0 ? void 0 : profile.id))
+            return;
+        reconcilePendingPaystackPayments(profile.id).catch(() => { });
+    }, [profile === null || profile === void 0 ? void 0 : profile.id]);
     const authValue = useMemo(() => ({ firebaseUser, profile }), [firebaseUser, profile]);
     if (firebaseUser === undefined) {
         return React.createElement(SplashScreen, null);
@@ -3312,6 +3788,7 @@ function MainApp({ route, setRoute }) {
     // through visible navigation, per the "not discoverable by regular users" requirement.
     const go = (r) => { setRoute(r); };
     return (React.createElement("div", { className: "min-h-screen flex" },
+        React.createElement(CallOverlayHost, null),
         React.createElement("aside", { className: "hidden md:flex flex-col w-64 shrink-0 border-r border-slate-100 dark:border-ink-800 px-4 py-6 sticky top-0 h-screen" },
             React.createElement("div", { className: "flex items-center gap-2 px-2 mb-8 text-brand-600 dark:text-brand-400" },
                 React.createElement("span", { className: "font-display font-extrabold text-3xl" }, "Lokiface")),
@@ -3365,7 +3842,12 @@ function MainApp({ route, setRoute }) {
                 route.name === 'chat' && React.createElement(ChatWindow, { chatId: route.chatId, otherUid: route.otherUid, pageId: route.pageId, go: go }),
                 route.name === 'notifications' && React.createElement(NotificationsScreen, { go: go }),
                 route.name === 'bookmarks' && React.createElement(BookmarksScreen, { go: go }),
+                route.name === 'memories' && React.createElement(MemoriesScreen, { go: go }),
                 route.name === 'birthdays' && React.createElement(BirthdaysScreen, { go: go }),
+                route.name === 'dashboard' && React.createElement(DashboardScreen, { go: go }),
+                route.name === 'events' && React.createElement(EventsScreen, { go: go }),
+                route.name === 'eventForm' && React.createElement(EventFormScreen, { go: go }),
+                route.name === 'feeds' && React.createElement(FeedsScreen, { go: go }),
                 route.name === 'wallet' && React.createElement(WalletScreen, { go: go }),
                 route.name === 'referrals' && React.createElement(ReferralScreen, { go: go }),
                 route.name === 'adCentre' && React.createElement(AdCentreScreen, { go: go }),
@@ -3391,7 +3873,7 @@ function MainApp({ route, setRoute }) {
 // Tiles with route: null are not implemented yet, so tapping them just shows a "Coming soon" toast
 // instead of pretending the feature exists.
 const MENU_TILES = [
-    { key: 'dashboard', label: 'Dashboard', icon: 'fa-chart-simple', route: null },
+    { key: 'dashboard', label: 'Dashboard', icon: 'fa-chart-simple', route: { name: 'dashboard' } },
     { key: 'messages', label: 'Messages', icon: 'fa-comment-dots', route: { name: 'messages' } },
     { key: 'groups', label: 'Groups', icon: 'fa-people-group', route: { name: 'groups' } },
     { key: 'friends', label: 'Friends', icon: 'fa-user-group', route: { name: 'search' } },
@@ -3401,13 +3883,13 @@ const MENU_TILES = [
     { key: 'games', label: 'Games', icon: 'fa-gamepad', route: { name: 'games' } },
     { key: 'pages', label: 'Pages', icon: 'fa-flag', route: { name: 'myPages' } },
     { key: 'saved', label: 'Saved', icon: 'fa-bookmark', route: { name: 'bookmarks' } },
-    { key: 'memories', label: 'Memories', icon: 'fa-clock-rotate-left', route: null },
+    { key: 'memories', label: 'Memories', icon: 'fa-clock-rotate-left', route: { name: 'memories' } },
     { key: 'birthdays', label: 'Birthdays', icon: 'fa-gift', route: { name: 'birthdays' } },
-    { key: 'events', label: 'Events', icon: 'fa-calendar-days', route: null },
+    { key: 'events', label: 'Events', icon: 'fa-calendar-days', route: { name: 'events' } },
     { key: 'adCentre', label: 'Ad Centre', icon: 'fa-bullhorn', route: { name: 'adCentre' } },
     { key: 'wallet', label: 'Wallet', icon: 'fa-wallet', route: { name: 'wallet' } },
     { key: 'referrals', label: 'Referrals', icon: 'fa-user-plus', route: { name: 'referrals' } },
-    { key: 'feeds', label: 'Feeds', icon: 'fa-table-cells-large', route: null },
+    { key: 'feeds', label: 'Feeds', icon: 'fa-table-cells-large', route: { name: 'feeds' } },
 ];
 const MENU_TILE_COLORS = {
     dashboard: 'bg-blue-100 text-blue-600', messages: 'bg-fuchsia-100 text-fuchsia-600',
@@ -5096,6 +5578,7 @@ function ListingFeedCard({ listing, go, promoted }) {
                     React.createElement("div", { className: "flex items-center gap-1.5" },
                         React.createElement("span", { className: "font-semibold text-sm truncate" }, seller ? seller.displayName : '\u2026'),
                         React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 dark:text-emerald-400 px-1.5 py-0.5 rounded flex items-center gap-1 shrink-0" }, React.createElement("i", { className: "fa-solid fa-store" }), "Marketplace"),
+                        listing.type === 'service' && React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-[#0d9488] bg-[#0d9488]/10 px-1.5 py-0.5 rounded flex items-center gap-1 shrink-0" }, React.createElement("i", { className: "fa-solid fa-handshake" }), "Service"),
                         promoted && React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide text-amber-600 bg-amber-50 dark:bg-amber-900/30 dark:text-amber-400 px-1.5 py-0.5 rounded flex items-center gap-1 shrink-0" }, React.createElement("i", { className: "fa-solid fa-bullhorn" }), "Sponsored")),
                     React.createElement("span", { className: "text-[11px] text-slate-400" }, timeAgo(listing.createdAt)))),
             React.createElement("button", { onClick: openListing, className: "text-slate-400 shrink-0" }, React.createElement("i", { className: "fa-solid fa-ellipsis" }))),
@@ -5475,6 +5958,49 @@ function BookmarksScreen({ go }) {
         (posts === null || posts === void 0 ? void 0 : posts.length) === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "Nothing saved yet."), posts === null || posts === void 0 ? void 0 :
         posts.map(p => React.createElement(PostCard, { key: p.id, post: p, go: go }))));
 }
+/* ============================== MEMORIES ("On this day") ============================== */
+// Facebook-style "On This Day" — every post this person has ever made whose post date shares
+// today's month+day but is from a past year. Firestore can't filter on month/day directly, so
+// this pulls the person's own posts (capped, newest-first, same pattern as ProfilePhotosTab)
+// and does the day-matching client-side.
+function MemoriesScreen({ go }) {
+    const { profile } = useAuth();
+    const [posts, setPosts] = useState(undefined);
+    useEffect(() => {
+        const unsub = db.collection('posts').where('authorId', '==', profile.id).limit(500)
+            .onSnapshot(snap => {
+            const list = snap.docs.map(d => Object.assign({ id: d.id }, d.data())).filter(p => !p.hiddenByAdmin && !p.groupId && !p.isAd);
+            setPosts(list);
+        }, () => setPosts([]));
+        return unsub;
+    }, [profile.id]);
+    const today = new Date();
+    const memories = useMemo(() => {
+        if (!posts)
+            return [];
+        return posts
+            .filter(p => { var _a; const d = (_a = p.createdAt) === null || _a === void 0 ? void 0 : _a.toDate; if (!d)
+            return false; const dt = p.createdAt.toDate(); return dt.getMonth() === today.getMonth() && dt.getDate() === today.getDate() && dt.getFullYear() < today.getFullYear(); })
+            .sort((a, b) => b.createdAt.toDate().getFullYear() - a.createdAt.toDate().getFullYear());
+    }, [posts]);
+    return (React.createElement("div", null,
+        React.createElement("div", { className: "flex items-center gap-3 mb-4" },
+            React.createElement("button", { onClick: () => go({ name: 'menu' }) }, React.createElement("i", { className: "fa-solid fa-arrow-left" })),
+            React.createElement("div", null,
+                React.createElement("h2", { className: "font-display text-lg font-bold" }, "Memories"),
+                React.createElement("p", { className: "text-xs text-slate-400" }, today.toLocaleDateString(undefined, { month: 'long', day: 'numeric' }), " \u2014 on this day"))),
+        posts === undefined && React.createElement(PostSkeleton, null),
+        posts !== undefined && memories.length === 0 && React.createElement("div", { className: "text-center text-slate-400 py-16" },
+            React.createElement("i", { className: "fa-solid fa-clock-rotate-left text-3xl mb-3 opacity-40" }),
+            React.createElement("p", { className: "text-sm" }, "No memories from this day yet."),
+            React.createElement("p", { className: "text-xs mt-1" }, "Anything you post today will show up here on this date in future years.")),
+        memories.map(p => {
+            const years = today.getFullYear() - p.createdAt.toDate().getFullYear();
+            return React.createElement("div", { key: p.id, className: "mb-4" },
+                React.createElement("p", { className: "text-xs font-bold text-brand-600 dark:text-brand-400 mb-1.5 px-1" }, years, " year", years === 1 ? '' : 's', " ago"),
+                React.createElement(PostCard, { post: p, go: go }));
+        })));
+}
 /* ============================== BIRTHDAYS ============================== */
 function BirthdaysScreen({ go }) {
     const { profile } = useAuth();
@@ -5527,6 +6053,232 @@ function BirthdaysScreen({ go }) {
         upcoming.length > 0 && React.createElement("div", null,
             React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mb-2" }, "Upcoming"),
             React.createElement("div", { className: "space-y-2" }, upcoming.map(Row))));
+}
+/* ============================== DASHBOARD ============================== */
+function useOwnPostsCount(uid) {
+    const [count, setCount] = useState(null);
+    useEffect(() => {
+        if (!uid) return;
+        const unsub = db.collection('posts').where('authorId', '==', uid).limit(500)
+            .onSnapshot(snap => setCount(snap.docs.filter(d => !d.data().hiddenByAdmin).length), () => setCount(0));
+        return unsub;
+    }, [uid]);
+    return count;
+}
+function useReferralsCount(uid) {
+    const [count, setCount] = useState(null);
+    useEffect(() => {
+        if (!uid) return;
+        const unsub = db.collection('referrals').where('referrerId', '==', uid).limit(500)
+            .onSnapshot(snap => setCount(snap.docs.length), () => setCount(0));
+        return unsub;
+    }, [uid]);
+    return count;
+}
+function DashboardStatCard({ icon, color, label, value, onClick }) {
+    return React.createElement("button", { onClick: onClick, className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-4 text-left w-full" },
+        React.createElement("div", { className: "w-9 h-9 rounded-lg flex items-center justify-center mb-3 " + color },
+            React.createElement("i", { className: "fa-solid " + icon })),
+        React.createElement("p", { className: "text-xl font-extrabold leading-tight" }, value === null ? React.createElement("span", { className: "inline-block w-8 h-5 rounded skeleton" }) : value),
+        React.createElement("p", { className: "text-xs text-slate-400 mt-0.5" }, label));
+}
+function DashboardScreen({ go }) {
+    const { profile } = useAuth();
+    const friendships = useFriendships(profile.id);
+    const friendsCount = friendships === null ? null : friendships.filter(f => f.status === 'accepted').length;
+    const pendingCount = friendships === null ? null : friendships.filter(f => f.status === 'pending' && f.requestedBy !== profile.id).length;
+    const postsCount = useOwnPostsCount(profile.id);
+    const unreadMessages = useUnreadMessages(profile.id);
+    const unreadNotifications = useUnreadNotifications(profile.id);
+    const referralsCount = useReferralsCount(profile.id);
+    return React.createElement("div", null,
+        React.createElement("div", { className: "flex items-center gap-3 mb-4" },
+            React.createElement("button", { onClick: () => go({ name: 'menu' }) }, React.createElement("i", { className: "fa-solid fa-arrow-left" })),
+            React.createElement("h2", { className: "font-display text-lg font-bold" }, "Dashboard")),
+        React.createElement("div", { className: "flex items-center gap-3 bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3 mb-4" },
+            React.createElement(Avatar, { user: profile, size: 12 }),
+            React.createElement("div", { className: "flex-1 min-w-0" },
+                React.createElement("p", { className: "font-bold text-base truncate" }, profile.displayName || profile.username),
+                React.createElement("p", { className: "text-xs text-slate-400" }, "@", profile.username))),
+        React.createElement("div", { className: "grid grid-cols-2 gap-3 mb-3" },
+            React.createElement(DashboardStatCard, { icon: "fa-user-group", color: "bg-emerald-100 text-emerald-600", label: "Friends" + (pendingCount ? " \u00B7 " + pendingCount + " pending" : ""), value: friendsCount, onClick: () => go({ name: 'search' }) }),
+            React.createElement(DashboardStatCard, { icon: "fa-images", color: "bg-pink-100 text-pink-600", label: "Posts you've shared", value: postsCount, onClick: () => go({ name: 'profile', uid: profile.id }) }),
+            React.createElement(DashboardStatCard, { icon: "fa-comment-dots", color: "bg-fuchsia-100 text-fuchsia-600", label: "Unread messages", value: unreadMessages === undefined ? 0 : unreadMessages, onClick: () => go({ name: 'messages' }) }),
+            React.createElement(DashboardStatCard, { icon: "fa-bell", color: "bg-amber-100 text-amber-600", label: "Unread notifications", value: unreadNotifications === undefined ? 0 : unreadNotifications, onClick: () => go({ name: 'notifications' }) }),
+            React.createElement(DashboardStatCard, { icon: "fa-wallet", color: "bg-blue-100 text-blue-600", label: "Wallet balance", value: formatNaira(profile.walletBalance || 0), onClick: () => go({ name: 'wallet' }) }),
+            React.createElement(DashboardStatCard, { icon: "fa-user-plus", color: "bg-violet-100 text-violet-600", label: "People you've referred", value: referralsCount, onClick: () => go({ name: 'referrals' }) })),
+        React.createElement("div", { className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl divide-y divide-slate-100 dark:divide-ink-700 overflow-hidden" },
+            [
+                ['fa-flag', 'Your Pages', { name: 'myPages' }],
+                ['fa-people-group', 'Your Groups', { name: 'groups' }],
+                ['fa-store', 'Marketplace', { name: 'marketplace' }],
+                ['fa-bullhorn', 'Ad Centre', { name: 'adCentre' }],
+            ].map(([icon, label, route]) => React.createElement("button", { key: label, onClick: () => go(route), className: "w-full flex items-center gap-3 px-4 py-3 text-left" },
+                React.createElement("i", { className: "fa-solid " + icon + " text-slate-400 w-5" }),
+                React.createElement("span", { className: "flex-1 text-sm font-semibold" }, label),
+                React.createElement("i", { className: "fa-solid fa-chevron-right text-slate-300 text-xs" })))));
+}
+/* ============================== EVENTS ============================== */
+function useUpcomingEvents() {
+    const [events, setEvents] = useState(null);
+    useEffect(() => {
+        const now = firebase.firestore.Timestamp.now();
+        const unsub = db.collection('events').where('startAt', '>=', now).orderBy('startAt', 'asc').limit(100)
+            .onSnapshot(snap => setEvents(snap.docs.map(d => Object.assign({ id: d.id }, d.data()))), () => setEvents([]));
+        return unsub;
+    }, []);
+    return events;
+}
+function useMyEventRsvp(eventId, uid) {
+    const [status, setStatus] = useState(undefined);
+    useEffect(() => {
+        if (!eventId || !uid) return;
+        const unsub = db.collection('events').doc(eventId).collection('rsvps').doc(uid)
+            .onSnapshot(s => setStatus(s.exists ? s.data().status : null), () => setStatus(null));
+        return unsub;
+    }, [eventId, uid]);
+    return status;
+}
+async function uploadEventCover(uid, file) {
+    const compressed = await compressImage(file, 1280, 0.82);
+    const ref = storage.ref(`events/${uid}/${Date.now()}.jpg`);
+    await ref.put(compressed, { contentType: 'image/jpeg' });
+    return ref.getDownloadURL();
+}
+async function createEvent(uid, fields, coverFile) {
+    const coverURL = coverFile ? await uploadEventCover(uid, coverFile) : null;
+    await db.collection('events').add({
+        title: fields.title.trim(), description: (fields.description || '').trim(), location: (fields.location || '').trim(),
+        startAt: firebase.firestore.Timestamp.fromDate(new Date(fields.startAt)), coverURL,
+        createdBy: uid, goingCount: 0, interestedCount: 0, createdAt: FieldValue.serverTimestamp()
+    });
+}
+async function setEventRsvp(eventId, uid, status) {
+    const ref = db.collection('events').doc(eventId);
+    const rsvpRef = ref.collection('rsvps').doc(uid);
+    const prevSnap = await rsvpRef.get();
+    const prev = prevSnap.exists ? prevSnap.data().status : null;
+    if (prev === status) { // tapping the same status again clears it
+        await rsvpRef.delete();
+        if (prev === 'going') ref.update({ goingCount: FieldValue.increment(-1) }).catch(() => { });
+        if (prev === 'interested') ref.update({ interestedCount: FieldValue.increment(-1) }).catch(() => { });
+        return;
+    }
+    await rsvpRef.set({ uid, status, at: FieldValue.serverTimestamp() });
+    if (prev === 'going') ref.update({ goingCount: FieldValue.increment(-1) }).catch(() => { });
+    if (prev === 'interested') ref.update({ interestedCount: FieldValue.increment(-1) }).catch(() => { });
+    if (status === 'going') ref.update({ goingCount: FieldValue.increment(1) }).catch(() => { });
+    if (status === 'interested') ref.update({ interestedCount: FieldValue.increment(1) }).catch(() => { });
+}
+async function deleteEvent(eventId) { await db.collection('events').doc(eventId).delete(); }
+function EventCard({ ev, go }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const myStatus = useMyEventRsvp(ev.id, profile.id);
+    const dt = ev.startAt && ev.startAt.toDate ? ev.startAt.toDate() : null;
+    const rsvp = async (status) => { try { await setEventRsvp(ev.id, profile.id, status); } catch (e) { toast(e.message, 'error'); } };
+    const remove = async () => { if (!confirm('Delete this event?')) return; try { await deleteEvent(ev.id); toast('Event deleted', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl overflow-hidden mb-3" },
+        ev.coverURL && React.createElement("img", { src: ev.coverURL, className: "w-full h-36 object-cover cursor-zoom-in", onClick: () => openLightbox(ev.coverURL) }),
+        React.createElement("div", { className: "p-3.5" },
+            React.createElement("div", { className: "flex items-start justify-between gap-2" },
+                React.createElement("div", { className: "min-w-0" },
+                    dt && React.createElement("p", { className: "text-[11px] font-bold text-brand-600 dark:text-brand-400 uppercase tracking-wide" }, dt.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }), " \u00B7 ", dt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })),
+                    React.createElement("p", { className: "font-bold text-[15px] truncate mt-0.5" }, ev.title),
+                    ev.location && React.createElement("p", { className: "text-xs text-slate-400 mt-0.5 truncate" }, React.createElement("i", { className: "fa-solid fa-location-dot mr-1" }), ev.location)),
+                ev.createdBy === profile.id && React.createElement("button", { onClick: remove, className: "text-slate-300 hover:text-red-500 shrink-0" }, React.createElement("i", { className: "fa-solid fa-trash text-sm" }))),
+            ev.description && React.createElement("p", { className: "text-sm text-slate-600 dark:text-slate-300 mt-2 whitespace-pre-wrap break-words" }, ev.description),
+            React.createElement("p", { className: "text-xs text-slate-400 mt-2" }, ev.goingCount || 0, " going \u00B7 ", ev.interestedCount || 0, " interested"),
+            React.createElement("div", { className: "flex gap-2 mt-3" },
+                React.createElement("button", { onClick: () => rsvp('going'), className: "flex-1 rounded-lg py-2 text-xs font-bold " + (myStatus === 'going' ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, React.createElement("i", { className: "fa-solid fa-check mr-1.5" }), "Going"),
+                React.createElement("button", { onClick: () => rsvp('interested'), className: "flex-1 rounded-lg py-2 text-xs font-bold " + (myStatus === 'interested' ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, React.createElement("i", { className: "fa-solid fa-star mr-1.5" }), "Interested"))));
+}
+function EventsScreen({ go }) {
+    const events = useUpcomingEvents();
+    return React.createElement("div", null,
+        React.createElement("div", { className: "flex items-center justify-between mb-4 gap-3" },
+            React.createElement("div", { className: "flex items-center gap-3 min-w-0" },
+                React.createElement("button", { onClick: () => go({ name: 'menu' }) }, React.createElement("i", { className: "fa-solid fa-arrow-left" })),
+                React.createElement("h2", { className: "font-display text-lg font-bold" }, "Events")),
+            React.createElement("button", { onClick: () => go({ name: 'eventForm' }), className: "bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold px-3.5 py-2 rounded-full shrink-0" }, React.createElement("i", { className: "fa-solid fa-plus mr-1.5" }), "Create")),
+        events === null && React.createElement(PostSkeleton, null),
+        events !== null && events.length === 0 && React.createElement("div", { className: "text-center text-slate-400 py-16" },
+            React.createElement("i", { className: "fa-solid fa-calendar-days text-4xl mb-3 opacity-40" }),
+            React.createElement("p", { className: "text-sm" }, "No upcoming events yet."),
+            React.createElement("button", { onClick: () => go({ name: 'eventForm' }), className: "mt-3 text-brand-600 font-semibold text-sm" }, "Create the first one")),
+        (events || []).map(ev => React.createElement(EventCard, { key: ev.id, ev: ev, go: go })));
+}
+function EventFormScreen({ go }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const [title, setTitle] = useState('');
+    const [description, setDescription] = useState('');
+    const [location, setLocation] = useState('');
+    const [startAt, setStartAt] = useState('');
+    const [coverFile, setCoverFile] = useState(null);
+    const [coverPreview, setCoverPreview] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const fileRef = useRef();
+    const submit = async () => {
+        if (!title.trim()) { toast('Give your event a title', 'error'); return; }
+        if (!startAt) { toast('Pick a date and time', 'error'); return; }
+        if (new Date(startAt) < new Date()) { toast('Pick a date and time in the future', 'error'); return; }
+        setBusy(true);
+        try {
+            await createEvent(profile.id, { title, description, location, startAt }, coverFile);
+            toast('Event created', 'success');
+            go({ name: 'events' });
+        } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+    };
+    return React.createElement("div", null,
+        React.createElement("div", { className: "flex items-center gap-3 mb-4" },
+            React.createElement("button", { onClick: () => go({ name: 'events' }) }, React.createElement("i", { className: "fa-solid fa-arrow-left" })),
+            React.createElement("h2", { className: "font-display text-lg font-bold" }, "Create event")),
+        React.createElement("div", { className: "space-y-3 max-w-md" },
+            React.createElement("div", { onClick: () => fileRef.current.click(), className: "h-36 rounded-xl bg-slate-100 dark:bg-ink-700 flex items-center justify-center cursor-pointer overflow-hidden" },
+                coverPreview ? React.createElement("img", { src: coverPreview, className: "w-full h-full object-cover" }) :
+                    React.createElement("div", { className: "text-center text-slate-400" }, React.createElement("i", { className: "fa-solid fa-image text-2xl mb-1" }), React.createElement("p", { className: "text-xs" }, "Add cover photo (optional)"))),
+            React.createElement("input", { ref: fileRef, type: "file", accept: "image/*", hidden: true, onChange: e => { const f = e.target.files[0]; if (f) { setCoverFile(f); setCoverPreview(URL.createObjectURL(f)); } } }),
+            React.createElement("input", { value: title, onChange: e => setTitle(e.target.value), placeholder: "Event title", className: "w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+            React.createElement("input", { type: "datetime-local", value: startAt, onChange: e => setStartAt(e.target.value), className: "w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+            React.createElement("input", { value: location, onChange: e => setLocation(e.target.value), placeholder: "Location (optional)", className: "w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+            React.createElement("textarea", { value: description, onChange: e => setDescription(e.target.value), placeholder: "What's this event about?", rows: 4, className: "w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm resize-none" }),
+            React.createElement("button", { onClick: submit, disabled: busy, className: "w-full bg-brand-600 hover:bg-brand-700 text-white rounded-xl py-3 text-sm font-semibold disabled:opacity-60" }, busy ? 'Creating\u2026' : 'Create event')));
+}
+/* ============================== FEEDS ============================== */
+const FEEDS_TABS = [
+    { key: 'all', label: 'All' },
+    { key: 'image', label: 'Photos' },
+    { key: 'video', label: 'Videos' },
+    { key: 'text', label: 'Text' },
+];
+function FeedsScreen({ go }) {
+    const [posts, setPosts] = useState(null);
+    const [tab, setTab] = useState('all');
+    useEffect(() => {
+        const unsub = db.collection('posts').orderBy('createdAt', 'desc').limit(60)
+            .onSnapshot(snap => setPosts(snap.docs.map(d => Object.assign({ id: d.id }, d.data()))
+                .filter(p => !p.hiddenByAdmin && !p.groupId && !p.isAd)), () => setPosts([]));
+        return unsub;
+    }, []);
+    const filtered = useMemo(() => {
+        if (!posts) return [];
+        if (tab === 'all') return posts;
+        if (tab === 'image') return posts.filter(p => (p.images || []).length > 0);
+        if (tab === 'video') return posts.filter(p => p.videoURL);
+        if (tab === 'text') return posts.filter(p => (p.images || []).length === 0 && !p.videoURL);
+        return posts;
+    }, [posts, tab]);
+    return React.createElement("div", null,
+        React.createElement("div", { className: "flex items-center gap-3 mb-3" },
+            React.createElement("button", { onClick: () => go({ name: 'menu' }) }, React.createElement("i", { className: "fa-solid fa-arrow-left" })),
+            React.createElement("h2", { className: "font-display text-lg font-bold" }, "Feeds")),
+        React.createElement("div", { className: "flex gap-2 mb-4 overflow-x-auto" }, FEEDS_TABS.map(t => React.createElement("button", { key: t.key, onClick: () => setTab(t.key), className: "px-3.5 py-1.5 rounded-full text-xs font-bold shrink-0 " + (tab === t.key ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, t.label))),
+        posts === null && React.createElement(React.Fragment, null, [1, 2, 3].map(i => React.createElement(PostSkeleton, { key: i }))),
+        posts !== null && filtered.length === 0 && React.createElement("div", { className: "text-center text-slate-400 py-16" },
+            React.createElement("i", { className: "fa-solid fa-table-cells-large text-4xl mb-3 opacity-40" }),
+            React.createElement("p", { className: "text-sm" }, "Nothing here yet.")),
+        filtered.map(p => React.createElement(PostCard, { key: p.id, post: p, go: go })));
 }
 /* ============================== PROFILE ============================== */
 function computeWorkDuration(workStart) {
@@ -7924,6 +8676,61 @@ function ChatRow({ row, go, search, onPin, onArchive, onDelete, onAccept, onDecl
                     React.createElement("button", { onClick: () => { onDelete(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Delete"))))))));
 }
 /* ============================== MESSAGING: CHAT WINDOW ============================== */
+// Custom voice-message player — replaces the bare native <audio controls>, matching the
+// play/pause + waveform + progress + duration + speed control look of WhatsApp/Telegram/iMessage
+// voice notes. Uses a real <audio> element under the hood for actual playback/seeking; only the
+// UI chrome is custom.
+function VoiceMessagePlayer({ src, isMe }) {
+    const audioRef = useRef(null);
+    const [playing, setPlaying] = useState(false);
+    const [duration, setDuration] = useState(0);
+    const [current, setCurrent] = useState(0);
+    const [rate, setRate] = useState(1);
+    // A stable pseudo-random "waveform" derived from the URL, so it looks like a real waveform
+    // (and stays the same every render) without needing to decode the actual audio samples.
+    const bars = useMemo(() => {
+        let seed = 0;
+        for (let i = 0; i < src.length; i++)
+            seed = (seed * 31 + src.charCodeAt(i)) >>> 0;
+        const out = [];
+        for (let i = 0; i < 28; i++) {
+            seed = (seed * 1103515245 + 12345) >>> 0;
+            out.push(0.25 + ((seed % 100) / 100) * 0.75);
+        }
+        return out;
+    }, [src]);
+    useEffect(() => {
+        const a = audioRef.current;
+        if (!a)
+            return;
+        const onTime = () => setCurrent(a.currentTime || 0);
+        const onMeta = () => setDuration(a.duration && isFinite(a.duration) ? a.duration : 0);
+        const onEnd = () => { setPlaying(false); setCurrent(0); };
+        a.addEventListener('timeupdate', onTime);
+        a.addEventListener('loadedmetadata', onMeta);
+        a.addEventListener('ended', onEnd);
+        return () => { a.removeEventListener('timeupdate', onTime); a.removeEventListener('loadedmetadata', onMeta); a.removeEventListener('ended', onEnd); };
+    }, []);
+    const toggle = () => { const a = audioRef.current; if (!a) return; if (playing) { a.pause(); } else { a.play().catch(() => { }); } setPlaying(!playing); };
+    const cycleRate = () => { const rates = [1, 1.5, 2, 0.5]; const next = rates[(rates.indexOf(rate) + 1) % rates.length]; setRate(next); if (audioRef.current) audioRef.current.playbackRate = next; };
+    const fmt = (s) => { if (!s || !isFinite(s)) return '0:00'; const m = Math.floor(s / 60); const sec = Math.floor(s % 60); return m + ':' + String(sec).padStart(2, '0'); };
+    const progressRatio = duration ? Math.min(1, current / duration) : 0;
+    const seek = (e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+        if (audioRef.current && duration) { audioRef.current.currentTime = ratio * duration; setCurrent(ratio * duration); }
+    };
+    const litBars = Math.round(progressRatio * bars.length);
+    return React.createElement("div", { className: "flex items-center gap-2 w-56" },
+        React.createElement("audio", { ref: audioRef, src: src, preload: "metadata", hidden: true }),
+        React.createElement("button", { onClick: toggle, className: "shrink-0 w-8 h-8 rounded-full flex items-center justify-center " + (isMe ? "bg-white/25 text-white" : "bg-[#0d9488]/15 text-[#0d9488]") },
+            React.createElement("i", { className: "fa-solid " + (playing ? "fa-pause" : "fa-play") + " text-xs" + (playing ? "" : " ml-0.5") })),
+        React.createElement("div", { className: "flex-1 min-w-0" },
+            React.createElement("div", { onClick: seek, className: "flex items-end gap-[2px] h-6 cursor-pointer" }, bars.map((h, i) => React.createElement("span", { key: i, style: { height: (h * 100) + '%' }, className: "flex-1 rounded-full " + (i < litBars ? (isMe ? "bg-white" : "bg-[#0d9488]") : (isMe ? "bg-white/35" : "bg-slate-300 dark:bg-ink-500")) }))),
+            React.createElement("div", { className: "flex items-center justify-between mt-0.5" },
+                React.createElement("span", { className: "text-[10px] " + (isMe ? "text-white/70" : "text-slate-400") }, fmt(playing || current ? current : duration)),
+                React.createElement("button", { onClick: cycleRate, className: "text-[10px] font-semibold px-1 rounded " + (isMe ? "text-white/80 hover:bg-white/15" : "text-slate-500 hover:bg-slate-100 dark:hover:bg-ink-600") }, rate + "x"))));
+}
 function DateSeparator({ prev, curr }) {
     var _a, _b;
     if (!((_a = curr === null || curr === void 0 ? void 0 : curr.createdAt) === null || _a === void 0 ? void 0 : _a.toDate))
@@ -7935,7 +8742,13 @@ function DateSeparator({ prev, curr }) {
     const label = currDate === new Date().toDateString() ? 'Today' : curr.createdAt.toDate().toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
     return React.createElement("div", { className: "text-center text-xs text-slate-400 my-2" }, label);
 }
-function MessageBubble({ message, isMe, otherUid, otherUser, showAvatar, menuOpen, setMenuOpen, onReply, onForward, onCopy, onEdit, onDeleteForMe, onDeleteForEveryone, onReact }) {
+function UnreadDivider() {
+    return React.createElement("div", { className: "flex items-center gap-2 my-2" },
+        React.createElement("div", { className: "flex-1 h-px bg-[#0d9488]/25" }),
+        React.createElement("span", { className: "text-[11px] font-semibold text-[#0d9488]" }, "New messages"),
+        React.createElement("div", { className: "flex-1 h-px bg-[#0d9488]/25" }));
+}
+function MessageBubble({ message, isMe, otherUid, otherUser, showAvatar, groupPos, menuOpen, setMenuOpen, onReply, onForward, onCopy, onEdit, onDeleteForMe, onDeleteForEveryone, onReact }) {
     var _a;
     const status = () => {
         if ((message.readBy || []).includes(otherUid))
@@ -7945,16 +8758,30 @@ function MessageBubble({ message, isMe, otherUid, otherUser, showAvatar, menuOpe
         return React.createElement("i", { className: "fa-solid fa-check text-white/60" });
     };
     const reactions = message.reactions ? Object.entries(message.reactions) : [];
+    // Corner rounding tightens between consecutive bubbles from the same sender (WhatsApp/iMessage
+    // style "grouped" look) instead of every bubble having identical fully-rounded corners.
+    const tight = "6px", round = "18px";
+    const cornerClass = isMe
+        ? { first: { borderTopRightRadius: tight }, middle: { borderTopRightRadius: tight, borderBottomRightRadius: tight }, last: { borderBottomRightRadius: tight }, single: {} }
+        : { first: { borderTopLeftRadius: tight }, middle: { borderTopLeftRadius: tight, borderBottomLeftRadius: tight }, last: { borderBottomLeftRadius: tight }, single: {} };
+    const cornerStyle = Object.assign({ borderRadius: round }, cornerClass[groupPos || 'single']);
+    // Long-press (touch) opens the same action menu as right-click on desktop — this is now the
+    // *only* way to reach message actions, no persistent icon sitting on the bubble.
+    const pressTimer = useRef(null);
+    const movedRef = useRef(false);
+    const onTouchStart = () => { movedRef.current = false; pressTimer.current = setTimeout(() => { if (!movedRef.current && navigator.vibrate) navigator.vibrate(15); if (!movedRef.current) setMenuOpen(true); }, 450); };
+    const onTouchMove = () => { movedRef.current = true; if (pressTimer.current) clearTimeout(pressTimer.current); };
+    const onTouchEnd = () => { if (pressTimer.current) clearTimeout(pressTimer.current); };
     // "Unsent" messages (deleted for everyone) still exist as a doc — for readBy/order/ordering
     // integrity — but render as a muted placeholder instead of their original content, the same
     // way WhatsApp/Messenger show "This message was deleted." to both sides.
     if (message.deletedForEveryone) {
-        return (React.createElement("div", { className: "flex items-end gap-1.5 " + (isMe ? "justify-end" : "justify-start") },
+        return (React.createElement("div", { className: "flex items-end gap-1.5 msg-in " + (isMe ? "justify-end" : "justify-start") + " " + (groupPos === 'single' || groupPos === 'last' ? 'mb-2' : 'mb-0.5') },
             !isMe && React.createElement("div", { className: "w-6 shrink-0" }, showAvatar && React.createElement(Avatar, { user: otherUser, size: 6 })),
             React.createElement("div", { className: "max-w-[75%] px-3 py-[6px] rounded-[18px] text-[13px] italic border " + (isMe ? "border-white/20 text-white/60 bg-[#0d9488]/40" : "border-slate-200 dark:border-ink-600 text-slate-400 bg-transparent") },
                 React.createElement("i", { className: "fa-solid fa-ban mr-1.5 text-[11px]" }), isMe ? "You deleted this message" : "This message was deleted")));
     }
-    return (React.createElement("div", { className: "flex items-end gap-1.5 " + (isMe ? "justify-end" : "justify-start") },
+    return (React.createElement("div", { className: "flex items-end gap-1.5 msg-in " + (isMe ? "justify-end" : "justify-start") + " " + (groupPos === 'single' || groupPos === 'last' ? 'mb-2' : 'mb-0.5') },
         !isMe && React.createElement("div", { className: "w-6 shrink-0" }, showAvatar && React.createElement(Avatar, { user: otherUser, size: 6 })),
         React.createElement("div", { className: "max-w-[75%] group relative" },
             message.forwardedFrom && React.createElement("p", { className: "text-[10px] text-slate-400 mb-0.5 flex items-center gap-1" },
@@ -7963,37 +8790,34 @@ function MessageBubble({ message, isMe, otherUid, otherUser, showAvatar, menuOpe
             message.replyTo && (React.createElement("div", { className: "text-xs px-2.5 py-1 rounded-t-lg border-l-2 border-brand-400 bg-black/5 dark:bg-white/5" },
                 React.createElement("p", { className: "truncate opacity-70 max-w-[220px]" }, message.replyTo.text))),
             React.createElement("div", {
-                className: "relative px-3 py-[6px] rounded-[18px] text-[15px] leading-snug " + (isMe ? "bg-[#0d9488] text-white" : "bg-[#F0F0F0] dark:bg-[#3A3B3C] text-[#050505] dark:text-white"),
-                // Long-press (touch) opens the same action menu as the chevron button, since a hover-only
-                // affordance is unreachable on a phone — there is no hover state on a touchscreen.
-                onContextMenu: (e) => { e.preventDefault(); setMenuOpen(!menuOpen); }
+                style: cornerStyle,
+                className: "relative px-3 py-[6px] text-[15px] leading-snug select-none sm:select-text " + (isMe ? "bg-[#0d9488] text-white" : "bg-[#F0F0F0] dark:bg-[#3A3B3C] text-[#050505] dark:text-white"),
+                onContextMenu: (e) => { e.preventDefault(); setMenuOpen(!menuOpen); },
+                onTouchStart: onTouchStart, onTouchMove: onTouchMove, onTouchEnd: onTouchEnd, onTouchCancel: onTouchEnd
             },
-                message.type === 'text' && React.createElement("p", { className: "whitespace-pre-wrap break-words" }, message.text),
+                message.type === 'text' && React.createElement("p", { className: "whitespace-pre-wrap break-words" }, formatRichText(message.text)),
+                message.type === 'text' && React.createElement(LinkPreviewList, { text: message.text, max: 2 }),
                 message.type === 'image' && React.createElement("img", { src: message.mediaURL, onClick: () => openLightbox(message.mediaURL), loading: "lazy", className: "rounded-lg max-w-[240px] cursor-zoom-in" }),
                 message.type === 'video' && React.createElement("video", { src: message.mediaURL, controls: true, className: "rounded-lg max-w-[240px]" }),
-                message.type === 'audio' && React.createElement("audio", { src: message.mediaURL, controls: true, className: "w-56" }),
+                message.type === 'audio' && React.createElement(VoiceMessagePlayer, { src: message.mediaURL, isMe: isMe }),
                 message.type === 'document' && (React.createElement("a", { href: message.mediaURL, target: "_blank", className: "flex items-center gap-2 " + (isMe ? "text-white" : "text-[#0d9488]") },
                     React.createElement("i", { className: "fa-solid fa-file-lines text-lg" }),
                     React.createElement("span", { className: "truncate max-w-[160px] underline" }, message.mediaName || 'Document'))),
                 React.createElement("div", { className: "flex items-center gap-1 mt-0.5 justify-end text-[10px] " + (isMe ? "text-white/70" : "text-slate-400") },
                     message.editedAt && React.createElement("span", null, "edited"),
                     React.createElement("span", null, ((_a = message.createdAt) === null || _a === void 0 ? void 0 : _a.toDate) ? message.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''),
-                    isMe && status()),
-                // Visible at all times on touch devices (opacity-100), and only reveals itself on hover
-                // on larger pointer-driven screens (sm:opacity-0 sm:group-hover:opacity-100) — the previous
-                // "opacity-0 group-hover:opacity-100" made this button permanently unreachable on mobile,
-                // which is why there was "nowhere to delete or edit" a sent message.
-                React.createElement("button", { onClick: () => setMenuOpen(!menuOpen), className: "absolute top-1 " + (isMe ? "-left-8" : "-right-8") + " opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-slate-400 text-sm w-7 h-7 flex items-center justify-center rounded-full bg-white dark:bg-ink-700 shadow border border-slate-100 dark:border-ink-600" },
-                    React.createElement("i", { className: "fa-solid fa-chevron-down" }))),
+                    isMe && status())),
             reactions.length > 0 && (React.createElement("div", { className: "flex gap-0.5 mt-0.5" }, reactions.map(([uid, emoji]) => React.createElement("span", { key: uid, className: "text-xs bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-600 rounded-full px-1.5" }, emoji)))),
-            menuOpen && (React.createElement("div", { className: "absolute z-20 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl border border-slate-100 dark:border-ink-600 overflow-hidden w-44 " + (isMe ? "right-0" : "left-0") },
-                React.createElement("div", { className: "flex justify-around px-2 py-1.5 border-b border-slate-100 dark:border-ink-600" }, REACTION_EMOJIS.map(e => React.createElement("button", { key: e, onClick: () => { onReact(e); setMenuOpen(false); }, className: "text-sm hover:scale-125 transition" }, e))),
-                React.createElement("button", { onClick: () => { onReply(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Reply"),
-                React.createElement("button", { onClick: () => { onForward(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Forward"),
-                message.type === 'text' && React.createElement("button", { onClick: () => { onCopy(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Copy"),
-                isMe && message.type === 'text' && React.createElement("button", { onClick: () => { onEdit(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, React.createElement("i", { className: "fa-solid fa-pen text-[11px] mr-1.5 text-slate-400" }), "Edit"),
-                React.createElement("button", { onClick: () => { onDeleteForMe(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Delete for me"),
-                isMe && React.createElement("button", { onClick: () => { if (confirm('Delete this message for everyone? This cannot be undone.')) { onDeleteForEveryone(); } setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm text-red-600 font-semibold hover:bg-slate-50 dark:hover:bg-ink-600 border-t border-slate-100 dark:border-ink-600" }, "Delete for everyone"))))));
+            menuOpen && (React.createElement(React.Fragment, null,
+                React.createElement("div", { className: "fixed inset-0 z-10", onClick: () => setMenuOpen(false) }),
+                React.createElement("div", { className: "absolute z-20 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl border border-slate-100 dark:border-ink-600 overflow-hidden w-44 " + (isMe ? "right-0" : "left-0") },
+                    React.createElement("div", { className: "flex justify-around px-2 py-1.5 border-b border-slate-100 dark:border-ink-600" }, REACTION_EMOJIS.map(e => React.createElement("button", { key: e, onClick: () => { onReact(e); setMenuOpen(false); }, className: "text-sm hover:scale-125 transition" }, e))),
+                    React.createElement("button", { onClick: () => { onReply(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Reply"),
+                    React.createElement("button", { onClick: () => { onForward(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Forward"),
+                    message.type === 'text' && React.createElement("button", { onClick: () => { onCopy(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, "Copy"),
+                    isMe && message.type === 'text' && React.createElement("button", { onClick: () => { onEdit(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, React.createElement("i", { className: "fa-solid fa-pen text-[11px] mr-1.5 text-slate-400" }), "Edit"),
+                    React.createElement("button", { onClick: () => { onDeleteForMe(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Delete for me"),
+                    isMe && React.createElement("button", { onClick: () => { if (confirm('Delete this message for everyone? This cannot be undone.')) { onDeleteForEveryone(); } setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm text-red-600 font-semibold hover:bg-slate-50 dark:hover:bg-ink-600 border-t border-slate-100 dark:border-ink-600" }, "Delete for everyone")))))));
 }
 function ChatWindow({ chatId, otherUid, pageId, go }) {
     var _a;
@@ -8071,6 +8895,16 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
         return unsub;
     }, [chatId, chatReady]);
     useEffect(() => { var _a; (_a = bottomRef.current) === null || _a === void 0 ? void 0 : _a.scrollIntoView({ behavior: 'smooth' }); }, [messages === null || messages === void 0 ? void 0 : messages.length]);
+    // Captures which message was the first unread one *before* the read-receipt effect below
+    // marks everything read, so the "New messages" divider has something stable to render at.
+    const firstUnreadIdRef = useRef(null);
+    useEffect(() => { firstUnreadIdRef.current = null; }, [chatId]);
+    useEffect(() => {
+        if (!messages || firstUnreadIdRef.current !== null)
+            return;
+        const firstUnread = messages.find(m => m.senderId !== profile.id && !(m.readBy || []).includes(profile.id));
+        firstUnreadIdRef.current = firstUnread ? firstUnread.id : 'none';
+    }, [messages]);
     useEffect(() => {
         if (!messages || messages.length === 0)
             return;
@@ -8229,6 +9063,11 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
         catch (e) { toast('Could not delete message', 'error'); }
     };
     const copyText = (m) => { var _a; (_a = navigator.clipboard) === null || _a === void 0 ? void 0 : _a.writeText(m.text || ''); toast('Copied', 'success'); };
+    const initiateCall = async (type) => {
+        if (blocked) { toast("You can't call this user.", 'error'); return; }
+        try { await startOutgoingCall(profile, otherUid, otherUser, type); }
+        catch (e) { toast(e.message, 'error'); }
+    };
     const react = async (m, emoji) => {
         var _a;
         const key = 'reactions.' + profile.id;
@@ -8244,7 +9083,7 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
     const identityRoute = pageId && pageInfo ? { name: 'page', id: pageId } : { name: 'profile', uid: otherUid };
     const visibleMessages = (messages || []).filter(m => !(m.deletedFor || []).includes(profile.id));
     return (React.createElement("div", { className: "flex flex-col bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 md:rounded-2xl overflow-hidden h-[calc(100dvh-7.25rem)] md:h-[calc(100vh-2rem)]" },
-        React.createElement("div", { className: "flex items-center gap-3 px-3 py-2.5 border-b border-slate-100 dark:border-ink-700 shrink-0" },
+        React.createElement("div", { className: "flex items-center gap-3 px-3 py-2.5 border-b border-slate-100 dark:border-ink-700 shrink-0 sticky top-0 z-30 bg-white/95 dark:bg-ink-800/95 backdrop-blur-sm" },
             React.createElement("button", { onClick: () => go({ name: 'messages' }), className: "text-[#0d9488] w-8 h-8 flex items-center justify-center md:hidden" },
                 React.createElement("i", { className: "fa-solid fa-arrow-left" })),
             React.createElement("div", { className: "relative cursor-pointer", onClick: () => go(identityRoute) },
@@ -8253,9 +9092,9 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
             React.createElement("div", { className: "flex-1 min-w-0 cursor-pointer", onClick: () => go(identityRoute) },
                 React.createElement("p", { className: "font-semibold text-sm truncate" }, displayIdentity.displayName),
                 React.createElement("p", { className: "text-xs text-slate-400 truncate" }, pageId ? "Page \u00B7 messages are received by the Page owner" : (((_a = chatDoc === null || chatDoc === void 0 ? void 0 : chatDoc.typing) === null || _a === void 0 ? void 0 : _a[otherUid]) ? React.createElement("span", { className: "text-[#0d9488]" }, "typing\u2026") : lastSeenLabel(otherUser)))),
-            !pageId && React.createElement("button", { className: "text-[#0d9488] w-9 h-9 rounded-full hover:bg-[#0d9488]/10 flex items-center justify-center" },
+            !pageId && React.createElement("button", { onClick: () => initiateCall('voice'), title: "Voice call", className: "text-[#0d9488] w-9 h-9 rounded-full hover:bg-[#0d9488]/10 flex items-center justify-center" },
                 React.createElement("i", { className: "fa-solid fa-phone" })),
-            !pageId && React.createElement("button", { className: "text-[#0d9488] w-9 h-9 rounded-full hover:bg-[#0d9488]/10 flex items-center justify-center" },
+            !pageId && React.createElement("button", { onClick: () => initiateCall('video'), title: "Video call", className: "text-[#0d9488] w-9 h-9 rounded-full hover:bg-[#0d9488]/10 flex items-center justify-center" },
                 React.createElement("i", { className: "fa-solid fa-video" })),
             !pageId && React.createElement("div", { className: "relative shrink-0" },
                 React.createElement("button", { onClick: () => setSettingsOpen(a => !a), className: "text-[#0d9488] w-9 h-9 rounded-full hover:bg-[#0d9488]/10 flex items-center justify-center" },
@@ -8266,16 +9105,28 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
                         React.createElement("button", { onClick: () => { setSettingsOpen(false); go(identityRoute); }, className: "w-full text-left px-4 py-2.5 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, React.createElement("i", { className: "fa-regular fa-user mr-2 text-slate-400" }), "View profile"),
                         React.createElement("button", { onClick: toggleBlockInChat, className: "w-full text-left px-4 py-2.5 text-sm hover:bg-slate-50 dark:hover:bg-ink-600" }, React.createElement("i", { className: "fa-solid fa-ban mr-2 text-slate-400" }), iBlockedThem ? 'Unblock' : 'Block'),
                         React.createElement("button", { onClick: () => { setSettingsOpen(false); setReportUserOpen(true); }, className: "w-full text-left px-4 py-2.5 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, React.createElement("i", { className: "fa-solid fa-flag mr-2" }), "Report")))))),
-        React.createElement("div", { className: "flex-1 overflow-y-auto px-4 py-4 space-y-1 bg-white dark:bg-ink-800" },
+        React.createElement("div", { className: "flex-1 overflow-y-auto px-4 py-4 bg-white dark:bg-ink-800" },
             messages === null && React.createElement("p", { className: "text-sm text-slate-400 text-center" }, "Loading\u2026"),
             (messages === null || messages === void 0 ? void 0 : messages.length) === 0 && (React.createElement("div", { className: "text-center text-slate-400 py-10" },
                 React.createElement("div", { className: "flex justify-center" },
                     React.createElement(Avatar, { user: displayIdentity, size: 16 })),
                 React.createElement("p", { className: "mt-3 font-semibold text-sm text-slate-600 dark:text-slate-300" }, displayIdentity.displayName),
                 React.createElement("p", { className: "text-xs mt-1" }, "Say hello to start the conversation \uD83D\uDC4B"))),
-            visibleMessages.map((m, i) => (React.createElement(React.Fragment, { key: m.id },
-                React.createElement(DateSeparator, { prev: visibleMessages[i - 1], curr: m }),
-                React.createElement(MessageBubble, { message: m, isMe: m.senderId === profile.id, otherUid: otherUid, otherUser: displayIdentity, showAvatar: !visibleMessages[i + 1] || visibleMessages[i + 1].senderId !== m.senderId, menuOpen: activeMenuId === m.id, setMenuOpen: (v) => setActiveMenuId(v ? m.id : null), onReply: () => setReplyTo(m), onForward: () => setForwardMsg(m), onCopy: () => copyText(m), onEdit: () => { setEditingMessage(m); setText(m.text || ''); }, onDeleteForMe: () => deleteForMe(m), onDeleteForEveryone: () => deleteForEveryone(m), onReact: (e) => react(m, e) })))),
+            visibleMessages.map((m, i) => {
+                const prevMsg = visibleMessages[i - 1];
+                const nextMsg = visibleMessages[i + 1];
+                const t = (x) => { var _a; return ((_a = x === null || x === void 0 ? void 0 : x.createdAt) === null || _a === void 0 ? void 0 : _a.toDate) ? x.createdAt.toDate().getTime() : 0; };
+                // Bubbles only group together (tighter corners, avatar once) when the same sender
+                // sent them within a few minutes of each other — a long gap starts a fresh group
+                // even if it's still the same person, matching WhatsApp/Telegram behavior.
+                const groupedWithPrev = !!prevMsg && prevMsg.senderId === m.senderId && Math.abs(t(m) - t(prevMsg)) < 3 * 60 * 1000;
+                const groupedWithNext = !!nextMsg && nextMsg.senderId === m.senderId && Math.abs(t(nextMsg) - t(m)) < 3 * 60 * 1000;
+                const groupPos = groupedWithPrev && groupedWithNext ? 'middle' : groupedWithPrev ? 'last' : groupedWithNext ? 'first' : 'single';
+                return React.createElement(React.Fragment, { key: m.id },
+                    React.createElement(DateSeparator, { prev: prevMsg, curr: m }),
+                    firstUnreadIdRef.current === m.id && React.createElement(UnreadDivider, null),
+                    React.createElement(MessageBubble, { message: m, isMe: m.senderId === profile.id, otherUid: otherUid, otherUser: displayIdentity, showAvatar: !groupedWithNext, groupPos: groupPos, menuOpen: activeMenuId === m.id, setMenuOpen: (v) => setActiveMenuId(v ? m.id : null), onReply: () => setReplyTo(m), onForward: () => setForwardMsg(m), onCopy: () => copyText(m), onEdit: () => { setEditingMessage(m); setText(m.text || ''); }, onDeleteForMe: () => deleteForMe(m), onDeleteForEveryone: () => deleteForEveryone(m), onReact: (e) => react(m, e) }));
+            }),
             React.createElement("div", { ref: bottomRef })),
         blocked && (React.createElement("div", { className: "px-4 py-2 text-xs text-center text-red-500 bg-red-50 dark:bg-red-900/20 shrink-0" }, iBlockedThem ? "You've blocked this user." : "You can't reply to this conversation.")),
         (replyTo || editingMessage) && (React.createElement("div", { className: "flex items-center justify-between px-4 py-2 border-t border-slate-100 dark:border-ink-700 bg-slate-50 dark:bg-ink-700 shrink-0" },
@@ -8412,7 +9263,8 @@ function ProductCard({ listing, go }) {
             (listing.images && listing.images[0]) ? React.createElement("img", { src: listing.images[0], loading: "lazy", className: "w-full h-full object-cover" }) : React.createElement("div", { className: "w-full h-full flex items-center justify-center text-slate-300" }, React.createElement("i", { className: "fa-solid fa-image text-3xl" })),
             listing.status === 'sold' && React.createElement("div", { className: "absolute inset-0 bg-black/50 flex items-center justify-center" }, React.createElement("span", { className: "text-white font-bold text-sm tracking-wide" }, "SOLD")),
             listing.sponsored && React.createElement("span", { className: "absolute top-1.5 left-1.5 bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded" }, "SPONSORED"),
-            !listing.sponsored && listing.featured && React.createElement("span", { className: "absolute top-1.5 left-1.5 bg-brand-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded" }, "FEATURED")),
+            !listing.sponsored && listing.featured && React.createElement("span", { className: "absolute top-1.5 left-1.5 bg-brand-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded" }, "FEATURED"),
+            listing.type === 'service' && React.createElement("span", { className: "absolute top-1.5 right-1.5 bg-white/90 dark:bg-ink-800/90 text-[#0d9488] text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1" }, React.createElement("i", { className: "fa-solid fa-handshake" }), "SERVICE")),
         React.createElement("div", { className: "p-2.5" },
             React.createElement("p", { className: "font-bold text-sm" }, formatNaira(listing.price)),
             React.createElement("p", { className: "text-xs text-slate-600 dark:text-slate-300 truncate mt-0.5" }, listing.title),
@@ -8517,6 +9369,11 @@ function ListingFormScreen({ id, go }) {
     const { profile } = useAuth();
     const toast = useToast();
     const [loaded, setLoaded] = useState(!id);
+    // 'goods' = a physical product for sale (photos, price, colour, brand, quantity, condition).
+    // 'service' = something you do for people (haircuts, repairs, tutoring…) — no colour/condition/
+    // stock count, since those don't mean anything for a service. Both share price, description,
+    // location, category, and a WhatsApp number so buyers can message the seller directly.
+    const [type, setType] = useState('goods');
     const [title, setTitle] = useState('');
     const [description, setDescription] = useState('');
     const [category, setCategory] = useState(MARKETPLACE_CATEGORIES[0]);
@@ -8546,11 +9403,12 @@ function ListingFormScreen({ id, go }) {
                 go({ name: 'marketplace' });
                 return;
             }
+            setType(d.type === 'service' ? 'service' : 'goods');
             setTitle(d.title);
             setDescription(d.description);
             setCategory(d.category);
             setPrice(String(d.price));
-            setCondition(d.condition);
+            setCondition(d.condition || 'used');
             setColor(d.color || '');
             setBrand(d.brand || '');
             setQuantity(d.quantity ? String(d.quantity) : '');
@@ -8574,18 +9432,26 @@ function ListingFormScreen({ id, go }) {
         setNewFiles(prev => prev.filter((_, idx) => idx !== i));
         setNewPreviews(prev => prev.filter((_, idx) => idx !== i));
     };
+    const isGoods = type === 'goods';
     const submit = async () => {
         if (!title.trim() || !price || !location.trim()) {
             toast('Please fill in title, price and location', 'error');
             return;
         }
-        if (existingImages.length + newFiles.length === 0) {
+        if (isGoods && existingImages.length + newFiles.length === 0) {
             toast('Add at least one photo', 'error');
             return;
         }
         setSaving(true);
         try {
-            const fields = { title: title.trim(), description: description.trim(), category, price: Number(price), condition, color: color.trim() || null, brand: brand.trim() || null, quantity: quantity ? Number(quantity) : null, location: location.trim(), whatsappNumber: whatsappNumber.trim() || null };
+            const fields = {
+                type, title: title.trim(), description: description.trim(), category, price: Number(price),
+                location: location.trim(), whatsappNumber: whatsappNumber.trim() || null,
+                // Colour/brand/condition/quantity only mean something for a physical product —
+                // saved as null for a service so old goods-only UI elsewhere doesn't show blanks.
+                condition: isGoods ? condition : null, color: isGoods ? (color.trim() || null) : null,
+                brand: isGoods ? (brand.trim() || null) : null, quantity: isGoods && quantity ? Number(quantity) : null
+            };
             if (id) {
                 await updateListing(id, profile.id, fields, existingImages, newFiles);
                 toast('Listing updated', 'success');
@@ -8608,8 +9474,15 @@ function ListingFormScreen({ id, go }) {
     return (React.createElement("div", null,
         React.createElement("div", { className: "flex items-center gap-3 mb-4" },
             React.createElement("button", { onClick: () => go({ name: 'marketplace' }) }, React.createElement("i", { className: "fa-solid fa-arrow-left" })),
-            React.createElement("h2", { className: "font-display text-lg font-bold" }, id ? 'Edit Listing' : 'Sell Something')),
+            React.createElement("h2", { className: "font-display text-lg font-bold" }, id ? 'Edit Listing' : 'Post an Ad')),
         React.createElement("div", { className: "space-y-3" },
+            React.createElement("div", null,
+                React.createElement("p", { className: "text-xs font-semibold text-slate-500 mb-1.5" }, "What are you listing?"),
+                React.createElement("div", { className: "grid grid-cols-2 gap-2" },
+                    React.createElement("button", { onClick: () => setType('goods'), className: "py-3 rounded-xl text-sm font-semibold border flex flex-col items-center gap-1 " + (isGoods ? "bg-brand-600 text-white border-brand-600" : "border-slate-200 dark:border-ink-700 text-slate-500") },
+                        React.createElement("i", { className: "fa-solid fa-box text-base" }), "Goods / Product"),
+                    React.createElement("button", { onClick: () => setType('service'), className: "py-3 rounded-xl text-sm font-semibold border flex flex-col items-center gap-1 " + (!isGoods ? "bg-brand-600 text-white border-brand-600" : "border-slate-200 dark:border-ink-700 text-slate-500") },
+                        React.createElement("i", { className: "fa-solid fa-handshake text-base" }), "Service"))),
             React.createElement("div", { className: "grid grid-cols-4 gap-2" },
                 existingImages.map((img, i) => React.createElement("div", { key: 'e' + i, className: "relative aspect-square rounded-lg overflow-hidden" },
                     React.createElement("img", { src: img, className: "w-full h-full object-cover" }),
@@ -8620,18 +9493,21 @@ function ListingFormScreen({ id, go }) {
                 (existingImages.length + newFiles.length) < 6 && React.createElement("label", { className: "aspect-square rounded-lg border-2 border-dashed border-slate-300 dark:border-ink-600 flex items-center justify-center cursor-pointer text-slate-400" },
                     React.createElement("i", { className: "fa-solid fa-camera" }),
                     React.createElement("input", { type: "file", accept: "image/*", multiple: true, onChange: onPickFiles, className: "hidden" }))),
-            React.createElement("input", { value: title, onChange: e => setTitle(e.target.value), placeholder: "Product title", className: "w-full px-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" }),
-            React.createElement("textarea", { value: description, onChange: e => setDescription(e.target.value), rows: 3, placeholder: "Describe your product\u2026", className: "w-full px-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm resize-none" }),
+            !isGoods && React.createElement("p", { className: "text-[11px] text-slate-400 -mt-2" }, "Photos are optional for a service, but a picture of your work builds trust."),
+            React.createElement("input", { value: title, onChange: e => setTitle(e.target.value), placeholder: isGoods ? "Product title" : "Service title (e.g. Home Hairdressing)", className: "w-full px-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" }),
+            React.createElement("textarea", { value: description, onChange: e => setDescription(e.target.value), rows: 3, placeholder: isGoods ? "Describe your product\u2026" : "Describe what your service includes\u2026", className: "w-full px-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm resize-none" }),
             React.createElement("select", { value: category, onChange: e => setCategory(e.target.value), className: "w-full px-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" }, MARKETPLACE_CATEGORIES.map(c => React.createElement("option", { key: c, value: c }, c))),
-            React.createElement("input", { value: price, onChange: e => setPrice(e.target.value.replace(/[^0-9]/g, '')), inputMode: "numeric", placeholder: "Price (\u20A6)", className: "w-full px-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" }),
-            React.createElement("div", { className: "flex gap-2" }, [['new', 'New'], ['used', 'Used']].map(([k, l]) => React.createElement("button", { key: k, onClick: () => setCondition(k), className: "flex-1 py-2.5 rounded-xl text-sm font-semibold border " + (condition === k ? "bg-brand-600 text-white border-brand-600" : "border-slate-200 dark:border-ink-700 text-slate-500") }, l))),
-            React.createElement("div", { className: "grid grid-cols-2 gap-2" },
+            React.createElement("input", { value: price, onChange: e => setPrice(e.target.value.replace(/[^0-9]/g, '')), inputMode: "numeric", placeholder: isGoods ? "Price (\u20A6)" : "Price / starting rate (\u20A6)", className: "w-full px-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" }),
+            // Condition, colour, brand, and stock count are goods-only — nothing here for a service
+            // to be "New/Used", have a colour, or have "3 available".
+            isGoods && React.createElement("div", { className: "flex gap-2" }, [['new', 'New'], ['used', 'Used']].map(([k, l]) => React.createElement("button", { key: k, onClick: () => setCondition(k), className: "flex-1 py-2.5 rounded-xl text-sm font-semibold border " + (condition === k ? "bg-brand-600 text-white border-brand-600" : "border-slate-200 dark:border-ink-700 text-slate-500") }, l))),
+            isGoods && React.createElement("div", { className: "grid grid-cols-2 gap-2" },
                 React.createElement("input", { value: color, onChange: e => setColor(e.target.value), placeholder: "Colour (e.g. Black)", className: "w-full px-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" }),
                 React.createElement("input", { value: brand, onChange: e => setBrand(e.target.value), placeholder: "Brand (optional)", className: "w-full px-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" })),
-            React.createElement("input", { value: quantity, onChange: e => setQuantity(e.target.value.replace(/[^0-9]/g, '')), inputMode: "numeric", placeholder: "Quantity available (optional)", className: "w-full px-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" }),
+            isGoods && React.createElement("input", { value: quantity, onChange: e => setQuantity(e.target.value.replace(/[^0-9]/g, '')), inputMode: "numeric", placeholder: "Quantity available (optional)", className: "w-full px-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" }),
             React.createElement("input", { value: location, onChange: e => setLocation(e.target.value), placeholder: "Location (e.g. Ibadan, Oyo State)", className: "w-full px-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" }),
             React.createElement("input", { type: "tel", value: whatsappNumber, onChange: e => setWhatsappNumber(e.target.value), placeholder: "WhatsApp number (optional, e.g. +234\u2026)", className: "w-full px-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" }),
-            React.createElement("p", { className: "text-[11px] text-slate-400 -mt-2" }, "Shown as a WhatsApp button on this listing so buyers can reach you directly."),
+            React.createElement("p", { className: "text-[11px] text-slate-400 -mt-2" }, "Shown as a WhatsApp button on this listing so buyers can message you directly."),
             React.createElement("button", { onClick: submit, disabled: saving, className: "w-full py-3 rounded-xl bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white font-semibold text-sm" }, saving ? 'Saving\u2026' : (id ? 'Save Changes' : 'Submit Listing')))));
 }
 function OfferRow({ offer, listing, go }) {
@@ -8763,7 +9639,9 @@ function ListingDetailScreen({ id, go }) {
                     favCount)),
             React.createElement("p", { className: "text-sm font-semibold mb-1" }, listing.title),
             React.createElement("div", { className: "flex flex-wrap gap-1.5 text-[11px] text-slate-400 mb-2" },
-                React.createElement("span", { className: "px-2 py-0.5 rounded-full bg-slate-100 dark:bg-ink-700" }, listing.condition === 'new' ? 'Brand New' : 'Used'),
+                listing.type === 'service' ?
+                    React.createElement("span", { className: "px-2 py-0.5 rounded-full bg-[#0d9488]/10 text-[#0d9488] font-semibold" }, React.createElement("i", { className: "fa-solid fa-handshake mr-1" }), "Service") :
+                    React.createElement("span", { className: "px-2 py-0.5 rounded-full bg-slate-100 dark:bg-ink-700" }, listing.condition === 'new' ? 'Brand New' : 'Used'),
                 React.createElement("span", { className: "px-2 py-0.5 rounded-full bg-slate-100 dark:bg-ink-700" }, listing.category),
                 listing.color && React.createElement("span", { className: "px-2 py-0.5 rounded-full bg-slate-100 dark:bg-ink-700" }, React.createElement("i", { className: "fa-solid fa-palette mr-1" }), listing.color),
                 listing.brand && React.createElement("span", { className: "px-2 py-0.5 rounded-full bg-slate-100 dark:bg-ink-700" }, listing.brand),
@@ -11899,11 +12777,10 @@ function DatingChatScreen({ matchId, go }) {
         }
     };
     const block = async () => { if (!confirm('Block this person? You will no longer see each other.')) return; await blockDatingUser(profile.id, other.id); toast('Blocked', 'success'); go({ name: 'dating' }); };
-    const startCall = (type) => {
+    const startCall = async (type) => {
         if (!canStartDatingCall(myDp)) { setCallGateType(type); return; }
-        // Calling itself isn't implemented in this file — wire this up to your calling
-        // provider (e.g. Agora, Twilio Video, Daily) once you have one configured.
-        toast((type === 'video' ? 'Video' : 'Voice') + ' call starting with ' + other.displayName + '\u2026', 'success');
+        try { await startOutgoingCall(profile, other.id, other, type); }
+        catch (e) { toast(e.message, 'error'); }
     };
     if (match === undefined || other === undefined) return React.createElement("div", { className: "py-16 flex justify-center" }, React.createElement("div", { className: "w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" }));
     if (!match || !other) return React.createElement("p", { className: "text-center text-slate-400 py-16" }, "This match is no longer available.");
@@ -12186,16 +13063,91 @@ async function debitWallet(uid, amount, type, extra) {
     await db.collection('walletTransactions').add(Object.assign({ uid, type, amount: -amount, createdAt: FieldValue.serverTimestamp() }, extra || {}));
 }
 async function recordWalletPaystackFunding(uid, amountNaira, reference) {
+    // Idempotency guard: if this reference was already credited (e.g. the success callback
+    // fired once already, or reconcilePendingPaystackPayments() got to it first), don't credit
+    // twice.
+    const existing = await db.collection('walletTransactions').where('reference', '==', reference).where('uid', '==', uid).limit(1).get();
+    if (!existing.empty) return;
     await creditWallet(uid, amountNaira, 'fund_paystack', { reference, description: 'Wallet funded via Paystack' });
 }
-function launchWalletPaystack({ email, amountNaira, publicKey, metadata, onSuccess, onClose }) {
+// A pay-by-transfer/USSD/mobile-money "success" from Paystack's inline widget only means the
+// *customer said* they paid (or Paystack's client SDK optimistically resolved) — unlike a card
+// charge, which is genuinely captured synchronously with 3DS/OTP, those channels are settled
+// asynchronously and can report success before the money has actually moved. Since this app has
+// no server to call Paystack's real verify-by-secret-key endpoint, anything that isn't a card
+// payment gets held here for an admin to manually confirm in the Paystack dashboard before the
+// wallet is touched — this is what closes the "picked Transfer, never paid, got credited anyway"
+// gap instead of trusting the browser's word for it.
+async function flagPaystackForReview(uid, amountNaira, reference, channel) {
+    await db.collection('walletPaystackPending').add({
+        uid, amount: amountNaira, reference, channel: channel || 'unknown', status: 'pending', createdAt: FieldValue.serverTimestamp()
+    });
+}
+function useWalletPaystackPending(filter) {
+    const [rows, setRows] = useState([]);
+    useEffect(() => {
+        let q = db.collection('walletPaystackPending').orderBy('createdAt', 'desc').limit(300);
+        if (filter && filter !== 'all')
+            q = db.collection('walletPaystackPending').where('status', '==', filter).limit(300);
+        const unsub = q.onSnapshot(snap => setRows(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setRows([]));
+        return unsub;
+    }, [filter]);
+    return rows;
+}
+async function adminApprovePaystackPending(row, adminUid, adminEmail) {
+    await recordWalletPaystackFunding(row.uid, row.amount, row.reference);
+    await db.collection('walletPaystackPending').doc(row.id).update({ status: 'approved', reviewedAt: FieldValue.serverTimestamp(), reviewedBy: adminUid, reviewedByEmail: adminEmail || null });
+}
+async function adminRejectPaystackPending(row, reason, adminUid, adminEmail) {
+    await db.collection('walletPaystackPending').doc(row.id).update({ status: 'rejected', rejectionReason: reason || '', reviewedAt: FieldValue.serverTimestamp(), reviewedBy: adminUid, reviewedByEmail: adminEmail || null });
+}
+function launchWalletPaystack({ email, amountNaira, publicKey, metadata, reference, onSuccess, onClose }) {
     if (typeof PaystackPop === 'undefined') { throw new Error('Payment service failed to load. Check your connection and try again.'); }
     if (!publicKey) { throw new Error('Payments are not configured yet. Please contact support.'); }
-    const handler = PaystackPop.setup({
+    const handler = PaystackPop.setup(Object.assign({
         key: publicKey, email: email, amount: Math.round(Number(amountNaira || 0) * 100), currency: 'NGN',
         metadata: metadata || {}, callback: function (response) { onSuccess(response); }, onClose: function () { onClose && onClose(); }
-    });
+    }, reference ? { ref: reference } : {}));
     handler.openIframe();
+}
+// --- Paystack "pay now, credit later" local cache -------------------------------------------
+// This app has no server, so a Paystack payment is only ever recorded when the success callback
+// above runs *in the browser that made the payment*. If that tab/app gets closed, killed, or
+// loses connection between the charge going through and that callback firing, the wallet never
+// gets credited even though the card was charged. To recover from that without needing a backend:
+// 1. Before opening the Paystack popup, we save {uid, amount, reference} to localStorage.
+// 2. If the success callback runs normally, we credit/flag it (see onSuccess below) and clear
+//    the cache entry.
+// 3. If the user cancels (Paystack's onClose fires without a charge), we clear the cache entry
+//    too — nothing was paid.
+// 4. If neither fires (interrupted), the entry just sits in localStorage on that device. Next
+//    time this person opens the site *on the same phone*, reconcilePendingPaystackPayments()
+//    finds it — since we don't know what channel an interrupted attempt used (or whether it
+//    really completed), it's always routed to admin review rather than auto-credited.
+const PENDING_PAYSTACK_KEY = 'lokiface_pending_paystack';
+function getPendingPaystackPayments() {
+    try { return JSON.parse(localStorage.getItem(PENDING_PAYSTACK_KEY) || '[]'); }
+    catch (e) { return []; }
+}
+function savePendingPaystackPayment(uid, amountNaira, reference) {
+    const list = getPendingPaystackPayments();
+    list.push({ uid, amount: amountNaira, reference, createdAt: Date.now() });
+    localStorage.setItem(PENDING_PAYSTACK_KEY, JSON.stringify(list));
+}
+function clearPendingPaystackPayment(reference) {
+    const list = getPendingPaystackPayments().filter(p => p.reference !== reference);
+    localStorage.setItem(PENDING_PAYSTACK_KEY, JSON.stringify(list));
+}
+async function reconcilePendingPaystackPayments(uid) {
+    const all = getPendingPaystackPayments();
+    const mine = all.filter(p => p.uid === uid);
+    if (!mine.length) return;
+    const stillOthers = all.filter(p => p.uid !== uid);
+    for (const p of mine) {
+        try { await flagPaystackForReview(p.uid, p.amount, p.reference, 'unknown (interrupted before we saw the result)'); }
+        catch (e) { /* leave it cached, we'll retry next visit */ stillOthers.push(p); continue; }
+    }
+    localStorage.setItem(PENDING_PAYSTACK_KEY, JSON.stringify(stillOthers));
 }
 function uploadWalletReceipt(uid, file, onProgress) {
     const isImage = (file.type || '').startsWith('image/');
@@ -12518,18 +13470,46 @@ function FundWalletSheet({ cfg, onClose }) {
         const amt = Number(amount);
         if (!amt || amt < 100) { toast('Enter a valid amount (min \u20A6100)', 'error'); return; }
         if (!cfg.paystackPublicKey) { toast('Payments aren\u2019t configured yet. Contact support.', 'error'); return; }
+        // Remember this attempt on the device *before* the checkout even opens. If Paystack
+        // charges the card but the browser tab is closed/killed before the success callback
+        // below gets to run, this cached record survives (it's in localStorage, not React
+        // state) and reconcilePendingPaystackPayments() picks it up and credits the wallet the
+        // next time this person opens the site on this device — see App().
+        const reference = 'wallet_' + profile.id + '_' + Date.now();
+        savePendingPaystackPayment(profile.id, amt, reference);
         try {
             launchWalletPaystack({
-                email: firebaseUser.email, amountNaira: amt, publicKey: cfg.paystackPublicKey,
+                email: firebaseUser.email, amountNaira: amt, publicKey: cfg.paystackPublicKey, reference: reference,
                 metadata: { uid: profile.id, purpose: 'wallet_funding' },
                 onSuccess: async (resp) => {
                     setBusy(true);
-                    try { await recordWalletPaystackFunding(profile.id, amt, resp.reference); toast('Wallet funded!', 'success'); onClose(); }
-                    catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+                    // Only a card payment is genuinely confirmed synchronously (3DS/OTP completes
+                    // before Paystack calls this back) — that's why picking "Transfer" (or USSD,
+                    // mobile money, etc.) and never actually paying was still crediting the
+                    // wallet: those channels can report back before real money has moved, and
+                    // there's no server here to verify against Paystack's secret-key API. So only
+                    // 'card' gets credited instantly; everything else is held for an admin to
+                    // confirm against the Paystack dashboard first.
+                    const isCard = resp && resp.channel === 'card' && resp.status === 'success';
+                    try {
+                        if (isCard) {
+                            await recordWalletPaystackFunding(profile.id, amt, resp.reference || reference);
+                            toast('Wallet funded!', 'success');
+                        }
+                        else {
+                            await flagPaystackForReview(profile.id, amt, resp.reference || reference, (resp && resp.channel) || 'unknown');
+                            toast('Payment received \u2014 we\u2019re confirming it with Paystack. Your wallet updates once verified, usually within a few minutes.', 'success');
+                        }
+                    }
+                    catch (e) { toast(e.message, 'error'); }
+                    finally { clearPendingPaystackPayment(reference); setBusy(false); onClose(); }
                 },
-                onClose: () => { }
+                // User backed out without paying — nothing was charged, so drop the cached
+                // attempt too, otherwise it would look like an interrupted successful payment
+                // next time they open the site.
+                onClose: () => { clearPendingPaystackPayment(reference); }
             });
-        } catch (e) { toast(e.message, 'error'); }
+        } catch (e) { clearPendingPaystackPayment(reference); toast(e.message, 'error'); }
     };
     const onPickReceipt = (e) => {
         const file = e.target.files && e.target.files[0];
@@ -12829,15 +13809,37 @@ function AdminWalletPanel({ adminUid, adminEmail }) {
     const [subtab, setSubtab] = useState('manual');
     const [filter, setFilter] = useState('pending');
     const fundings = useWalletManualFundings(filter);
+    // Separate queue from manual fundings above — these are Paystack payments (Transfer, USSD,
+    // mobile money…) that need a human to confirm against the Paystack dashboard before the
+    // wallet is credited, since only card payments are trusted to auto-credit. See
+    // flagPaystackForReview().
+    const [pfFilter, setPfFilter] = useState('pending');
+    const pending = useWalletPaystackPending(pfFilter);
     const cfg = useWalletConfig();
     const [cfgForm, setCfgForm] = useState(null);
     useEffect(() => { if (subtab === 'settings') setCfgForm(cfg); }, [subtab]);
     const approve = async (row) => { try { await adminApproveWalletManualFunding(row, adminUid, adminEmail); toast('Approved \u2014 wallet credited', 'success'); } catch (e) { toast(e.message, 'error'); } };
     const reject = async (row) => { const reason = prompt('Reason for rejection:'); if (reason === null) return; try { await adminRejectWalletManualFunding(row, reason, adminUid, adminEmail); toast('Rejected', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    const approvePf = async (row) => { try { await adminApprovePaystackPending(row, adminUid, adminEmail); toast('Confirmed \u2014 wallet credited', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    const rejectPf = async (row) => { const reason = prompt('Reason (e.g. "no matching payment in Paystack dashboard"):'); if (reason === null) return; try { await adminRejectPaystackPending(row, reason, adminUid, adminEmail); toast('Rejected', 'success'); } catch (e) { toast(e.message, 'error'); } };
     const saveCfg = async () => { try { await saveWalletConfig(cfgForm); toast('Wallet settings saved', 'success'); } catch (e) { toast(e.message, 'error'); } };
     return React.createElement("div", null,
         React.createElement("h2", { className: "font-display text-lg font-bold mb-3 flex items-center gap-2" }, React.createElement("i", { className: "fa-solid fa-wallet text-brand-600" }), "Wallet"),
-        React.createElement("div", { className: "flex gap-2 mb-4" }, [['manual', 'Manual fundings'], ['settings', 'Settings']].map(([k, l]) => React.createElement("button", { key: k, onClick: () => setSubtab(k), className: "px-3 py-1.5 rounded-full text-xs font-semibold " + (subtab === k ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, l))),
+        React.createElement("div", { className: "flex gap-2 mb-4 flex-wrap" }, [['manual', 'Manual fundings'], ['paystack', 'Paystack to verify' + (pending.filter(r => r.status === 'pending').length && pfFilter === 'pending' ? ' (' + pending.length + ')' : '')], ['settings', 'Settings']].map(([k, l]) => React.createElement("button", { key: k, onClick: () => setSubtab(k), className: "px-3 py-1.5 rounded-full text-xs font-semibold " + (subtab === k ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, l))),
+        subtab === 'paystack' && React.createElement("div", null,
+            React.createElement("p", { className: "text-xs text-slate-400 mb-3" }, "Card payments credit instantly. Transfer/USSD/mobile-money payments land here first \u2014 check the reference against your Paystack dashboard before approving."),
+            React.createElement("div", { className: "flex gap-2 mb-3" }, ['pending', 'approved', 'rejected', 'all'].map(f => React.createElement("button", { key: f, onClick: () => setPfFilter(f), className: "px-3 py-1 rounded-full text-xs font-semibold " + (pfFilter === f ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, f))),
+            pending.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "Nothing in this filter."),
+            pending.map(row => React.createElement("div", { key: row.id, className: "bg-white dark:bg-ink-800 border border-amber-200 dark:border-amber-800 rounded-xl p-3 mb-2" },
+                React.createElement("div", { className: "flex items-center justify-between mb-1" },
+                    React.createElement("p", { className: "font-semibold text-sm" }, formatNaira(row.amount)),
+                    React.createElement("span", { className: "text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-ink-700 shrink-0" }, row.status)),
+                React.createElement("p", { className: "text-xs text-slate-400 mb-1" }, row.uid),
+                React.createElement("p", { className: "text-xs font-mono bg-slate-50 dark:bg-ink-700 rounded-lg px-2 py-1 mb-2" }, "Ref: ", row.reference || '\u2014', " \u00b7 ", row.channel),
+                row.rejectionReason && React.createElement("p", { className: "text-xs text-red-500 mb-2" }, "Rejected: ", row.rejectionReason),
+                row.status === 'pending' && React.createElement("div", { className: "flex gap-2" },
+                    React.createElement("button", { onClick: () => approvePf(row), className: "flex-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg py-1.5 text-xs font-semibold" }, "Confirmed \u2014 credit"),
+                    React.createElement("button", { onClick: () => rejectPf(row), className: "flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-1.5 text-xs font-semibold" }, "Reject"))))),
         subtab === 'manual' && React.createElement("div", null,
             React.createElement("div", { className: "flex gap-2 mb-3" }, ['pending', 'approved', 'rejected', 'all'].map(f => React.createElement("button", { key: f, onClick: () => setFilter(f), className: "px-3 py-1 rounded-full text-xs font-semibold " + (filter === f ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, f))),
             fundings.length === 0 && React.createElement("p", { className: "text-sm text-slate-400" }, "No manual fundings in this filter."),
