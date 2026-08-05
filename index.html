@@ -3697,7 +3697,7 @@ function CreatePostScreen({ go, route }) {
     const myPages = useMyFanPages(profile.id);
     const [postingAs, setPostingAs] = useState({ type: 'user' });
     const [showIdentityPicker, setShowIdentityPicker] = useState(false);
-    const [text, setText] = useState('');
+    const [text, setText] = useState((route === null || route === void 0 ? void 0 : route.initialText) || '');
     const [files, setFiles] = useState([]);
     const [previews, setPreviews] = useState([]);
     const [busy, setBusy] = useState(false);
@@ -12990,6 +12990,18 @@ function ReferralScreen({ go }) {
         if (navigator.share) navigator.share({ title: 'Join Lokiface', text: 'Join me on Lokiface!', url: link }).catch(() => { });
         else copyLink();
     };
+    // Lets someone who just earned a referral bonus post the good news straight to their own
+    // Lokiface timeline (not just an external share-sheet) — since that post lives on the
+    // platform itself, their followers can tap the embedded link right there and sign up
+    // through it, which keeps growing their referral earnings instead of the link only being
+    // shared once, externally, and then forgotten.
+    const postSuccessToTimeline = () => {
+        if (!link) return;
+        go({
+            name: 'createPost',
+            initialText: '\uD83C\uDF89 I just earned a referral bonus on Lokiface! Join using my link and start earning too \u2014 sign up here: ' + link
+        });
+    };
     return React.createElement("div", null,
         React.createElement("div", { className: "flex items-center gap-2 mb-4" },
             React.createElement("button", { onClick: () => go({ name: 'menu' }), className: "text-slate-400" }, React.createElement("i", { className: "fa-solid fa-arrow-left text-lg" })),
@@ -13020,6 +13032,10 @@ function ReferralScreen({ go }) {
                 React.createElement("button", { onClick: copyLink, disabled: !link, className: "flex-1 bg-slate-100 dark:bg-ink-700 disabled:opacity-40 rounded-lg py-2 text-xs font-semibold" }, React.createElement("i", { className: "fa-solid fa-copy mr-1.5" }), "Copy link"),
                 React.createElement("button", { onClick: shareLink, disabled: !link, className: "flex-1 bg-brand-600 hover:bg-brand-700 disabled:opacity-40 text-white rounded-lg py-2 text-xs font-semibold" }, React.createElement("i", { className: "fa-solid fa-share-nodes mr-1.5" }), "Share")),
             React.createElement("p", { className: "text-[11px] text-slate-400 mt-3" }, "Share your link \u2014 you earn ", formatNaira(cfg.rewardAmount), " for every friend who signs up and completes their profile.")),
+        successful > 0 && React.createElement("div", { className: "bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800/40 rounded-xl p-4 mb-4" },
+            React.createElement("p", { className: "text-sm font-bold text-emerald-700 dark:text-emerald-400 mb-1" }, "\uD83C\uDF89 Your link is working \u2014 keep it going!"),
+            React.createElement("p", { className: "text-xs text-slate-500 dark:text-slate-400 mb-3" }, "Post it to your timeline so your followers can sign up straight from your page \u2014 every signup keeps earning you ", formatNaira(cfg.rewardAmount), "."),
+            React.createElement("button", { onClick: postSuccessToTimeline, disabled: !link, className: "w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-lg py-2.5 text-sm font-semibold flex items-center justify-center gap-2" }, React.createElement("i", { className: "fa-solid fa-file-pen" }), "Post to your timeline")),
         React.createElement("div", { className: "flex gap-2 mb-3" }, [['referrals', 'Referral history'], ['withdrawals', 'Withdrawal history']].map(([k, l]) => React.createElement("button", { key: k, onClick: () => setHistoryTab(k), className: "px-3 py-1.5 rounded-full text-xs font-semibold " + (historyTab === k ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, l))),
         historyTab === 'referrals' && React.createElement("div", { className: "space-y-1.5" },
             referrals === null && React.createElement("div", { className: "py-10 flex justify-center" }, React.createElement("div", { className: "w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" })),
@@ -13028,7 +13044,9 @@ function ReferralScreen({ go }) {
                 React.createElement("div", { className: "min-w-0" },
                     React.createElement("p", { className: "text-sm font-semibold" }, r.status === 'completed' ? 'Successful referral' : r.status === 'invalid' ? 'Invalid referral' : 'Pending \u2014 awaiting profile setup'),
                     React.createElement("p", { className: "text-[11px] text-slate-400" }, timeAgo(r.createdAt))),
-                React.createElement("span", { className: "text-sm font-bold shrink-0 " + (r.status === 'completed' ? "text-emerald-600" : "text-slate-400") }, r.status === 'completed' ? '+' + formatNaira(r.rewardAmount) : formatNaira(r.rewardAmount))))),
+                React.createElement("div", { className: "flex items-center gap-2 shrink-0" },
+                    r.status === 'completed' && React.createElement("button", { onClick: postSuccessToTimeline, title: "Share to your timeline", className: "w-7 h-7 rounded-full bg-slate-100 dark:bg-ink-700 flex items-center justify-center text-slate-500 dark:text-slate-400" }, React.createElement("i", { className: "fa-solid fa-share-nodes text-xs" })),
+                    React.createElement("span", { className: "text-sm font-bold " + (r.status === 'completed' ? "text-emerald-600" : "text-slate-400") }, r.status === 'completed' ? '+' + formatNaira(r.rewardAmount) : formatNaira(r.rewardAmount)))))),
         historyTab === 'withdrawals' && React.createElement("div", { className: "space-y-1.5" },
             withdrawals === null && React.createElement("div", { className: "py-10 flex justify-center" }, React.createElement("div", { className: "w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" })),
             withdrawals !== null && withdrawals.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-8" }, "No withdrawal requests yet."),
