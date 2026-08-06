@@ -3930,6 +3930,9 @@ function MainApp({ route, setRoute }) {
                 route.name === 'wallet' && React.createElement(WalletScreen, { go: go }),
                 route.name === 'referrals' && React.createElement(ReferralScreen, { go: go }),
                 route.name === 'adCentre' && React.createElement(AdCentreScreen, { go: go }),
+                route.name === 'dashboard' && React.createElement(DashboardScreen, { go: go }),
+                route.name === 'events' && React.createElement(EventsScreen, { go: go }),
+                route.name === 'feeds' && React.createElement(FeedsScreen, { go: go }),
                 route.name === 'post' && React.createElement(PostDetailScreen, { id: route.id, go: go, openComments: route.openComments }),
                 route.name === 'profile' && React.createElement(ProfileScreen, { uid: route.uid, go: go }),
                 route.name === 'myPages' && React.createElement(MyPagesScreen, { go: go }),
@@ -3952,7 +3955,7 @@ function MainApp({ route, setRoute }) {
 // Tiles with route: null are not implemented yet, so tapping them just shows a "Coming soon" toast
 // instead of pretending the feature exists.
 const MENU_TILES = [
-    { key: 'dashboard', label: 'Dashboard', icon: 'fa-chart-simple', route: null },
+    { key: 'dashboard', label: 'Dashboard', icon: 'fa-chart-simple', route: { name: 'dashboard' } },
     { key: 'messages', label: 'Messages', icon: 'fa-comment-dots', route: { name: 'messages' } },
     { key: 'groups', label: 'Groups', icon: 'fa-people-group', route: { name: 'groups' } },
     { key: 'friends', label: 'Friends', icon: 'fa-user-group', route: { name: 'search' } },
@@ -3964,11 +3967,11 @@ const MENU_TILES = [
     { key: 'saved', label: 'Saved', icon: 'fa-bookmark', route: { name: 'bookmarks' } },
     { key: 'memories', label: 'Memories', icon: 'fa-clock-rotate-left', route: { name: 'memories' } },
     { key: 'birthdays', label: 'Birthdays', icon: 'fa-gift', route: { name: 'birthdays' } },
-    { key: 'events', label: 'Events', icon: 'fa-calendar-days', route: null },
+    { key: 'events', label: 'Events', icon: 'fa-calendar-days', route: { name: 'events' } },
     { key: 'adCentre', label: 'Ad Centre', icon: 'fa-bullhorn', route: { name: 'adCentre' } },
     { key: 'wallet', label: 'Wallet', icon: 'fa-wallet', route: { name: 'wallet' } },
     { key: 'referrals', label: 'Referrals', icon: 'fa-user-plus', route: { name: 'referrals' } },
-    { key: 'feeds', label: 'Feeds', icon: 'fa-table-cells-large', route: null },
+    { key: 'feeds', label: 'Feeds', icon: 'fa-table-cells-large', route: { name: 'feeds' } },
 ];
 const MENU_TILE_COLORS = {
     dashboard: 'bg-blue-100 text-blue-600', messages: 'bg-fuchsia-100 text-fuchsia-600',
@@ -6132,6 +6135,171 @@ function BirthdaysScreen({ go }) {
         upcoming.length > 0 && React.createElement("div", null,
             React.createElement("p", { className: "text-xs font-bold text-slate-400 uppercase tracking-wide mb-2" }, "Upcoming"),
             React.createElement("div", { className: "space-y-2" }, upcoming.map(Row))));
+}
+/* ============================== EVENTS (top-level "Events" menu tile) ============================== */
+function SiteEventCard({ ev, go }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const [busy, setBusy] = useState(false);
+    const going = (ev.attendeeIds || []).includes(profile.id);
+    const mine = ev.createdBy === profile.id;
+    const when = ev.startAt ? new Date(ev.startAt) : null;
+    const rsvp = async () => {
+        setBusy(true);
+        try { await toggleSiteEventRSVP(ev.id, profile.id, !going); }
+        catch (e) { toast(e.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    const remove = async () => {
+        if (!confirm('Delete this event?'))
+            return;
+        try { await deleteSiteEvent(ev.id); toast('Event deleted', 'success'); }
+        catch (e) { toast(e.message, 'error'); }
+    };
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-3.5" },
+        React.createElement("div", { className: "flex items-start justify-between gap-2" },
+            React.createElement("div", { className: "min-w-0" },
+                React.createElement("p", { className: "font-bold text-sm" }, ev.title),
+                when && React.createElement("p", { className: "text-xs text-slate-400 mt-0.5" }, React.createElement("i", { className: "fa-solid fa-clock mr-1.5" }), when.toLocaleString()),
+                ev.location && React.createElement("p", { className: "text-xs text-slate-400 mt-0.5" }, React.createElement("i", { className: "fa-solid fa-location-dot mr-1.5" }), ev.location),
+                React.createElement("button", { onClick: () => go({ name: 'profile', uid: ev.createdBy }), className: "text-[11px] text-slate-400 mt-1 hover:underline" }, "Hosted by ", mine ? 'you' : 'a Yeloface user')),
+            mine && React.createElement("button", { onClick: remove, className: "text-slate-400 w-7 h-7 shrink-0" }, React.createElement("i", { className: "fa-solid fa-trash text-xs" }))),
+        ev.description && React.createElement("p", { className: "text-sm mt-2 whitespace-pre-wrap" }, ev.description),
+        React.createElement("div", { className: "flex items-center justify-between mt-3 pt-2.5 border-t border-slate-100 dark:border-ink-700" },
+            React.createElement("span", { className: "text-xs text-slate-400" }, (ev.attendeeIds || []).length, " going"),
+            React.createElement("button", { disabled: busy, onClick: rsvp, className: "text-xs font-semibold px-3.5 py-1.5 rounded-full " + (going ? "bg-slate-100 dark:bg-ink-700" : "bg-brand-600 hover:bg-brand-700 text-white") }, going ? 'Going ✓' : 'RSVP')));
+}
+function EventsScreen({ go }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const [events, setEvents] = useState(null);
+    const [formOpen, setFormOpen] = useState(false);
+    const [title, setTitle] = useState('');
+    const [desc, setDesc] = useState('');
+    const [when, setWhen] = useState('');
+    const [loc, setLoc] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [tab, setTab] = useState('upcoming');
+    useEffect(() => {
+        const unsub = db.collection('events').limit(200)
+            .onSnapshot(snap => setEvents(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setEvents([]));
+        return unsub;
+    }, []);
+    const submit = async (e) => {
+        e.preventDefault();
+        if (!title.trim() || !when)
+            return;
+        setBusy(true);
+        try {
+            await createSiteEvent(profile.id, { title, description: desc, startAt: new Date(when).toISOString(), location: loc });
+            setTitle(''); setDesc(''); setWhen(''); setLoc(''); setFormOpen(false);
+            toast('Event created', 'success');
+        }
+        catch (err) { toast(err.message, 'error'); }
+        finally { setBusy(false); }
+    };
+    const now = Date.now();
+    const sorted = (events || []).slice().sort((a, b) => new Date(a.startAt || 0) - new Date(b.startAt || 0));
+    const upcoming = sorted.filter(ev => !ev.startAt || new Date(ev.startAt).getTime() >= now);
+    const past = sorted.filter(ev => ev.startAt && new Date(ev.startAt).getTime() < now).reverse();
+    const list = tab === 'upcoming' ? upcoming : past;
+    return React.createElement("div", null,
+        React.createElement("div", { className: "flex items-center gap-3 mb-4" },
+            React.createElement("button", { onClick: () => go({ name: 'menu' }), className: "text-slate-400" }, React.createElement("i", { className: "fa-solid fa-arrow-left text-lg" })),
+            React.createElement("h1", { className: "font-display text-lg font-bold flex-1" }, "Events"),
+            React.createElement("button", { onClick: () => setFormOpen(o => !o), className: "text-xs font-semibold px-3 py-1.5 rounded-full bg-brand-600 hover:bg-brand-700 text-white" }, React.createElement("i", { className: "fa-solid fa-calendar-plus mr-1.5" }), "New")),
+        formOpen && React.createElement("form", { onSubmit: submit, className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-3.5 space-y-2 mb-4" },
+            React.createElement("input", { value: title, onChange: e => setTitle(e.target.value), required: true, placeholder: "Event title", className: "w-full bg-slate-50 dark:bg-ink-700 rounded-lg px-3 py-2 text-sm focus:outline-none" }),
+            React.createElement("input", { type: "datetime-local", value: when, onChange: e => setWhen(e.target.value), required: true, className: "w-full bg-slate-50 dark:bg-ink-700 rounded-lg px-3 py-2 text-sm focus:outline-none" }),
+            React.createElement("input", { value: loc, onChange: e => setLoc(e.target.value), placeholder: "Location (optional)", className: "w-full bg-slate-50 dark:bg-ink-700 rounded-lg px-3 py-2 text-sm focus:outline-none" }),
+            React.createElement("textarea", { value: desc, onChange: e => setDesc(e.target.value), placeholder: "Details (optional)", rows: 2, className: "w-full bg-slate-50 dark:bg-ink-700 rounded-lg px-3 py-2 text-sm focus:outline-none" }),
+            React.createElement("div", { className: "flex gap-2" },
+                React.createElement("button", { disabled: busy, type: "submit", className: "flex-1 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white text-sm font-semibold py-2 rounded-lg" }, busy ? 'Creating…' : 'Create event'),
+                React.createElement("button", { type: "button", onClick: () => setFormOpen(false), className: "px-4 text-sm font-semibold text-slate-400" }, "Cancel"))),
+        React.createElement("div", { className: "flex gap-2 mb-3" },
+            ['upcoming', 'past'].map(t => React.createElement("button", { key: t, onClick: () => setTab(t), className: "px-3.5 py-1.5 rounded-full text-xs font-semibold " + (tab === t ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700 text-slate-500") }, t === 'upcoming' ? 'Upcoming' : 'Past'))),
+        events === null && React.createElement(PostSkeleton, null),
+        events !== null && list.length === 0 && React.createElement("div", { className: "text-center text-slate-400 py-16" },
+            React.createElement("i", { className: "fa-solid fa-calendar-days text-3xl mb-3 opacity-40" }),
+            React.createElement("p", { className: "text-sm" }, tab === 'upcoming' ? 'No upcoming events yet.' : 'No past events.'),
+            tab === 'upcoming' && React.createElement("p", { className: "text-xs mt-1" }, "Tap New to create one and invite people.")),
+        React.createElement("div", { className: "space-y-2.5" }, list.map(ev => React.createElement(SiteEventCard, { key: ev.id, ev: ev, go: go }))));
+}
+/* ============================== FEEDS (top-level "Feeds" menu tile — curated content feeds) ============================== */
+function FeedsScreen({ go }) {
+    const feeds = [
+        { key: 'home', label: 'Home Feed', desc: 'Posts from people and Pages you follow', icon: 'fa-house', route: { name: 'home' } },
+        { key: 'reels', label: 'Reels', desc: 'Short videos from the whole community', icon: 'fa-clapperboard', route: { name: 'reels' } },
+        { key: 'marketplace', label: 'Marketplace', desc: 'Items for sale near you', icon: 'fa-store', route: { name: 'marketplace' } },
+        { key: 'groups', label: 'Groups', desc: 'Activity from groups you belong to', icon: 'fa-people-group', route: { name: 'groups' } },
+        { key: 'pages', label: 'Pages', desc: 'Pages you manage or follow', icon: 'fa-flag', route: { name: 'myPages' } },
+        { key: 'saved', label: 'Saved posts', desc: 'Things you bookmarked for later', icon: 'fa-bookmark', route: { name: 'bookmarks' } },
+        { key: 'memories', label: 'Memories', desc: 'Your posts from this day, past years', icon: 'fa-clock-rotate-left', route: { name: 'memories' } },
+    ];
+    return React.createElement("div", null,
+        React.createElement("div", { className: "flex items-center gap-3 mb-4" },
+            React.createElement("button", { onClick: () => go({ name: 'menu' }), className: "text-slate-400" }, React.createElement("i", { className: "fa-solid fa-arrow-left text-lg" })),
+            React.createElement("h1", { className: "font-display text-lg font-bold" }, "Feeds")),
+        React.createElement("p", { className: "text-xs text-slate-400 mb-4" }, "Jump straight into any feed."),
+        React.createElement("div", { className: "space-y-2" }, feeds.map(f => React.createElement("button", { key: f.key, onClick: () => go(f.route), className: "w-full flex items-center gap-3 bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3.5 text-left" },
+            React.createElement("span", { className: "w-11 h-11 rounded-xl bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 flex items-center justify-center shrink-0" }, React.createElement("i", { className: "fa-solid " + f.icon + " text-lg" })),
+            React.createElement("span", { className: "flex-1 min-w-0" },
+                React.createElement("span", { className: "block font-semibold text-sm" }, f.label),
+                React.createElement("span", { className: "block text-xs text-slate-400 truncate" }, f.desc)),
+            React.createElement("i", { className: "fa-solid fa-chevron-right text-slate-300 dark:text-slate-600 text-xs" })))));
+}
+/* ============================== DASHBOARD (top-level "Dashboard" menu tile — personal stats) ============================== */
+function DashboardScreen({ go }) {
+    const { profile } = useAuth();
+    const friendships = useFriendships(profile.id);
+    const unreadMessages = useUnreadMessages(profile.id);
+    const unreadNotifications = useUnreadNotifications(profile.id);
+    const [posts, setPosts] = useState(null);
+    const [pages, setPages] = useState(null);
+    const [listings, setListings] = useState(null);
+    useEffect(() => {
+        const unsub = db.collection('posts').where('authorId', '==', profile.id).limit(1000)
+            .onSnapshot(snap => setPosts(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setPosts([]));
+        return unsub;
+    }, [profile.id]);
+    useEffect(() => {
+        const unsub = db.collection('fanPages').where('ownerId', '==', profile.id)
+            .onSnapshot(snap => setPages(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setPages([]));
+        return unsub;
+    }, [profile.id]);
+    useEffect(() => {
+        const unsub = db.collection('listings').where('sellerId', '==', profile.id)
+            .onSnapshot(snap => setListings(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setListings([]));
+        return unsub;
+    }, [profile.id]);
+    const friendsCount = (friendships || []).filter(f => f.status === 'accepted').length;
+    const totals = (posts || []).reduce((acc, p) => ({ likes: acc.likes + (p.likesCount || 0), comments: acc.comments + (p.commentsCount || 0), shares: acc.shares + (p.sharesCount || 0) }), { likes: 0, comments: 0, shares: 0 });
+    const loading = posts === null || pages === null || listings === null;
+    const cards = [
+        ['Posts', (posts || []).length, 'fa-note-sticky', () => go({ name: 'profile', uid: profile.id })],
+        ['Friends', friendsCount, 'fa-user-group', () => go({ name: 'search' })],
+        ['Total likes', totals.likes, 'fa-heart', null],
+        ['Total comments', totals.comments, 'fa-comment', null],
+        ['Pages you manage', (pages || []).length, 'fa-flag', () => go({ name: 'myPages' })],
+        ['Marketplace listings', (listings || []).length, 'fa-store', () => go({ name: 'marketplace' })],
+        ['Unread messages', unreadMessages || 0, 'fa-comment-dots', () => go({ name: 'messages' })],
+        ['Unread notifications', unreadNotifications || 0, 'fa-bell', () => go({ name: 'notifications' })],
+    ];
+    return React.createElement("div", null,
+        React.createElement("div", { className: "flex items-center gap-3 mb-4" },
+            React.createElement("button", { onClick: () => go({ name: 'menu' }), className: "text-slate-400" }, React.createElement("i", { className: "fa-solid fa-arrow-left text-lg" })),
+            React.createElement("h1", { className: "font-display text-lg font-bold" }, "Dashboard")),
+        React.createElement("div", { className: "bg-gradient-to-br from-brand-600 to-brand-700 rounded-2xl p-5 text-white mb-4 flex items-center gap-4" },
+            React.createElement(Avatar, { user: profile, size: 14 }),
+            React.createElement("div", { className: "min-w-0" },
+                React.createElement("p", { className: "font-bold truncate" }, profile.displayName || profile.username),
+                React.createElement("p", { className: "text-xs text-white/80" }, "@", profile.username),
+                React.createElement("p", { className: "text-xs text-white/80 mt-1" }, "Wallet: ", formatNaira(profile.walletBalance || 0)))),
+        loading && React.createElement("div", { className: "py-10 flex justify-center" }, React.createElement("div", { className: "w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" })),
+        !loading && React.createElement("div", { className: "grid grid-cols-2 gap-3" }, cards.map(([label, value, icon, onClick]) => React.createElement("button", { key: label, disabled: !onClick, onClick: onClick || undefined, className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3.5 text-left" },
+            React.createElement("i", { className: "fa-solid " + icon + " text-brand-600 dark:text-brand-400 mb-2" }),
+            React.createElement("p", { className: "text-xl font-extrabold" }, value),
+            React.createElement("p", { className: "text-[11px] text-slate-400" }, label)))));
 }
 /* ============================== PROFILE ============================== */
 function computeWorkDuration(workStart) {
@@ -10414,6 +10582,20 @@ async function createGroupEvent(groupId, creatorId, fields) {
 async function deleteGroupEvent(groupId, eventId) { await db.collection('groups').doc(groupId).collection('events').doc(eventId).delete(); }
 async function toggleEventRSVP(groupId, eventId, uid, going) {
     await db.collection('groups').doc(groupId).collection('events').doc(eventId)
+        .update({ attendeeIds: going ? FieldValue.arrayUnion(uid) : FieldValue.arrayRemove(uid) });
+}
+/* ---- Top-level public Events (the "Events" menu tile — not tied to any Group) ---- */
+async function createSiteEvent(creatorId, fields) {
+    const ref = await db.collection('events').add({
+        title: fields.title.trim(), description: (fields.description || '').trim(),
+        startAt: fields.startAt, location: fields.location || '', createdBy: creatorId,
+        attendeeIds: [creatorId], createdAt: FieldValue.serverTimestamp(),
+    });
+    return ref.id;
+}
+async function deleteSiteEvent(eventId) { await db.collection('events').doc(eventId).delete(); }
+async function toggleSiteEventRSVP(eventId, uid, going) {
+    await db.collection('events').doc(eventId)
         .update({ attendeeIds: going ? FieldValue.arrayUnion(uid) : FieldValue.arrayRemove(uid) });
 }
 /* ---- Hooks ---- */
