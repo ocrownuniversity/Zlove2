@@ -125,12 +125,14 @@
         '<span>' + LABELS[key] + '</span><span style="color:' + color + ';font-weight:600;white-space:nowrap;">' + icon + ' ' + status + '</span></div>';
     }).join('');
     var googleBlocked = ['firebaseApp', 'firebaseAuth', 'firebaseFirestore', 'firebaseStorage'].some(function (k) { return window.__zloveStatus[k] !== 'ok'; });
-    root.innerHTML = '<div style="font-family: sans-serif; max-width: 480px; margin: 6vh auto; padding: 24px; text-align: left; color:#334155;">' +
-      '<div style="text-align:center; font-size:15px; font-weight:600; margin-bottom:12px;">The app couldn\'t finish loading. Here\'s exactly what happened:</div>' +
-      rows +
-      (googleBlocked ? '<div style="font-size:13px; margin-top:16px; line-height:1.5; color:#b91c1c; background:#fef2f2; padding:10px; border-radius:8px;"><b>Firebase (gstatic.com) is unreachable on this network.</b> Firebase is Google infrastructure — login, posts and messaging cannot work here regardless of anything else. This needs a network/VPN that can reach Google\'s servers, not a code fix.</div>' : '') +
-      '<div style="font-size:13px; margin-top:12px; line-height:1.5; color:#64748b;">Anything marked <b style="color:#dc2626;">failed</b> or stuck on <b style="color:#d97706;">pending</b> is being blocked — by a VPN, private DNS (AdGuard/NextDNS), ad-blocker, firewall, or region-level restriction. Try turning those off, switching networks, or opening this page in a different browser, then retry.</div>' +
-      '<button onclick="location.reload()" style="margin-top:16px;width:100%;padding:10px;border-radius:10px;background:#0ea5e9;color:#fff;border:none;font-weight:600;font-size:14px;">Retry</button>' +
+    root.innerHTML = '<div style="font-family: sans-serif; max-width: 480px; margin: 6vh auto; padding: 24px; text-align: center; color:#334155;">' +
+      '<div style="font-size:16px; font-weight:700; margin-bottom:8px;">This page couldn\'t finish loading</div>' +
+      '<div style="font-size:13px; line-height:1.5; color:#64748b; margin-bottom:16px;">Please check your internet connection — or try turning off any VPN or ad-blocker — then tap Retry. If it keeps happening, try a different network or browser.</div>' +
+      '<button onclick="location.reload()" style="width:100%;padding:10px;border-radius:10px;background:#0ea5e9;color:#fff;border:none;font-weight:600;font-size:14px;">Retry</button>' +
+      '<button onclick="var d=document.getElementById(\'__yf_diag_details\'); d.style.display = d.style.display===\'none\' ? \'block\' : \'none\';" style="margin-top:14px;width:100%;padding:8px;border-radius:10px;background:transparent;color:#94a3b8;border:none;font-size:12px;">Show technical details</button>' +
+      '<div id="__yf_diag_details" style="display:none;text-align:left;margin-top:10px;">' + rows +
+      (googleBlocked ? '<div style="font-size:12px; margin-top:12px; line-height:1.5; color:#b91c1c; background:#fef2f2; padding:10px; border-radius:8px;">Firebase (gstatic.com) is unreachable on this network — this needs a network/VPN that can reach Google\'s servers, not a code fix.</div>' : '') +
+      '</div>' +
       '</div>';
   }
   window.addEventListener('error', function () { setTimeout(renderDiagnostics, 300); }, true);
@@ -1208,7 +1210,7 @@ function PageFollowButton({ page, size = 'md', className = '' }) {
             else await followPage(page.id, me.id, page.ownerId);
         }
         catch (err) {
-            toast(err.message, 'error');
+            toast(friendlyError(err), 'error');
         }
         finally {
             setBusy(false);
@@ -2319,6 +2321,46 @@ function exportToCsv(filename, rows) {
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
 }
+/* ============================== FRIENDLY ERROR MESSAGES ==============================
+   Firebase/Firestore errors ("FirebaseError: Missing or insufficient permissions",
+   "auth/wrong-password", etc.) are meaningless to ordinary users. Every place that shows
+   a caught error to the user should route it through this first, so people only ever see
+   plain, everyday language — never technical jargon or internal debug tags. */
+function friendlyError(e) {
+    let msg = (e && e.message) ? e.message : String(e || 'Something went wrong. Please try again.');
+    // Strip internal debug tags like "[read chat doc] " that some functions prepend.
+    msg = msg.replace(/\[[^\]]*\]\s*/g, '').trim();
+    const lower = msg.toLowerCase();
+    const rules = [
+        [/permission/, "You don't have permission to do that."],
+        [/wrong-password|invalid-credential|invalid-login-credentials/, "That password isn't correct."],
+        [/user-not-found/, "No account was found with that email."],
+        [/email-already-in-use/, "That email is already registered. Try signing in instead."],
+        [/weak-password/, "Please choose a stronger password (at least 6 characters)."],
+        [/invalid-email/, "That doesn't look like a valid email address."],
+        [/too-many-requests/, "Too many attempts. Please wait a moment and try again."],
+        [/requires-recent-login/, "Please sign in again to continue."],
+        [/user-disabled/, "This account has been disabled."],
+        [/network/, "A network problem occurred. Please check your connection and try again."],
+        [/unavailable/, "The service is temporarily unavailable. Please try again in a moment."],
+        [/quota|resource-exhausted/, "The service is busy right now. Please try again shortly."],
+        [/unauthenticated/, "Please sign in to continue."],
+        [/not-found/, "That could not be found."],
+        [/already-exists/, "That already exists."],
+        [/invalid-argument/, "Something about that request wasn't valid. Please check and try again."],
+        [/deadline-exceeded|timeout/, "That took too long. Please try again."],
+        [/cancelled/, "That was cancelled."],
+    ];
+    for (const [pattern, friendly] of rules) {
+        if (pattern.test(lower)) return friendly;
+    }
+    // Anything that still smells technical gets a plain fallback instead of leaking
+    // raw Firebase/Firestore internals to the user.
+    if (/firebase|firestore|storage\/|auth\/|cloud function|xhr|cors/i.test(msg)) {
+        return "Something went wrong. Please try again.";
+    }
+    return msg; // already a plain, human-written message
+}
 /* ============================== CONTEXTS ============================== */
 const AuthContext = createContext(null);
 const ThemeContext = createContext(null);
@@ -3312,7 +3354,7 @@ function IncomingCallModal({ call }) {
     const toast = useToast();
     const [busy, setBusy] = useState(false);
     const { profile } = useAuth();
-    const accept = async () => { setBusy(true); try { await acceptIncomingCall(profile); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); } };
+    const accept = async () => { setBusy(true); try { await acceptIncomingCall(profile); } catch (e) { toast(friendlyError(e), 'error'); } finally { setBusy(false); } };
     const decline = () => declineIncomingCall(call.id);
     return React.createElement("div", { className: "fixed inset-0 z-[200] bg-ink-900/98 flex flex-col items-center justify-center text-white px-6" },
         React.createElement("div", { className: "absolute inset-0 flex items-center justify-center" },
@@ -3606,7 +3648,7 @@ function AuthScreen() {
             }
         }
         catch (err) {
-            toast(err.message.replace('Firebase: ', ''), 'error');
+            toast(friendlyError(err).replace('Firebase: ', ''), 'error');
         }
         finally {
             setBusy(false);
@@ -3634,7 +3676,7 @@ function AuthScreen() {
             }
         }
         catch (err) {
-            toast(err.message.replace('Firebase: ', ''), 'error');
+            toast(friendlyError(err).replace('Firebase: ', ''), 'error');
         }
         finally {
             setBusy(false);
@@ -3648,7 +3690,7 @@ function AuthScreen() {
             toast('Password reset email sent — check your inbox.', 'success');
         }
         catch (err) {
-            toast(err.message.replace('Firebase: ', ''), 'error');
+            toast(friendlyError(err).replace('Firebase: ', ''), 'error');
         }
         finally {
             setBusy(false);
@@ -3789,7 +3831,7 @@ function OnboardingScreen() {
             completeReferralIfEligible(firebaseUser.uid).catch(() => { });
         }
         catch (err) {
-            toast(err.message, 'error');
+            toast(friendlyError(err), 'error');
         }
         finally {
             setBusy(false);
@@ -4216,7 +4258,7 @@ function FriendActionButton({ meId, otherId, compact }) {
             await fn();
         }
         catch (e) {
-            toast(e.message, 'error');
+            toast(friendlyError(e), 'error');
         }
         finally {
             setBusy(false);
@@ -4420,7 +4462,7 @@ function CreatePostScreen({ go, route }) {
             go(timelineOwnerId ? { name: 'profile', uid: timelineOwnerId } : { name: 'home' });
         }
         catch (err) {
-            toast(err.message, 'error');
+            toast(friendlyError(err), 'error');
         }
         finally {
             setBusy(false);
@@ -4530,7 +4572,7 @@ function ShareSheet({ post, onClose }) {
             onClose();
         }
         catch (e) {
-            toast(e.message, 'error');
+            toast(friendlyError(e), 'error');
         }
         finally {
             setBusy(false);
@@ -4546,7 +4588,7 @@ function ShareSheet({ post, onClose }) {
             onClose();
         }
         catch (e) {
-            toast(e.message, 'error');
+            toast(friendlyError(e), 'error');
         }
         finally {
             setBusy(false);
@@ -4569,7 +4611,7 @@ function ShareSheet({ post, onClose }) {
             onClose();
         }
         catch (e) {
-            toast(e.message, 'error');
+            toast(friendlyError(e), 'error');
         }
         finally {
             setBusy(false);
@@ -4672,7 +4714,7 @@ function ReelShareSheet({ reel, onClose }) {
             await shareReel(reel, profile.id, { text: comment, sharePageId });
             toast(sharePageId ? 'Shared to your Page' : 'Shared to your timeline', 'success');
             onClose();
-        } catch (e) { toast(e.message, 'error'); }
+        } catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); }
     };
     const sendToFriend = async (u) => {
@@ -4683,7 +4725,7 @@ function ReelShareSheet({ reel, onClose }) {
             db.collection('reels').doc(reel.id).update({ sharesCount: FieldValue.increment(1) }).catch(() => { });
             toast('Sent to ' + (u.displayName || u.username), 'success');
             onClose();
-        } catch (e) { toast(e.message, 'error'); }
+        } catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); }
     };
     const logExternalShare = () => db.collection('reels').doc(reel.id).update({ sharesCount: FieldValue.increment(1) }).catch(() => { });
@@ -5211,7 +5253,7 @@ function SharedPostPreview({ postId, go }) {
         try {
             const chatId = await ensureChat(profile.id, campaign.advertiserId);
             go({ name: 'chat', chatId, otherUid: campaign.advertiserId, pageId: campaign.pageId });
-        } catch (err) { toast(err.message, 'error'); }
+        } catch (err) { toast(friendlyError(err), 'error'); }
     };
     return React.createElement("div", { onClick: openOrigin, className: "border border-slate-200 dark:border-ink-700 rounded-xl p-3 mb-2 cursor-pointer" },
         React.createElement("div", { className: "flex items-center gap-2 mb-1.5" },
@@ -5294,7 +5336,7 @@ function CommentComposer({ avatarUser, placeholder, onSubmit, onCancel, compact,
             removeImage();
         }
         catch (e) {
-            toast(e.message || 'Could not post comment', 'error');
+            toast(friendlyError(e) || 'Could not post comment', 'error');
         }
         finally {
             setSending(false);
@@ -5652,7 +5694,7 @@ function ListingFeedCard({ listing, go, promoted }) {
     const toggleFav = async () => {
         setBusy(true);
         try { await toggleListingFavorite(listing.id, profile.id, favorited); }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); }
     };
     const messageSeller = async () => {
@@ -5660,7 +5702,7 @@ function ListingFeedCard({ listing, go, promoted }) {
             const chatId = await ensureChat(profile.id, listing.sellerId);
             await sendChatMessage(profile.id, chatId, listing.sellerId, { type: 'text', text: `Hi! I'm interested in "${listing.title}" (${formatNaira(listing.price)}).` });
             go({ name: 'chat', chatId, otherUid: listing.sellerId });
-        } catch (e) { toast(e.message, 'error'); }
+        } catch (e) { toast(friendlyError(e), 'error'); }
     };
     const whatsappHref = listing.whatsappNumber ? ("https://wa.me/" + listing.whatsappNumber.replace(/[^\d]/g, '') + "?text=" + encodeURIComponent(`Hi! I'm interested in "${listing.title}" (${formatNaira(listing.price)}).`)) : null;
     return React.createElement("div", { className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-lg sm:rounded-2xl mb-2 overflow-hidden" },
@@ -5871,7 +5913,7 @@ function SearchScreen({ go, route }) {
             go({ name: 'chat', chatId, otherUid: u.id });
         }
         catch (e) {
-            toast(e.message, 'error');
+            toast(friendlyError(e), 'error');
         }
         finally {
             setMessaging(null);
@@ -6158,14 +6200,14 @@ function SiteEventCard({ ev, go }) {
     const rsvp = async () => {
         setBusy(true);
         try { await toggleSiteEventRSVP(ev.id, profile.id, !going); }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); }
     };
     const remove = async () => {
         if (!confirm('Delete this event?'))
             return;
         try { await deleteSiteEvent(ev.id); toast('Event deleted', 'success'); }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
     };
     return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-3.5" },
         React.createElement("div", { className: "flex items-start justify-between gap-2" },
@@ -6206,7 +6248,7 @@ function EventsScreen({ go }) {
             setTitle(''); setDesc(''); setWhen(''); setLoc(''); setFormOpen(false);
             toast('Event created', 'success');
         }
-        catch (err) { toast(err.message, 'error'); }
+        catch (err) { toast(friendlyError(err), 'error'); }
         finally { setBusy(false); }
     };
     const now = Date.now();
@@ -6486,7 +6528,7 @@ function ProfileScreen({ uid, go }) {
             db.collection('users').doc(me.id).update({ followingCount: FieldValue.increment(following ? -1 : 1) }).catch(() => { });
         }
         catch (e) {
-            toast(e.message, 'error');
+            toast(friendlyError(e), 'error');
         }
     };
     const iBlockedThem = (me.blockedUsers || []).includes(uid);
@@ -6513,7 +6555,7 @@ function ProfileScreen({ uid, go }) {
             toast('Photo updated', 'success');
         }
         catch (e) {
-            toast(e.message, 'error');
+            toast(friendlyError(e), 'error');
         }
         finally {
             kind === 'avatars' ? setUploadingAvatar(false) : setUploadingCover(false);
@@ -6722,7 +6764,7 @@ function EditProfileModal({ user, onClose }) {
             onClose();
         }
         catch (e) {
-            toast(e.message, 'error');
+            toast(friendlyError(e), 'error');
         }
         finally {
             setBusy(false);
@@ -6932,7 +6974,7 @@ function PageFormScreen({ id, go }) {
             }
         }
         catch (err) {
-            toast(err.message, 'error');
+            toast(friendlyError(err), 'error');
         }
         finally {
             setBusy(false);
@@ -7007,7 +7049,7 @@ function PageNameChangeRequestSheet({ page, onClose }) {
             onClose();
         }
         catch (err) {
-            toast(err.message, 'error');
+            toast(friendlyError(err), 'error');
         }
         finally {
             setBusy(false);
@@ -7094,7 +7136,7 @@ function PageProfileScreen({ id, go }) {
             toast('Photo updated', 'success');
         }
         catch (e) {
-            toast(e.message, 'error');
+            toast(friendlyError(e), 'error');
         }
     };
     return (React.createElement("div", null,
@@ -7323,7 +7365,7 @@ function KycFormScreen({ id, go }) {
             go({ name: 'monetization', id });
         }
         catch (err) {
-            toast(err.message, 'error');
+            toast(friendlyError(err), 'error');
         }
         finally {
             setBusy(false);
@@ -7435,7 +7477,7 @@ function MonetizationScreen({ id, go }) {
             toast('Application submitted for review', 'success');
         }
         catch (e) {
-            toast(e.message, 'error');
+            toast(friendlyError(e), 'error');
         }
         finally {
             setBusy(false);
@@ -7537,7 +7579,7 @@ function WithdrawalsScreen({ id, go }) {
             toast('Withdrawal request submitted', 'success');
             setAmount('');
         }
-        catch (e2) { toast(e2.message, 'error'); }
+        catch (e2) { toast(friendlyError(e2), 'error'); }
         finally { setBusy(false); }
     };
     return (React.createElement("div", { className: "max-w-lg mx-auto px-1 sm:px-0" },
@@ -7976,7 +8018,7 @@ function AdminListingRow({ listing, adminUid, adminEmail }) {
             toast('Done', 'success');
         }
         catch (e) {
-            toast(e.message, 'error');
+            toast(friendlyError(e), 'error');
         }
         finally {
             setBusy(false);
@@ -8071,7 +8113,7 @@ function AdminUserRow({ u, adminUid, adminEmail, onToggleSuspend }) {
             logAdminAction(adminUid, adminEmail, action, 'user', u.id, u.username || u.email);
             toast('Done', 'success');
         }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); }
     };
     return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
@@ -8112,7 +8154,7 @@ function AdminPageRow({ page, adminUid, adminEmail, duplicate }) {
             logAdminAction(adminUid, adminEmail, action, 'page', page.id, page.displayName);
             toast('Done', 'success');
         }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); }
     };
     const submitRename = async () => {
@@ -8124,7 +8166,7 @@ function AdminPageRow({ page, adminUid, adminEmail, duplicate }) {
             setRenaming(false);
             setNewName('');
         }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); }
     };
     return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border " + (duplicate ? "border-amber-300 dark:border-amber-700" : "border-slate-100 dark:border-ink-700") },
@@ -8170,7 +8212,7 @@ function AdminPageNameChangeRow({ request, adminUid, adminEmail }) {
             logAdminAction(adminUid, adminEmail, 'approve_page_name_change', 'page', request.pageId, (request.currentName || '') + ' \u2192 ' + request.requestedName);
             toast('Page name updated', 'success');
         }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); }
     };
     const reject = async () => {
@@ -8180,7 +8222,7 @@ function AdminPageNameChangeRow({ request, adminUid, adminEmail }) {
             logAdminAction(adminUid, adminEmail, 'reject_page_name_change', 'page', request.pageId, request.requestedName);
             toast('Request rejected', 'success');
         }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); }
     };
     return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
@@ -8219,7 +8261,7 @@ function AdminKycRow({ k, adminUid, adminEmail }) {
             logAdminAction(adminUid, adminEmail, 'approve_page_kyc', 'page', k.pageId, k.pageDisplayName);
             toast('KYC verified', 'success');
         }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); }
     };
     const reject = async () => {
@@ -8229,7 +8271,7 @@ function AdminKycRow({ k, adminUid, adminEmail }) {
             logAdminAction(adminUid, adminEmail, 'reject_page_kyc', 'page', k.pageId, k.pageDisplayName);
             toast('KYC rejected', 'success');
         }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); }
     };
     return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
@@ -8276,7 +8318,7 @@ function AdminMonetizationAppRow({ a, adminUid, adminEmail }) {
             logAdminAction(adminUid, adminEmail, action, 'page', a.pageId, a.pageDisplayName);
             toast(successMsg, 'success');
         }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); }
     };
     return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
@@ -8313,7 +8355,7 @@ function AdminMonetizedPageRow({ page, adminUid, adminEmail }) {
             logAdminAction(adminUid, adminEmail, action, 'page', page.id, page.displayName);
             toast(successMsg, 'success');
         }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); }
     };
     const adjust = async () => {
@@ -8353,7 +8395,7 @@ function AdminWithdrawalRow({ w, adminUid, adminEmail }) {
             logAdminAction(adminUid, adminEmail, action, 'withdrawal', w.id, w.pageDisplayName);
             toast(successMsg, 'success');
         }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); }
     };
     return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
@@ -8388,7 +8430,7 @@ function AdminMonetizationSettingsForm({ form, adminUid, adminEmail }) {
             logAdminAction(adminUid, adminEmail, 'update_monetization_settings', 'settings', 'site', null);
             toast('Monetization settings saved', 'success');
         }
-        catch (e2) { toast(e2.message, 'error'); }
+        catch (e2) { toast(friendlyError(e2), 'error'); }
         finally { setBusy(false); }
     };
     if (!form) return React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026");
@@ -8439,7 +8481,7 @@ function AdminPostRow({ post, adminUid, adminEmail }) {
             logAdminAction(adminUid, adminEmail, action, 'post', post.id, (post.text || '').slice(0, 60));
             toast('Done', 'success');
         }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); }
     };
     return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl p-3 border border-slate-100 dark:border-ink-700" },
@@ -8493,7 +8535,7 @@ function AdminPostAsYelofaceForm({ adminUid, adminEmail }) {
             logAdminAction(adminUid, adminEmail, kind === 'avatars' ? 'update_yeloface_photo' : 'update_yeloface_cover', 'page', YELOFACE_OFFICIAL_PAGE_ID, null);
             toast(kind === 'avatars' ? 'Profile picture updated' : 'Cover photo updated', 'success');
         }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setPhotoBusy(false); }
     };
     const send = async (e) => {
@@ -8520,7 +8562,7 @@ function AdminPostAsYelofaceForm({ adminUid, adminEmail }) {
             toast('Posted to the timeline as Yeloface', 'success');
             setText(''); setFile(null); setPreview(null);
         }
-        catch (e2) { toast(e2.message, 'error'); }
+        catch (e2) { toast(friendlyError(e2), 'error'); }
         finally { setBusy(false); }
     };
     return React.createElement("div", null,
@@ -8565,7 +8607,7 @@ function AdminAnnouncementForm({ adminUid, adminEmail }) {
             toast('Announcement sent to all users', 'success');
             setTitle(''); setMessage('');
         }
-        catch (e2) { toast(e2.message, 'error'); }
+        catch (e2) { toast(friendlyError(e2), 'error'); }
         finally { setBusy(false); }
     };
     return React.createElement("div", null,
@@ -8594,7 +8636,7 @@ function AdminSettingsForm({ form, adminUid, adminEmail }) {
             logAdminAction(adminUid, adminEmail, 'update_site_settings', 'settings', 'site', null);
             toast('Settings saved', 'success');
         }
-        catch (e2) { toast(e2.message, 'error'); }
+        catch (e2) { toast(friendlyError(e2), 'error'); }
         finally { setBusy(false); }
     };
     if (!form) return React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026");
@@ -8979,7 +9021,7 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
             }
         }
         catch (e) {
-            toast(e.message, 'error');
+            toast(friendlyError(e), 'error');
         }
     };
     const onTextChange = (v) => {
@@ -9016,7 +9058,7 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
             await sendChatMessage(profile.id, chatId, otherUid, payload);
         }
         catch (e) {
-            toast(e.message, 'error');
+            toast(friendlyError(e), 'error');
         }
     };
     const uploadAndSend = async (file, type) => {
@@ -9050,7 +9092,7 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
             await sendChatMessage(profile.id, chatId, otherUid, payload);
         }
         catch (e) {
-            toast(e.message, 'error');
+            toast(friendlyError(e), 'error');
         }
         finally {
             setUploading(false);
@@ -9108,7 +9150,7 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
         if (type === 'voice' && siteSettings.voiceCallEnabled === false) { toast('Voice calls are currently disabled.', 'error'); return; }
         if (type === 'video' && siteSettings.videoCallEnabled === false) { toast('Video calls are currently disabled.', 'error'); return; }
         try { await startOutgoingCall(profile, otherUid, otherUser, type); }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
     };
     const react = async (m, emoji) => {
         var _a;
@@ -9249,7 +9291,7 @@ function ForwardModal({ message, onClose }) {
             onClose();
         }
         catch (e) {
-            toast(e.message, 'error');
+            toast(friendlyError(e), 'error');
         }
         finally {
             setSending(null);
@@ -9323,7 +9365,7 @@ function MyListingRow({ listing, go }) {
             await fn();
         }
         catch (e) {
-            toast(e.message, 'error');
+            toast(friendlyError(e), 'error');
         }
         finally {
             setBusy(false);
@@ -9505,7 +9547,7 @@ function ListingFormScreen({ id, go }) {
             go({ name: 'marketplace' });
         }
         catch (e) {
-            toast(e.message, 'error');
+            toast(friendlyError(e), 'error');
         }
         finally {
             setSaving(false);
@@ -9640,7 +9682,7 @@ function ListingDetailScreen({ id, go }) {
             await fn();
         }
         catch (e) {
-            toast(e.message, 'error');
+            toast(friendlyError(e), 'error');
         }
         finally {
             setBusy(false);
@@ -9653,7 +9695,7 @@ function ListingDetailScreen({ id, go }) {
             go({ name: 'chat', chatId, otherUid: listing.sellerId });
         }
         catch (e) {
-            toast(e.message, 'error');
+            toast(friendlyError(e), 'error');
         }
     };
     const submitOffer = async () => {
@@ -9882,7 +9924,7 @@ function ReelCommentsSheet({ reel, meId, isOwnerOrMod, onClose }) {
         try {
             await addReelComment(reel.id, reel.authorId, meId, text, imageFile, replyTo ? replyTo.id : null, reel.pageId);
             setText(''); setImageFile(null); setReplyTo(null);
-        } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+        } catch (e) { toast(friendlyError(e), 'error'); } finally { setBusy(false); }
     };
     return (React.createElement("div", { className: "fixed inset-0 z-[95] flex items-end justify-center bg-black/50", onClick: onClose },
         React.createElement("div", { onClick: e => e.stopPropagation(), className: "w-full sm:max-w-md bg-white dark:bg-ink-800 rounded-t-2xl max-h-[80vh] flex flex-col overflow-hidden" },
@@ -9968,7 +10010,7 @@ function ReelCard({ reel, active, go, meId, muted, onToggleMute, onOpenComments,
                 if (following) await db.collection('follows').doc(relId).delete();
                 else { await db.collection('follows').doc(relId).set({ followerId: meId, followingId: reel.authorId, createdAt: FieldValue.serverTimestamp() }); db.collection('notifications').doc(reel.authorId).collection('items').add({ type: 'follow', fromUserId: meId, read: false, createdAt: FieldValue.serverTimestamp() }).catch(() => { }); }
             }
-        } catch (e) { toast(e.message, 'error'); }
+        } catch (e) { toast(friendlyError(e), 'error'); }
     };
     const doDelete = async () => { if (confirm('Delete this reel? This cannot be undone.')) { await deleteReel(reel); toast('Reel deleted', 'success'); } };
     const captionParts = (reel.caption || '').split(/(\s+)/);
@@ -10167,7 +10209,7 @@ function ReelUploadScreen({ go, route }) {
                 toast('Reel published!', 'success');
                 go({ name: 'reels', reelId: id, scope: pageId ? ('page:' + pageId) : ('user:' + me.id) });
             }
-        } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+        } catch (e) { toast(friendlyError(e), 'error'); } finally { setBusy(false); }
     };
     if (editId && existing === undefined) return React.createElement(PostSkeleton, null);
     if (editId && existing === null) return React.createElement("p", { className: "text-sm text-slate-400" }, "This reel no longer exists.");
@@ -10708,7 +10750,7 @@ function ReportReasonSheet({ targetType, targetId, targetOwnerId, onClose }) {
             onClose();
         }
         catch (e) {
-            toast(e.message, 'error');
+            toast(friendlyError(e), 'error');
         }
         finally {
             setBusy(false);
@@ -10863,7 +10905,7 @@ function GroupPostComposer({ group, myRole, onPosted }) {
             onPosted && onPosted();
         }
         catch (e) {
-            toast(e.message, 'error');
+            toast(friendlyError(e), 'error');
         }
         finally {
             setBusy(false);
@@ -11004,7 +11046,7 @@ function GroupFormScreen({ id, go }) {
             }
         }
         catch (err) {
-            toast(err.message, 'error');
+            toast(friendlyError(err), 'error');
         }
         finally {
             setBusy(false);
@@ -11081,7 +11123,7 @@ function GroupMemberRow({ group, m, myRole, go }) {
     const isSelf = m.uid === profile.id;
     const canManage = myRole === 'admin' && !isSelf && m.role !== 'admin';
     const canModerate = (myRole === 'admin' || myRole === 'moderator') && !isSelf && m.role !== 'admin';
-    const act = async (fn) => { setMenuOpen(false); try { await fn(); } catch (e) { toast(e.message, 'error'); } };
+    const act = async (fn) => { setMenuOpen(false); try { await fn(); } catch (e) { toast(friendlyError(e), 'error'); } };
     return React.createElement("div", { className: "flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-3" },
         React.createElement("button", { onClick: () => go({ name: 'profile', uid: u.id }), className: "flex items-center gap-3 flex-1 min-w-0 text-left" },
             React.createElement(Avatar, { user: u, size: 10 }),
@@ -11109,7 +11151,7 @@ function GroupJoinRequestRow({ group, uid }) {
     const respond = async (approve) => {
         setBusy(true);
         try { await (approve ? approveJoinRequest(group, uid) : rejectJoinRequest(group, uid)); }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); }
     };
     return React.createElement("div", { className: "flex items-center gap-3 bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-3" },
@@ -11176,7 +11218,7 @@ function GroupEventCard({ group, ev, canManage }) {
     const rsvp = async () => {
         setBusy(true);
         try { await toggleEventRSVP(group.id, ev.id, profile.id, !going); }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); }
     };
     return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-xl border border-slate-100 dark:border-ink-700 p-3" },
@@ -11213,7 +11255,7 @@ function GroupEventsTab({ group, myRole }) {
             setTitle(''); setDesc(''); setWhen(''); setLoc(''); setFormOpen(false);
             toast('Event created', 'success');
         }
-        catch (err) { toast(err.message, 'error'); }
+        catch (err) { toast(friendlyError(err), 'error'); }
         finally { setBusy(false); }
     };
     return React.createElement("div", null,
@@ -11252,7 +11294,7 @@ function GroupInviteSheet({ group, onClose }) {
             await inviteToGroup(group, profile.id, u.id);
             setInvited(m => Object.assign({}, m, { [u.id]: true }));
         }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
     };
     return React.createElement(BottomSheet, { title: "Invite friends", onClose: onClose },
         React.createElement("input", { autoFocus: true, value: fq, onChange: e => setFq(e.target.value), placeholder: "Search friends\u2026", className: "w-full px-3 py-2 rounded-full bg-slate-50 dark:bg-ink-700 text-sm mb-2 mx-1 focus:outline-none" }),
@@ -11291,7 +11333,7 @@ function GroupShareSheet({ group, onClose }) {
             toast('Sent to ' + (u.displayName || u.username), 'success');
             onClose();
         }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); }
     };
     if (step === 'message') {
@@ -11351,7 +11393,7 @@ function GroupScreen({ id, go }) {
     const quickUpload = async (file, kind) => {
         if (!file) return;
         try { await uploadGroupImage(id, file, kind); toast('Photo updated', 'success'); }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
     };
     const doJoin = async () => {
         setBusy(true);
@@ -11359,7 +11401,7 @@ function GroupScreen({ id, go }) {
             const result = await requestToJoinGroup(group, me.id);
             toast(result === 'joined' ? 'You joined the group' : 'Request sent — an admin will review it', 'success');
         }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); }
     };
     const doLeave = async () => {
@@ -11367,11 +11409,11 @@ function GroupScreen({ id, go }) {
         if (!confirm('Leave this group?')) return;
         setBusy(true);
         try { await leaveGroup(id, me.id); toast('You left the group', 'success'); }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); }
     };
-    const acceptInvite = async () => { setBusy(true); try { await acceptGroupInvite(id, me.id); toast('You joined the group', 'success'); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); } };
-    const declineInvite = async () => { setBusy(true); try { await declineGroupInvite(id, me.id); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); } };
+    const acceptInvite = async () => { setBusy(true); try { await acceptGroupInvite(id, me.id); toast('You joined the group', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } finally { setBusy(false); } };
+    const declineInvite = async () => { setBusy(true); try { await declineGroupInvite(id, me.id); } catch (e) { toast(friendlyError(e), 'error'); } finally { setBusy(false); } };
     const TABS = [['posts', 'Posts'], ['about', 'About'], ['members', 'Members'], ['photos', 'Photos'], ['videos', 'Videos'], ['files', 'Files'], ['events', 'Events'], ['announcements', 'Announcements']];
     const announcements = groupPosts.filter(p => p.groupAnnouncement);
     return React.createElement("div", null,
@@ -11988,7 +12030,7 @@ function DatingGenderStep({ dp }) {
     const choose = async (g) => {
         setBusy(true);
         try { await setDatingGender(profile.id, g); }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); }
     };
     return React.createElement("div", { className: "max-w-sm mx-auto text-center py-10" },
@@ -12017,7 +12059,7 @@ function DatingBankTransferPanel({ cfg, uid, purpose, matchId, matchName, amount
             await submitDatingManualPayment(uid, { purpose, matchId, matchName, amountNaira, receiptURL });
             toast('Receipt submitted \u2014 awaiting admin approval', 'success');
             onSubmitted && onSubmitted();
-        } catch (e) { toast(e.message, 'error'); }
+        } catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); setProgress(0); }
     };
     if (pending === undefined) return React.createElement("div", { className: "py-6 flex justify-center" }, React.createElement("div", { className: "w-5 h-5 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" }));
@@ -12061,12 +12103,12 @@ function DatingCallPaymentSheet({ cfg, callLabel, onClose, onPaid }) {
                         await recordDatingPayment(profile.id, cfg.feeNaira, response.reference);
                         toast('Payment successful — you can now call!', 'success');
                         onPaid();
-                    } catch (e) { toast(e.message, 'error'); }
+                    } catch (e) { toast(friendlyError(e), 'error'); }
                     finally { setBusy(false); }
                 },
                 onClose: () => setBusy(false)
             });
-        } catch (e) { toast(e.message, 'error'); setBusy(false); }
+        } catch (e) { toast(friendlyError(e), 'error'); setBusy(false); }
     };
     return React.createElement("div", { className: "fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center", onClick: onClose },
         React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm p-6 text-center", onClick: e => e.stopPropagation() },
@@ -12109,12 +12151,12 @@ function DatingChatPaymentSheet({ cfg, matchId, matchName, onClose, onPaid }) {
                         await recordDatingChatSubscription(matchId, profile.id, cfg.chatFeeNaira, response.reference, cfg.chatUnlockDays);
                         toast('Payment successful \u2014 chat unlocked for ' + (cfg.chatUnlockDays || 7) + ' days!', 'success');
                         onPaid();
-                    } catch (e) { toast(e.message, 'error'); }
+                    } catch (e) { toast(friendlyError(e), 'error'); }
                     finally { setBusy(false); }
                 },
                 onClose: () => setBusy(false)
             });
-        } catch (e) { toast(e.message, 'error'); setBusy(false); }
+        } catch (e) { toast(friendlyError(e), 'error'); setBusy(false); }
     };
     return React.createElement("div", { className: "fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center", onClick: onClose },
         React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm p-6 text-center", onClick: e => e.stopPropagation() },
@@ -12162,7 +12204,7 @@ function DatingKycStep({ dp }) {
             const selfieURL = selfieFile ? await uploadDatingKycImage(profile.id, selfieFile, 'selfie', p => setProgress(0.5 + p * 0.5)) : kyc.selfieURL;
             await submitDatingKyc(profile.id, { fullName: fullName.trim(), dob, idType, idFrontURL, selfieURL });
             toast('KYC submitted for review', 'success');
-        } catch (e) { toast(e.message, 'error'); }
+        } catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); setProgress(null); }
     };
     return React.createElement("div", { className: "max-w-sm mx-auto py-6" },
@@ -12222,7 +12264,7 @@ function DatingProfileSetupStep({ dp }) {
         try {
             const url = await uploadDatingPhoto(profile.id, file, slot);
             setPhotos(p => { const next = [...p]; next[slot] = url; return next; });
-        } catch (e) { toast(e.message, 'error'); }
+        } catch (e) { toast(friendlyError(e), 'error'); }
         finally { setUploadingSlot(null); }
     };
     const submit = async () => {
@@ -12245,7 +12287,7 @@ function DatingProfileSetupStep({ dp }) {
                 photos: photos.filter(Boolean), privacy
             });
             toast('Dating profile saved!', 'success');
-        } catch (e) { toast(e.message, 'error'); }
+        } catch (e) { toast(friendlyError(e), 'error'); }
         finally { setBusy(false); }
     };
     const selectClass = "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm";
@@ -12344,7 +12386,7 @@ function DatingInviteSheet({ onClose }) {
     }, [profile.id]);
     const invite = async (u) => {
         try { await inviteToDating(profile.id, u.id); setInvited(m => Object.assign({}, m, { [u.id]: true })); }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
     };
     const inviteLink = window.location.href.split('#')[0].split('?')[0];
     const inviteMessage = (profile.displayName || 'A friend') + ' invited you to join Yeloface Dating \u2014 find genuine matches near you. Sign up free: ' + inviteLink;
@@ -12359,7 +12401,7 @@ function DatingInviteSheet({ onClose }) {
             await postDatingInvite(profile.id, (profile.displayName || 'I') + ' just joined Yeloface Dating \u2014 come find your match with me! \uD83D\uDC95');
             setPosted(true);
             toast('Posted to your timeline!', 'success');
-        } catch (e) { toast(e.message, 'error'); }
+        } catch (e) { toast(friendlyError(e), 'error'); }
         finally { setPosting(false); }
     };
     return React.createElement(BottomSheet, { title: "Invite to Dating", onClose: onClose },
@@ -12491,7 +12533,7 @@ function DatingDiscoverTab({ me }) {
                 const result = await likeDatingProfile(me.id, current.id);
                 toast(result === 'matched' ? "It's a match! \uD83D\uDC95" : 'Liked', 'success');
             } else { await passDatingProfile(me.id, current.id); }
-        } catch (e) { toast(e.message, 'error'); }
+        } catch (e) { toast(friendlyError(e), 'error'); }
         setIndex(i => i + 1);
     };
     return React.createElement("div", null,
@@ -12523,7 +12565,7 @@ function DatingSuggestedTab({ me }) {
         try {
             if (kind === 'like') { const r = await likeDatingProfile(me.id, targetId); toast(r === 'matched' ? "It's a match! \uD83D\uDC95" : 'Liked', 'success'); }
             else { await passDatingProfile(me.id, targetId); toast('Passed', 'success'); }
-        } catch (e) { toast(e.message, 'error'); }
+        } catch (e) { toast(friendlyError(e), 'error'); }
         setRefreshKey(k => k + 1);
     };
     return React.createElement("div", null,
@@ -12559,7 +12601,7 @@ function DatingMembersTab({ me }) {
         try {
             if (kind === 'like') { const r = await likeDatingProfile(me.id, targetId); toast(r === 'matched' ? "It's a match! \uD83D\uDC95" : 'Liked', 'success'); }
             else { await passDatingProfile(me.id, targetId); toast('Passed', 'success'); }
-        } catch (e) { toast(e.message, 'error'); }
+        } catch (e) { toast(friendlyError(e), 'error'); }
     };
     return React.createElement("div", null,
         React.createElement("div", { className: "relative mb-4" },
@@ -12588,7 +12630,7 @@ function DatingLikesTab({ me, likes }) {
             db.collection('datingProfiles').doc(l.from).get().then(s => { if (s.exists) setProfiles(p => Object.assign({}, p, { [l.from]: Object.assign({ id: s.id }, s.data()) })); });
         });
     }, [likes]);
-    const likeBack = async (uid) => { try { const r = await likeDatingProfile(me.id, uid); toast(r === 'matched' ? "It's a match! \uD83D\uDC95" : 'Liked back', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    const likeBack = async (uid) => { try { const r = await likeDatingProfile(me.id, uid); toast(r === 'matched' ? "It's a match! \uD83D\uDC95" : 'Liked back', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
     if (likes.length === 0) return React.createElement("div", { className: "text-center py-16 text-slate-400" }, React.createElement("i", { className: "fa-solid fa-heart text-4xl mb-3" }), React.createElement("p", null, "No likes yet. Keep discovering!"));
     return React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-3 gap-3" },
         likes.map(l => { const p = profiles[l.from]; if (!p) return null; return React.createElement("div", { key: l.id, className: "cursor-pointer" },
@@ -12638,13 +12680,13 @@ function DatingGallerySection({ uid, gallery, editable }) {
         setUploading(true);
         setProgress(0);
         try { await uploadDatingGalleryPhoto(uid, file, setProgress); }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setUploading(false); setProgress(0); }
     };
     const removePhoto = async (url) => {
         if (!confirm('Remove this photo from your gallery?')) return;
         try { await removeDatingGalleryPhoto(uid, url); }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
     };
     return React.createElement("div", { className: "mt-5" },
         React.createElement("div", { className: "flex items-center justify-between mb-2" },
@@ -12684,7 +12726,7 @@ function DatingMeTab({ dp }) {
     const resendVerification = async () => {
         setSendingVerify(true);
         try { await sendDatingEmailVerification(); toast('Verification email sent — check your inbox', 'success'); }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setSendingVerify(false); }
     };
     if (editing) return React.createElement(DatingProfileSetupStep, { dp: dp });
@@ -12748,7 +12790,7 @@ function DatingProfileViewScreen({ uid, go }) {
     const isMatched = useDatingMatchStatus(profile.id, uid);
     if (person === undefined) return React.createElement("div", { className: "py-16 flex justify-center" }, React.createElement("div", { className: "w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" }));
     if (!person) return React.createElement("p", { className: "text-center text-slate-400 py-16" }, "This Dating profile no longer exists.");
-    const like = async () => { try { const r = await likeDatingProfile(profile.id, uid); toast(r === 'matched' ? "It's a match! \uD83D\uDC95" : 'Liked', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    const like = async () => { try { const r = await likeDatingProfile(profile.id, uid); toast(r === 'matched' ? "It's a match! \uD83D\uDC95" : 'Liked', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
     return React.createElement(DatingProfileDetailSheet, { person: person, onClose: () => go({ name: 'dating' }), onLike: isMatched ? undefined : like, isMatched: isMatched });
 }
 
@@ -12789,7 +12831,7 @@ function DatingChatScreen({ matchId, go }) {
     const chatUnlocked = canSendDatingChat(myDp, match);
     const chatExpiresAt = match && myDp && myDp.gender === 'Male' && (match.chatSubscriptions || {})[myDp.id] && (match.chatSubscriptions || {})[myDp.id].expiresAt
         ? ((match.chatSubscriptions[myDp.id].expiresAt.toDate ? match.chatSubscriptions[myDp.id].expiresAt.toDate() : new Date(match.chatSubscriptions[myDp.id].expiresAt))) : null;
-    const send = async () => { if (!text.trim()) return; if (!chatUnlocked) { setChatGateOpen(true); return; } const t = text.trim(); setText(''); try { await sendDatingMessage(matchId, profile.id, { type: 'text', text: t }); } catch (e) { toast(e.message, 'error'); } };
+    const send = async () => { if (!text.trim()) return; if (!chatUnlocked) { setChatGateOpen(true); return; } const t = text.trim(); setText(''); try { await sendDatingMessage(matchId, profile.id, { type: 'text', text: t }); } catch (e) { toast(friendlyError(e), 'error'); } };
     const uploadAndSend = async (file, type) => {
         if (!chatUnlocked) { setChatGateOpen(true); return; }
         const maxSizes = { image: 15 * 1024 * 1024, video: 100 * 1024 * 1024, audio: 20 * 1024 * 1024 };
@@ -12800,7 +12842,7 @@ function DatingChatScreen({ matchId, go }) {
             const url = await uploadDatingChatMedia(matchId, file, type, setProgress);
             await sendDatingMessage(matchId, profile.id, { type, mediaURL: url, mediaName: file.name || 'voice-note.webm', mediaSize: file.size });
         }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
         finally { setUploading(false); setProgress(0); }
     };
     const startRecording = async () => {
@@ -12839,7 +12881,7 @@ function DatingChatScreen({ matchId, go }) {
         if (type === 'video' && siteSettings.videoCallEnabled === false) { toast('Video calls are currently disabled.', 'error'); return; }
         if (!canStartDatingCall(myDp)) { setCallGateType(type); return; }
         try { await startOutgoingCall(profile, other.id, other, type); }
-        catch (e) { toast(e.message, 'error'); }
+        catch (e) { toast(friendlyError(e), 'error'); }
     };
     if (match === undefined || other === undefined) return React.createElement("div", { className: "py-16 flex justify-center" }, React.createElement("div", { className: "w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" }));
     if (!match || !other) return React.createElement("p", { className: "text-center text-slate-400 py-16" }, "This match is no longer available.");
@@ -12957,11 +12999,11 @@ function DatingAdminPanel({ adminUid, adminEmail }) {
         if (subtab !== 'settings') return;
         db.collection('settings').doc('dating').get().then(s => setCfgForm(Object.assign({}, DATING_CFG_DEFAULTS, s.exists ? s.data() : {}))).catch(() => setCfgForm(DATING_CFG_DEFAULTS));
     }, [subtab]);
-    const approve = async (k) => { try { await adminApproveDatingKyc(k, adminUid, adminEmail); toast('KYC approved', 'success'); } catch (e) { toast(e.message, 'error'); } };
-    const reject = async (k) => { const reason = prompt('Reason for rejection (shown to the user):'); if (reason === null) return; try { await adminRejectDatingKyc(k, adminUid, adminEmail, reason); toast('KYC rejected', 'success'); } catch (e) { toast(e.message, 'error'); } };
-    const saveCfg = async () => { try { await saveDatingConfig(cfgForm); toast('Dating settings saved', 'success'); } catch (e) { toast(e.message, 'error'); } };
-    const approveManual = async (row) => { try { await adminApproveDatingManualPayment(row, cfg.chatUnlockDays, adminUid, adminEmail); toast('Approved \u2014 access unlocked for the member', 'success'); } catch (e) { toast(e.message, 'error'); } };
-    const rejectManual = async (row) => { const reason = prompt('Reason for rejection (shown to the user):'); if (reason === null) return; try { await adminRejectDatingManualPayment(row, reason, adminUid, adminEmail); toast('Rejected', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    const approve = async (k) => { try { await adminApproveDatingKyc(k, adminUid, adminEmail); toast('KYC approved', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
+    const reject = async (k) => { const reason = prompt('Reason for rejection (shown to the user):'); if (reason === null) return; try { await adminRejectDatingKyc(k, adminUid, adminEmail, reason); toast('KYC rejected', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
+    const saveCfg = async () => { try { await saveDatingConfig(cfgForm); toast('Dating settings saved', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
+    const approveManual = async (row) => { try { await adminApproveDatingManualPayment(row, cfg.chatUnlockDays, adminUid, adminEmail); toast('Approved \u2014 access unlocked for the member', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
+    const rejectManual = async (row) => { const reason = prompt('Reason for rejection (shown to the user):'); if (reason === null) return; try { await adminRejectDatingManualPayment(row, reason, adminUid, adminEmail); toast('Rejected', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
     const filteredKyc = kycApps.filter(k => kycFilter === 'all' || k.status === kycFilter);
     const filteredUsers = profiles.filter(p => !userSearch || (p.displayName || '').toLowerCase().includes(userSearch.toLowerCase()) || p.id.includes(userSearch));
 
@@ -13560,7 +13602,7 @@ function FundWalletSheet({ cfg, onClose }) {
                             toast('Payment received \u2014 we\u2019re confirming it with Paystack. Your wallet updates once verified, usually within a few minutes.', 'success');
                         }
                     }
-                    catch (e) { toast(e.message, 'error'); }
+                    catch (e) { toast(friendlyError(e), 'error'); }
                     finally { clearPendingPaystackPayment(reference); setBusy(false); onClose(); }
                 },
                 // User backed out without paying — nothing was charged, so drop the cached
@@ -13568,7 +13610,7 @@ function FundWalletSheet({ cfg, onClose }) {
                 // next time they open the site.
                 onClose: () => { clearPendingPaystackPayment(reference); }
             });
-        } catch (e) { clearPendingPaystackPayment(reference); toast(e.message, 'error'); }
+        } catch (e) { clearPendingPaystackPayment(reference); toast(friendlyError(e), 'error'); }
     };
     const onPickReceipt = (e) => {
         const file = e.target.files && e.target.files[0];
@@ -13587,7 +13629,7 @@ function FundWalletSheet({ cfg, onClose }) {
             await submitWalletManualFunding(profile.id, { amountNaira: amt, receiptURL });
             toast('Submitted \u2014 an admin will review it shortly', 'success');
             onClose();
-        } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+        } catch (e) { toast(friendlyError(e), 'error'); } finally { setBusy(false); }
     };
     return React.createElement("div", { className: "fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center", onClick: onClose },
         React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm max-h-[90vh] overflow-y-auto p-5", onClick: e => e.stopPropagation() },
@@ -13636,9 +13678,9 @@ function MyCampaignCard({ campaign }) {
     const toast = useToast();
     const remaining = (campaign.budget || 0) - (campaign.spent || 0);
     const statusColor = { pending: 'bg-amber-100 text-amber-700', approved: 'bg-sky-100 text-sky-700', active: 'bg-emerald-100 text-emerald-700', paused: 'bg-slate-200 text-slate-600', rejected: 'bg-red-100 text-red-600', completed: 'bg-slate-100 text-slate-500' }[campaign.status] || 'bg-slate-100';
-    const doDelete = async () => { if (!confirm('Delete this campaign and refund its budget?')) return; try { await deleteAdCampaign(campaign); toast('Campaign deleted and refunded', 'success'); } catch (e) { toast(e.message, 'error'); } };
-    const doPause = async () => { try { await pauseAdCampaign(campaign.id); toast('Campaign paused', 'success'); } catch (e) { toast(e.message, 'error'); } };
-    const doResume = async () => { try { await resumeAdCampaign(campaign); toast('Campaign resumed', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    const doDelete = async () => { if (!confirm('Delete this campaign and refund its budget?')) return; try { await deleteAdCampaign(campaign); toast('Campaign deleted and refunded', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
+    const doPause = async () => { try { await pauseAdCampaign(campaign.id); toast('Campaign paused', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
+    const doResume = async () => { try { await resumeAdCampaign(campaign); toast('Campaign resumed', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
     return React.createElement("div", { className: "bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 rounded-xl p-3 mb-2" },
         React.createElement("div", { className: "flex items-start justify-between gap-2 mb-2" },
             React.createElement("div", { className: "min-w-0" },
@@ -13739,7 +13781,7 @@ function CreateCampaignSheet({ go, onClose }) {
             });
             toast('Campaign submitted for review', 'success');
             onClose();
-        } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); setUploadProgress(null); }
+        } catch (e) { toast(friendlyError(e), 'error'); } finally { setBusy(false); setUploadProgress(null); }
     };
     // No Page yet — ads can only run from a Page, so block the form and point them at Page
     // creation rather than letting them submit as a personal profile.
@@ -13825,11 +13867,11 @@ function AdminAdsPanel({ adminUid, adminEmail }) {
     const campaigns = useAllAdCampaigns(true);
     const totalRevenue = campaigns.reduce((s, c) => s + (c.spent || 0), 0);
     const filtered = campaigns.filter(c => (filter === 'all' || c.status === filter) && (!search || (c.title || '').toLowerCase().includes(search.toLowerCase()) || c.advertiserId.includes(search)));
-    const approve = async (c) => { try { await adminApproveCampaign(c, adminUid, adminEmail); toast('Campaign approved', 'success'); } catch (e) { toast(e.message, 'error'); } };
-    const reject = async (c) => { const reason = prompt('Reason for rejection (shown to the advertiser):'); if (reason === null) return; try { await adminRejectCampaign(c, reason, adminUid, adminEmail); toast('Campaign rejected and refunded', 'success'); } catch (e) { toast(e.message, 'error'); } };
-    const pause = async (c) => { try { await pauseAdCampaign(c.id); toast('Paused', 'success'); } catch (e) { toast(e.message, 'error'); } };
-    const resume = async (c) => { try { await resumeAdCampaign(c); toast('Resumed', 'success'); } catch (e) { toast(e.message, 'error'); } };
-    const stop = async (c) => { if (!confirm('Stop this campaign and refund the unspent balance?')) return; try { await adminStopCampaign(c); toast('Campaign stopped', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    const approve = async (c) => { try { await adminApproveCampaign(c, adminUid, adminEmail); toast('Campaign approved', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
+    const reject = async (c) => { const reason = prompt('Reason for rejection (shown to the advertiser):'); if (reason === null) return; try { await adminRejectCampaign(c, reason, adminUid, adminEmail); toast('Campaign rejected and refunded', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
+    const pause = async (c) => { try { await pauseAdCampaign(c.id); toast('Paused', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
+    const resume = async (c) => { try { await resumeAdCampaign(c); toast('Resumed', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
+    const stop = async (c) => { if (!confirm('Stop this campaign and refund the unspent balance?')) return; try { await adminStopCampaign(c); toast('Campaign stopped', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
     return React.createElement("div", null,
         React.createElement("h2", { className: "font-display text-lg font-bold mb-3 flex items-center gap-2" }, React.createElement("i", { className: "fa-solid fa-bullhorn text-brand-600" }), "Advertising"),
         React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4" },
@@ -13877,11 +13919,11 @@ function AdminWalletPanel({ adminUid, adminEmail }) {
     const cfg = useWalletConfig();
     const [cfgForm, setCfgForm] = useState(null);
     useEffect(() => { if (subtab === 'settings') setCfgForm(cfg); }, [subtab]);
-    const approve = async (row) => { try { await adminApproveWalletManualFunding(row, adminUid, adminEmail); toast('Approved \u2014 wallet credited', 'success'); } catch (e) { toast(e.message, 'error'); } };
-    const reject = async (row) => { const reason = prompt('Reason for rejection:'); if (reason === null) return; try { await adminRejectWalletManualFunding(row, reason, adminUid, adminEmail); toast('Rejected', 'success'); } catch (e) { toast(e.message, 'error'); } };
-    const approvePf = async (row) => { try { await adminApprovePaystackPending(row, adminUid, adminEmail); toast('Confirmed \u2014 wallet credited', 'success'); } catch (e) { toast(e.message, 'error'); } };
-    const rejectPf = async (row) => { const reason = prompt('Reason (e.g. "no matching payment in Paystack dashboard"):'); if (reason === null) return; try { await adminRejectPaystackPending(row, reason, adminUid, adminEmail); toast('Rejected', 'success'); } catch (e) { toast(e.message, 'error'); } };
-    const saveCfg = async () => { try { await saveWalletConfig(cfgForm); toast('Wallet settings saved', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    const approve = async (row) => { try { await adminApproveWalletManualFunding(row, adminUid, adminEmail); toast('Approved \u2014 wallet credited', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
+    const reject = async (row) => { const reason = prompt('Reason for rejection:'); if (reason === null) return; try { await adminRejectWalletManualFunding(row, reason, adminUid, adminEmail); toast('Rejected', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
+    const approvePf = async (row) => { try { await adminApprovePaystackPending(row, adminUid, adminEmail); toast('Confirmed \u2014 wallet credited', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
+    const rejectPf = async (row) => { const reason = prompt('Reason (e.g. "no matching payment in Paystack dashboard"):'); if (reason === null) return; try { await adminRejectPaystackPending(row, reason, adminUid, adminEmail); toast('Rejected', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
+    const saveCfg = async () => { try { await saveWalletConfig(cfgForm); toast('Wallet settings saved', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
     return React.createElement("div", null,
         React.createElement("h2", { className: "font-display text-lg font-bold mb-3 flex items-center gap-2" }, React.createElement("i", { className: "fa-solid fa-wallet text-brand-600" }), "Wallet"),
         React.createElement("div", { className: "flex gap-2 mb-4 flex-wrap" }, [['manual', 'Manual fundings'], ['paystack', 'Paystack to verify' + (pending.filter(r => r.status === 'pending').length && pfFilter === 'pending' ? ' (' + pending.length + ')' : '')], ['settings', 'Settings']].map(([k, l]) => React.createElement("button", { key: k, onClick: () => setSubtab(k), className: "px-3 py-1.5 rounded-full text-xs font-semibold " + (subtab === k ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-ink-700") }, l))),
@@ -14352,7 +14394,7 @@ function WithdrawReferralSheet({ profile, cfg, onClose }) {
             await requestReferralWithdrawal(profile, amount, { zmonieAccountNumber, zmonieAccountName }, cfg);
             toast('Withdrawal request submitted \u2014 an admin will review it shortly.', 'success');
             onClose();
-        } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+        } catch (e) { toast(friendlyError(e), 'error'); } finally { setBusy(false); }
     };
     return React.createElement("div", { className: "fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center", onClick: onClose },
         React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm max-h-[90vh] overflow-y-auto p-5", onClick: e => e.stopPropagation() },
@@ -14407,9 +14449,9 @@ function AdminReferralsPanel({ adminUid, adminEmail }) {
     const successfulReferrals = referrals.filter(r => r.status === 'completed').length;
     const totalPaidOut = referrals.filter(r => r.status === 'completed').reduce((s, r) => s + (r.rewardAmount || 0), 0);
     const pendingWithdrawalCount = withdrawals.filter(w => w.status === 'pending').length; // only meaningful while viewing that filter
-    const approve = async (w) => { try { await adminApproveReferralWithdrawal(w, adminUid, adminEmail); toast('Approved \u2014 mark it paid on Zmonie manually', 'success'); } catch (e) { toast(e.message, 'error'); } };
-    const reject = async (w) => { const reason = prompt('Reason for rejection:'); if (reason === null) return; try { await adminRejectReferralWithdrawal(w, reason, adminUid, adminEmail); toast('Rejected \u2014 balance refunded', 'success'); } catch (e) { toast(e.message, 'error'); } };
-    const saveCfg = async () => { try { await saveReferralConfig(cfgForm); toast('Referral settings saved', 'success'); } catch (e) { toast(e.message, 'error'); } };
+    const approve = async (w) => { try { await adminApproveReferralWithdrawal(w, adminUid, adminEmail); toast('Approved \u2014 mark it paid on Zmonie manually', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
+    const reject = async (w) => { const reason = prompt('Reason for rejection:'); if (reason === null) return; try { await adminRejectReferralWithdrawal(w, reason, adminUid, adminEmail); toast('Rejected \u2014 balance refunded', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
+    const saveCfg = async () => { try { await saveReferralConfig(cfgForm); toast('Referral settings saved', 'success'); } catch (e) { toast(friendlyError(e), 'error'); } };
     const filteredUsers = users.filter(u => {
         if (!search.trim()) return (u.referralEarnings || 0) > 0 || (u.referralCode);
         const q = search.trim().toLowerCase();
