@@ -1398,6 +1398,9 @@ async function recordPageView(pageId, uid) {
 const DEFAULT_SITE_SETTINGS = {
     minFollowersRequired: 1000, earningsRatePer1000Views: 0, minWithdrawalAmount: 5,
     monetizationEnabled: true, withdrawalsEnabled: true,
+    // Kill-switches for the WebRTC calling feature — flip off from admin Settings to
+    // instantly disable voice and/or video calls site-wide without touching code.
+    voiceCallEnabled: true, videoCallEnabled: true,
     // Page-owner engagement payout rates — all in USD, applied per every 100 *valid* events
     // (see creditEngagementEarning below). The defaults are the USD equivalent of ₦1,000 per
     // 100 video streams / ₦20 per 100 likes / ₦50 per 100 comments at roughly ₦1,550 = $1.
@@ -3138,6 +3141,8 @@ function watchConnectionState(pc) {
 async function startOutgoingCall(profile, otherUid, otherUser, type) {
     if (__session || callStore.get().call) throw new Error('You are already on a call.');
     if (!otherUid || otherUid === profile.id) throw new Error('Invalid call target.');
+    if (type === 'voice' && _liveSiteSettings.voiceCallEnabled === false) throw new Error('Voice calls are currently disabled.');
+    if (type === 'video' && _liveSiteSettings.videoCallEnabled === false) throw new Error('Video calls are currently disabled.');
     let localStream;
     try {
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: type === 'video' ? { facingMode: 'user' } : false });
@@ -8580,6 +8585,7 @@ function AdminSettingsForm({ form, adminUid, adminEmail }) {
     const toast = useToast();
     useEffect(() => { setLocal(form || {}); }, [form]);
     const set = (k) => (e) => setLocal(l => (Object.assign({}, l, { [k]: e.target.value })));
+    const setBool = (k) => (e) => setLocal(l => (Object.assign({}, l, { [k]: e.target.checked })));
     const save = async (e) => {
         e.preventDefault();
         setBusy(true);
@@ -8604,6 +8610,12 @@ function AdminSettingsForm({ form, adminUid, adminEmail }) {
             fields.map(([key, label]) => React.createElement("div", { key: key },
                 React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, label),
                 React.createElement("input", { value: local[key] || '', onChange: set(key), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-700 bg-transparent text-sm" }))),
+            React.createElement("div", { className: "border-t border-slate-100 dark:border-ink-700 pt-3" },
+                React.createElement("p", { className: "text-xs font-semibold text-slate-500 mb-2" }, "Voice & video calling"),
+                React.createElement("label", { className: "flex items-center gap-2 text-sm mb-2" },
+                    React.createElement("input", { type: "checkbox", checked: local.voiceCallEnabled !== false, onChange: setBool('voiceCallEnabled') }), "Voice calls enabled platform-wide"),
+                React.createElement("label", { className: "flex items-center gap-2 text-sm" },
+                    React.createElement("input", { type: "checkbox", checked: local.videoCallEnabled !== false, onChange: setBool('videoCallEnabled') }), "Video calls enabled platform-wide")),
             React.createElement("button", { disabled: busy, type: "submit", className: "px-4 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 disabled:opacity-40 text-white text-sm font-semibold" }, busy ? 'Saving…' : 'Save Settings')));
 }
 /* ============================== SUPER ADMIN: AUDIT LOG ROW ============================== */
@@ -8850,6 +8862,7 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
     var _a;
     const { profile } = useAuth();
     const toast = useToast();
+    const siteSettings = useSiteSettings();
     const [otherUser, setOtherUser] = useState(null);
     const [pageInfo, setPageInfo] = useState(pageId ? undefined : null);
     const [chatDoc, setChatDoc] = useState(null);
@@ -9092,6 +9105,8 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
     const copyText = (m) => { var _a; (_a = navigator.clipboard) === null || _a === void 0 ? void 0 : _a.writeText(m.text || ''); toast('Copied', 'success'); };
     const initiateCall = async (type) => {
         if (blocked) { toast("You can't call this user.", 'error'); return; }
+        if (type === 'voice' && siteSettings.voiceCallEnabled === false) { toast('Voice calls are currently disabled.', 'error'); return; }
+        if (type === 'video' && siteSettings.videoCallEnabled === false) { toast('Video calls are currently disabled.', 'error'); return; }
         try { await startOutgoingCall(profile, otherUid, otherUser, type); }
         catch (e) { toast(e.message, 'error'); }
     };
@@ -9119,9 +9134,9 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
             React.createElement("div", { className: "flex-1 min-w-0 cursor-pointer", onClick: () => go(identityRoute) },
                 React.createElement("p", { className: "font-semibold text-sm truncate" }, displayIdentity.displayName),
                 React.createElement("p", { className: "text-xs text-slate-400 truncate" }, pageId ? "Page \u00B7 messages are received by the Page owner" : (((_a = chatDoc === null || chatDoc === void 0 ? void 0 : chatDoc.typing) === null || _a === void 0 ? void 0 : _a[otherUid]) ? React.createElement("span", { className: "text-[#0d9488]" }, "typing\u2026") : lastSeenLabel(otherUser)))),
-            !pageId && React.createElement("button", { onClick: () => initiateCall('voice'), title: "Voice call", className: "text-[#0d9488] w-9 h-9 rounded-full hover:bg-[#0d9488]/10 flex items-center justify-center" },
+            !pageId && siteSettings.voiceCallEnabled !== false && React.createElement("button", { onClick: () => initiateCall('voice'), title: "Voice call", className: "text-[#0d9488] w-9 h-9 rounded-full hover:bg-[#0d9488]/10 flex items-center justify-center" },
                 React.createElement("i", { className: "fa-solid fa-phone" })),
-            !pageId && React.createElement("button", { onClick: () => initiateCall('video'), title: "Video call", className: "text-[#0d9488] w-9 h-9 rounded-full hover:bg-[#0d9488]/10 flex items-center justify-center" },
+            !pageId && siteSettings.videoCallEnabled !== false && React.createElement("button", { onClick: () => initiateCall('video'), title: "Video call", className: "text-[#0d9488] w-9 h-9 rounded-full hover:bg-[#0d9488]/10 flex items-center justify-center" },
                 React.createElement("i", { className: "fa-solid fa-video" })),
             !pageId && React.createElement("div", { className: "relative shrink-0" },
                 React.createElement("button", { onClick: () => setSettingsOpen(a => !a), className: "text-[#0d9488] w-9 h-9 rounded-full hover:bg-[#0d9488]/10 flex items-center justify-center" },
@@ -12742,6 +12757,7 @@ function DatingChatScreen({ matchId, go }) {
     const { profile } = useAuth();
     const myDp = useDatingProfile(profile.id);
     const cfg = useDatingConfig();
+    const siteSettings = useSiteSettings();
     const [match, setMatch] = useState(undefined);
     const [other, setOther] = useState(undefined);
     const [text, setText] = useState('');
@@ -12819,6 +12835,8 @@ function DatingChatScreen({ matchId, go }) {
     };
     const block = async () => { if (!confirm('Block this person? You will no longer see each other.')) return; await blockDatingUser(profile.id, other.id); toast('Blocked', 'success'); go({ name: 'dating' }); };
     const startCall = async (type) => {
+        if (type === 'voice' && siteSettings.voiceCallEnabled === false) { toast('Voice calls are currently disabled.', 'error'); return; }
+        if (type === 'video' && siteSettings.videoCallEnabled === false) { toast('Video calls are currently disabled.', 'error'); return; }
         if (!canStartDatingCall(myDp)) { setCallGateType(type); return; }
         try { await startOutgoingCall(profile, other.id, other, type); }
         catch (e) { toast(e.message, 'error'); }
@@ -12831,8 +12849,8 @@ function DatingChatScreen({ matchId, go }) {
             React.createElement("button", { onClick: () => setProfileOpen(true), className: "flex items-center gap-3 flex-1 min-w-0 text-left" },
                 React.createElement("img", { src: (other.photos || [])[0], className: "w-9 h-9 rounded-full object-cover bg-slate-100 shrink-0" }),
                 React.createElement("p", { className: "font-semibold text-sm flex-1 flex items-center truncate" }, other.displayName, other.verified && React.createElement(DatingVerifiedBadge, null))),
-            React.createElement("button", { onClick: () => startCall('voice'), title: "Voice call", className: "w-9 h-9 rounded-full flex items-center justify-center text-brand-600 hover:bg-brand-50 dark:hover:bg-ink-700 shrink-0" }, React.createElement("i", { className: "fa-solid fa-phone" })),
-            React.createElement("button", { onClick: () => startCall('video'), title: "Video call", className: "w-9 h-9 rounded-full flex items-center justify-center text-brand-600 hover:bg-brand-50 dark:hover:bg-ink-700 shrink-0" }, React.createElement("i", { className: "fa-solid fa-video" })),
+            siteSettings.voiceCallEnabled !== false && React.createElement("button", { onClick: () => startCall('voice'), title: "Voice call", className: "w-9 h-9 rounded-full flex items-center justify-center text-brand-600 hover:bg-brand-50 dark:hover:bg-ink-700 shrink-0" }, React.createElement("i", { className: "fa-solid fa-phone" })),
+            siteSettings.videoCallEnabled !== false && React.createElement("button", { onClick: () => startCall('video'), title: "Video call", className: "w-9 h-9 rounded-full flex items-center justify-center text-brand-600 hover:bg-brand-50 dark:hover:bg-ink-700 shrink-0" }, React.createElement("i", { className: "fa-solid fa-video" })),
             React.createElement("div", { className: "relative" },
                 React.createElement("button", { onClick: () => setMenuOpen(v => !v) }, React.createElement("i", { className: "fa-solid fa-ellipsis" })),
                 menuOpen && React.createElement("div", { className: "absolute right-0 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl overflow-hidden border border-slate-100 dark:border-ink-600 z-10 w-40" },
