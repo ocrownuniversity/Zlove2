@@ -10255,7 +10255,7 @@ function ReelCard({ reel, active, go, meId, muted, onToggleMute, onOpenComments,
         React.createElement("video", { ref: videoRef, src: reel.videoURL, poster: reel.thumbURL || undefined, loop: true, muted: muted, playsInline: true, onClick: onToggleMute, onTimeUpdate: e => setCurrentTime(e.target.currentTime), onLoadedMetadata: e => setDuration(e.target.duration || 0), className: "w-full h-full object-contain bg-black cursor-pointer" }),
         React.createElement("button", { onClick: onToggleMute, className: "absolute top-16 right-3 w-9 h-9 rounded-full bg-black/40 text-white flex items-center justify-center" }, React.createElement("i", { className: "fa-solid " + (muted ? "fa-volume-xmark" : "fa-volume-high") + " text-sm" })),
         reel.pinned && React.createElement("span", { className: "absolute top-3 left-3 bg-black/50 text-white text-[11px] font-semibold px-2 py-1 rounded-full" }, React.createElement("i", { className: "fa-solid fa-thumbtack mr-1" }), "Pinned"),
-        React.createElement("div", { className: "absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent pt-16 pb-4 px-4 flex flex-col gap-2" },
+        React.createElement("div", { className: "absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent pt-16 pb-4 px-4 flex flex-col-reverse gap-2.5" },
             duration > 0 && React.createElement("div", { className: "flex items-center gap-2 text-white", onClick: e => e.stopPropagation() },
                 React.createElement("span", { className: "text-[11px] font-semibold tabular-nums w-8 shrink-0" }, fmtTime(currentTime)),
                 React.createElement("input", {
