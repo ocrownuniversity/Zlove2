@@ -3509,8 +3509,7 @@ function BrandWordmark({ className, size }) {
 }
 function SplashScreen() {
     return (React.createElement("div", { className: "h-screen flex flex-col items-center justify-center gap-5 bg-white" },
-        React.createElement("img", { src: (typeof window !== 'undefined' ? window.YELOFACE_LOGO : ''), alt: "Yeloface — stay bright, stay connected", className: "w-56 sm:w-64 max-w-[70vw] h-auto fade-in select-none", draggable: false }),
-        React.createElement("div", { className: "w-7 h-7 border-2 rounded-full animate-spin", style: { borderColor: '#8B0C4F', borderTopColor: 'transparent' } })));
+        React.createElement("img", { src: (typeof window !== 'undefined' ? window.YELOFACE_LOGO : ''), alt: "Yeloface — stay bright, stay connected", className: "w-56 sm:w-64 max-w-[70vw] h-auto fade-in select-none", draggable: false })));
 }
 function SuspendedScreen() {
     return (React.createElement("div", { className: "h-screen flex flex-col items-center justify-center gap-4 text-center px-6 bg-white dark:bg-ink-900" },
@@ -3870,12 +3869,19 @@ function MainApp({ route, setRoute }) {
     // admin panel is only reachable through the hidden secret-URL door (see App()), never
     // through visible navigation, per the "not discoverable by regular users" requirement.
     const go = (r) => { setRoute(r); };
+    const goNav = (n) => {
+        if (n.name === 'home' && route.name === 'home') {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            return;
+        }
+        go(Object.assign({ name: n.name }, (n.params || {})));
+    };
     return (React.createElement("div", { className: "min-h-screen flex" },
         React.createElement(CallOverlayHost, null),
         React.createElement("aside", { className: "hidden md:flex flex-col w-64 shrink-0 border-r border-slate-100 dark:border-ink-800 px-4 py-6 sticky top-0 h-screen" },
             React.createElement("div", { className: "flex items-center gap-2 px-2 mb-8" },
                 React.createElement(BrandWordmark, { size: "text-3xl" })),
-            React.createElement("nav", { className: "space-y-1 flex-1" }, nav.map(n => (React.createElement("button", { key: n.name, onClick: () => go(Object.assign({ name: n.name }, (n.params || {}))), className: "w-full flex items-center gap-3 px-3 py-3 rounded-xl text-base font-bold transition " +
+            React.createElement("nav", { className: "space-y-1 flex-1" }, nav.map(n => (React.createElement("button", { key: n.name, onClick: () => goNav(n), className: "w-full flex items-center gap-3 px-3 py-3 rounded-xl text-base font-bold transition " +
                     (route.name === n.name ? "bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400" : "hover:bg-slate-50 dark:hover:bg-ink-800 text-slate-600 dark:text-slate-300") },
                 React.createElement("i", { className: "fa-solid " + n.icon + " w-6 text-xl" }),
                 n.label,
@@ -3902,7 +3908,7 @@ function MainApp({ route, setRoute }) {
                     ['home', 'search', 'messages', 'reels', 'notifications', 'marketplace']
                         .map(name => nav.find(n => n.name === name))
                         .filter(Boolean)
-                        .map(n => React.createElement("button", { key: n.name, onClick: () => go(Object.assign({ name: n.name }, (n.params || {}))), className: "relative flex-1 flex items-center justify-center py-2.5" },
+                        .map(n => React.createElement("button", { key: n.name, onClick: () => goNav(n), className: "relative flex-1 flex items-center justify-center py-2.5" },
                             React.createElement("i", { className: "fa-solid " + n.icon + " text-[24px] " + (route.name === n.name ? "text-brand-600" : "text-slate-500 dark:text-slate-400") }),
                             !!n.badge && React.createElement("span", { className: "absolute top-1 right-1/4 min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center" }, n.badge > 9 ? '9+' : n.badge),
                             route.name === n.name && React.createElement("span", { className: "absolute bottom-0 left-1/2 -translate-x-1/2 w-9 h-[3px] rounded-full bg-brand-600" }))))),
