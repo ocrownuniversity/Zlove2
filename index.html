@@ -95,10 +95,6 @@
   .tile-new { animation: tileAppear 150ms ease-in-out; }
   @keyframes msgIn { from { opacity:0; transform: translateY(6px) scale(.98); } to { opacity:1; transform:none; } }
   .msg-in { animation: msgIn .18s ease-out; }
-  @keyframes heartPop { 0% { opacity:0; transform: scale(0.3); } 30% { opacity:1; transform: scale(1.25); } 60% { transform: scale(1); } 100% { opacity:0; transform: scale(1) translateY(-14px); } }
-  .heart-pop { display:inline-block; animation: heartPop .65s ease-out forwards; filter: drop-shadow(0 2px 4px rgba(0,0,0,.25)); }
-  @keyframes typingDot { 0%,60%,100% { transform: translateY(0); opacity:.5; } 30% { transform: translateY(-4px); opacity:1; } }
-  .typing-dot { animation: typingDot 1.2s ease-in-out infinite; }
   @keyframes waveBar { 0%,100% { transform: scaleY(0.4); } 50% { transform: scaleY(1); } }
 </style>
 </head>
@@ -4571,6 +4567,13 @@ function MainApp({ route, setRoute }) {
     }, [route.name]);
     return (React.createElement("div", { className: "min-h-screen flex" },
         React.createElement(CallOverlayHost, null),
+        // Always-on-top Home shortcut: several full-screen panels (create post, page/reel
+        // upload forms, admin, etc.) render as fixed overlays that visually cover the sidebar
+        // and mobile header underneath them, so the regular house icon isn't reachable from
+        // there. This floats above all of those (but stays below an active call screen) so
+        // pressing it works from literally anywhere in the app.
+        React.createElement("button", { onClick: () => goNav({ name: 'home' }), title: "Home", className: "fixed bottom-5 right-4 z-[150] w-12 h-12 rounded-full bg-[#0d9488] text-white shadow-lg flex items-center justify-center active:scale-95 transition" },
+            React.createElement("i", { className: "fa-solid fa-house text-lg" })),
         React.createElement("aside", { className: "hidden md:flex flex-col w-64 shrink-0 border-r border-slate-100 dark:border-ink-800 px-4 py-6 sticky top-0 h-screen" },
             React.createElement("div", { className: "flex items-center gap-2 px-2 mb-8" },
                 React.createElement(BrandWordmark, { size: "text-3xl" })),
@@ -9571,7 +9574,7 @@ function UnreadDivider() {
         React.createElement("span", { className: "text-[11px] font-semibold text-[#0d9488]" }, "New messages"),
         React.createElement("div", { className: "flex-1 h-px bg-[#0d9488]/25" }));
 }
-function MessageBubble({ message, isMe, otherUid, otherUser, showAvatar, groupPos, menuOpen, setMenuOpen, onReply, onForward, onCopy, onEdit, onDeleteForMe, onDeleteForEveryone, onReact, isLastSeen }) {
+function MessageBubble({ message, isMe, otherUid, otherUser, showAvatar, groupPos, menuOpen, setMenuOpen, onReply, onForward, onCopy, onEdit, onDeleteForMe, onDeleteForEveryone, onReact }) {
     var _a;
     const status = () => {
         if ((message.readBy || []).includes(otherUid))
@@ -9592,62 +9595,9 @@ function MessageBubble({ message, isMe, otherUid, otherUser, showAvatar, groupPo
     // *only* way to reach message actions, no persistent icon sitting on the bubble.
     const pressTimer = useRef(null);
     const movedRef = useRef(false);
-    // Swipe-to-reply (Messenger gesture: drag any bubble right to quote-reply to it) and
-    // double-tap-to-heart (Messenger's quick "double tap a bubble to love it" shortcut).
-    const touchStartRef = useRef({ x: 0, y: 0 });
-    const swipingRef = useRef(false);
-    const [swipeX, setSwipeX] = useState(0);
-    const lastTapRef = useRef(0);
-    const [heartPop, setHeartPop] = useState(false);
-    const doubleTapReact = () => {
-        onReact('\u2764\uFE0F');
-        setHeartPop(true);
-        if (navigator.vibrate) navigator.vibrate(15);
-        setTimeout(() => setHeartPop(false), 650);
-    };
-    const onTouchStart = (e) => {
-        movedRef.current = false;
-        swipingRef.current = false;
-        const t = e.touches[0];
-        touchStartRef.current = { x: t.clientX, y: t.clientY };
-        pressTimer.current = setTimeout(() => { if (!movedRef.current && navigator.vibrate) navigator.vibrate(15); if (!movedRef.current) setMenuOpen(true); }, 450);
-    };
-    const onTouchMove = (e) => {
-        const t = e.touches[0];
-        const dx = t.clientX - touchStartRef.current.x;
-        const dy = t.clientY - touchStartRef.current.y;
-        if (!swipingRef.current && dx > 10 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-            swipingRef.current = true;
-            if (pressTimer.current)
-                clearTimeout(pressTimer.current);
-        }
-        if (swipingRef.current) {
-            movedRef.current = true;
-            setSwipeX(Math.max(0, Math.min(dx, 56)));
-        }
-        else if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
-            movedRef.current = true;
-            if (pressTimer.current)
-                clearTimeout(pressTimer.current);
-        }
-    };
-    const onTouchEnd = () => {
-        if (pressTimer.current)
-            clearTimeout(pressTimer.current);
-        if (swipingRef.current && swipeX > 36) {
-            if (navigator.vibrate)
-                navigator.vibrate(10);
-            onReply();
-        }
-        else if (!movedRef.current) {
-            const now = Date.now();
-            if (now - lastTapRef.current < 300)
-                doubleTapReact();
-            lastTapRef.current = now;
-        }
-        swipingRef.current = false;
-        setSwipeX(0);
-    };
+    const onTouchStart = () => { movedRef.current = false; pressTimer.current = setTimeout(() => { if (!movedRef.current && navigator.vibrate) navigator.vibrate(15); if (!movedRef.current) setMenuOpen(true); }, 450); };
+    const onTouchMove = () => { movedRef.current = true; if (pressTimer.current) clearTimeout(pressTimer.current); };
+    const onTouchEnd = () => { if (pressTimer.current) clearTimeout(pressTimer.current); };
     // Call-log entries (a voice/video call that just ended, went unanswered, was declined, or
     // hit "busy") render as a centered pill, like WhatsApp/Messenger's call log rows, instead
     // of a left/right chat bubble — they aren't "sent" by either side in the usual sense.
@@ -9687,34 +9637,18 @@ function MessageBubble({ message, isMe, otherUid, otherUser, showAvatar, groupPo
             React.createElement("div", { className: "max-w-[75%] px-3 py-[6px] rounded-[18px] text-[13px] italic border " + (isMe ? "border-white/20 text-white/60 bg-[#0d9488]/40" : "border-slate-200 dark:border-ink-600 text-slate-400 bg-transparent") },
                 React.createElement("i", { className: "fa-solid fa-ban mr-1.5 text-[11px]" }), isMe ? "You deleted this message" : "This message was deleted")));
     }
-    // Messenger renders a message that's *only* one or two emoji (no other text) large and
-    // without the bubble background — this is what makes a lone 👍/❤️ read as a deliberate
-    // reaction-style message instead of ordinary text.
-    const emojiOnlyMatch = message.type === 'text' && message.text && /^(\p{Extended_Pictographic}\uFE0F?\u200D?){1,3}$/u.test(message.text.trim());
     return (React.createElement("div", { className: "flex items-end gap-1.5 msg-in " + (isMe ? "justify-end" : "justify-start") + " " + (groupPos === 'single' || groupPos === 'last' ? 'mb-2' : 'mb-0.5') },
         !isMe && React.createElement("div", { className: "w-6 shrink-0" }, showAvatar && React.createElement(Avatar, { user: otherUser, size: 6 })),
-        swipeX > 0 && React.createElement("div", { className: "self-center text-[#0d9488] shrink-0", style: { opacity: Math.min(swipeX / 36, 1), width: swipeX, marginRight: -swipeX } },
-            React.createElement("i", { className: "fa-solid fa-reply text-sm" })),
-        React.createElement("div", { className: "max-w-[75%] group relative", style: { transform: `translateX(${swipeX}px)`, transition: swipingRef.current ? 'none' : 'transform 0.2s ease-out' } },
+        React.createElement("div", { className: "max-w-[75%] group relative" },
             message.forwardedFrom && React.createElement("p", { className: "text-[10px] text-slate-400 mb-0.5 flex items-center gap-1" },
                 React.createElement("i", { className: "fa-solid fa-share" }),
                 "Forwarded"),
             message.replyTo && (React.createElement("div", { className: "text-xs px-2.5 py-1 rounded-t-lg border-l-2 border-brand-400 bg-black/5 dark:bg-white/5" },
                 React.createElement("p", { className: "truncate opacity-70 max-w-[220px]" }, message.replyTo.text))),
-            heartPop && React.createElement("div", { className: "absolute inset-0 flex items-center justify-center pointer-events-none z-10" },
-                React.createElement("span", { className: "text-4xl heart-pop" }, "\u2764\uFE0F")),
-            emojiOnlyMatch ? (
-                React.createElement("div", {
-                    className: "text-[52px] leading-none py-1 select-none sm:select-text",
-                    onContextMenu: (e) => { e.preventDefault(); setMenuOpen(!menuOpen); },
-                    onDoubleClick: doubleTapReact,
-                    onTouchStart: onTouchStart, onTouchMove: onTouchMove, onTouchEnd: onTouchEnd, onTouchCancel: onTouchEnd
-                }, message.text.trim())
-            ) : React.createElement("div", {
+            React.createElement("div", {
                 style: cornerStyle,
                 className: "relative px-3 py-[6px] text-[15px] leading-snug select-none sm:select-text " + (isMe ? "bg-[#0d9488] text-white" : "bg-[#F0F0F0] dark:bg-[#3A3B3C] text-[#050505] dark:text-white"),
                 onContextMenu: (e) => { e.preventDefault(); setMenuOpen(!menuOpen); },
-                onDoubleClick: doubleTapReact,
                 onTouchStart: onTouchStart, onTouchMove: onTouchMove, onTouchEnd: onTouchEnd, onTouchCancel: onTouchEnd
             },
                 message.type === 'text' && React.createElement("p", { className: "whitespace-pre-wrap break-words" }, formatRichText(message.text)),
@@ -9730,8 +9664,6 @@ function MessageBubble({ message, isMe, otherUid, otherUser, showAvatar, groupPo
                     React.createElement("span", null, ((_a = message.createdAt) === null || _a === void 0 ? void 0 : _a.toDate) ? message.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''),
                     isMe && status())),
             reactions.length > 0 && (React.createElement("div", { className: "flex gap-0.5 mt-0.5" }, reactions.map(([uid, emoji]) => React.createElement("span", { key: uid, className: "text-xs bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-600 rounded-full px-1.5" }, emoji)))),
-            isMe && isLastSeen && React.createElement("div", { className: "flex justify-end mt-0.5" },
-                React.createElement(Avatar, { user: otherUser, size: 4 })),
             menuOpen && (React.createElement(React.Fragment, null,
                 React.createElement("div", { className: "fixed inset-0 z-10", onClick: () => setMenuOpen(false) }),
                 React.createElement("div", { className: "absolute z-20 mt-1 bg-white dark:bg-ink-700 shadow-lg rounded-xl border border-slate-100 dark:border-ink-600 overflow-hidden w-44 " + (isMe ? "right-0" : "left-0") },
@@ -9913,24 +9845,6 @@ function ChatWindow({ chatId, otherUid, pageId, go, headerHeight }) {
             toast(friendlyError(e), 'error');
         }
     };
-    // Messenger's thumbs-up button: tapping it (instead of holding to record) fires off an
-    // instant 👍 the same way the real app's "like" send button does when the composer is empty.
-    const sendLike = async () => {
-        if (blocked) {
-            toast("You can't message this user", 'error');
-            return;
-        }
-        const payload = { type: 'text', text: '\uD83D\uDC4D' };
-        if (replyTo)
-            payload.replyTo = { id: replyTo.id, text: replyTo.text || ('[' + replyTo.type + ']'), senderId: replyTo.senderId };
-        setReplyTo(null);
-        try {
-            await sendChatMessage(profile.id, chatId, otherUid, payload);
-        }
-        catch (e) {
-            toast(friendlyError(e), 'error');
-        }
-    };
     const uploadAndSend = async (file, type) => {
         if (blocked) {
             toast("You can't message this user", 'error');
@@ -10036,14 +9950,6 @@ function ChatWindow({ chatId, otherUid, pageId, go, headerHeight }) {
     const displayIdentity = pageId && pageInfo ? pageInfo : otherUser;
     const identityRoute = pageId && pageInfo ? { name: 'page', id: pageId } : { name: 'profile', uid: otherUid };
     const visibleMessages = (messages || []).filter(m => !(m.deletedFor || []).includes(profile.id));
-    // Last message I sent that the other person has actually read — Messenger marks this one
-    // with their tiny avatar instead of stacking a checkmark on every read message.
-    let lastSeenMessageId = null;
-    for (let i = visibleMessages.length - 1; i >= 0; i--) {
-        const mm = visibleMessages[i];
-        if (mm.senderId === profile.id && (mm.readBy || []).includes(otherUid)) { lastSeenMessageId = mm.id; break; }
-    }
-    const otherIsTyping = !pageId && !!((_a = chatDoc === null || chatDoc === void 0 ? void 0 : chatDoc.typing) === null || _a === void 0 ? void 0 : _a[otherUid]);
     // Uses the "small viewport height" unit (100svh), not 100dvh, on purpose: dvh changes
     // live as the mobile browser's address/toolbar hides and shows while you scroll or type,
     // which resizes this container on every scroll tick — that's what read as the whole chat
@@ -10092,18 +9998,11 @@ function ChatWindow({ chatId, otherUid, pageId, go, headerHeight }) {
                 const groupedWithPrev = !!prevMsg && prevMsg.senderId === m.senderId && Math.abs(t(m) - t(prevMsg)) < 3 * 60 * 1000;
                 const groupedWithNext = !!nextMsg && nextMsg.senderId === m.senderId && Math.abs(t(nextMsg) - t(m)) < 3 * 60 * 1000;
                 const groupPos = groupedWithPrev && groupedWithNext ? 'middle' : groupedWithPrev ? 'last' : groupedWithNext ? 'first' : 'single';
-                // Messenger shows the other person's tiny avatar under the single most recent
-                // message they've actually seen, instead of a checkmark on every read message.
-                const isLastSeen = m.id === lastSeenMessageId;
                 return React.createElement(React.Fragment, { key: m.id },
                     React.createElement(DateSeparator, { prev: prevMsg, curr: m }),
                     firstUnreadIdRef.current === m.id && React.createElement(UnreadDivider, null),
-                    React.createElement(MessageBubble, { message: m, isMe: m.senderId === profile.id, otherUid: otherUid, otherUser: displayIdentity, showAvatar: !groupedWithNext, groupPos: groupPos, menuOpen: activeMenuId === m.id, setMenuOpen: (v) => setActiveMenuId(v ? m.id : null), onReply: () => setReplyTo(m), onForward: () => setForwardMsg(m), onCopy: () => copyText(m), onEdit: () => { setEditingMessage(m); setText(m.text || ''); }, onDeleteForMe: () => deleteForMe(m), onDeleteForEveryone: () => deleteForEveryone(m), onReact: (e) => react(m, e), isLastSeen: isLastSeen }));
+                    React.createElement(MessageBubble, { message: m, isMe: m.senderId === profile.id, otherUid: otherUid, otherUser: displayIdentity, showAvatar: !groupedWithNext, groupPos: groupPos, menuOpen: activeMenuId === m.id, setMenuOpen: (v) => setActiveMenuId(v ? m.id : null), onReply: () => setReplyTo(m), onForward: () => setForwardMsg(m), onCopy: () => copyText(m), onEdit: () => { setEditingMessage(m); setText(m.text || ''); }, onDeleteForMe: () => deleteForMe(m), onDeleteForEveryone: () => deleteForEveryone(m), onReact: (e) => react(m, e) }));
             }),
-            otherIsTyping && React.createElement("div", { className: "flex items-end gap-1.5 mb-2 msg-in" },
-                React.createElement("div", { className: "w-6 shrink-0" }, React.createElement(Avatar, { user: displayIdentity, size: 6 })),
-                React.createElement("div", { className: "bg-[#F0F0F0] dark:bg-[#3A3B3C] rounded-[18px] px-4 py-3 flex items-center gap-1" },
-                    [0, 1, 2].map(i => React.createElement("span", { key: i, className: "typing-dot w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-300 inline-block", style: { animationDelay: (i * 0.15) + 's' } })))),
             React.createElement("div", { ref: bottomRef })),
         blocked && (React.createElement("div", { className: "px-4 py-2 text-xs text-center text-red-500 bg-red-50 dark:bg-red-900/20 shrink-0" }, iBlockedThem ? "You've blocked this user." : "You can't reply to this conversation.")),
         (replyTo || editingMessage) && (React.createElement("div", { className: "flex items-center justify-between px-4 py-2 border-t border-slate-100 dark:border-ink-700 bg-slate-50 dark:bg-ink-700 shrink-0" },
@@ -10143,9 +10042,7 @@ function ChatWindow({ chatId, otherUid, pageId, go, headerHeight }) {
                 React.createElement("button", { onClick: () => { setAttachOpen(a => !a); setEmojiOpen(false); }, disabled: blocked, className: "text-[#0d9488] w-9 h-9 flex items-center justify-center disabled:opacity-40 text-lg" },
                     React.createElement("i", { className: "fa-solid fa-circle-plus" })),
                 React.createElement("button", { onClick: () => { imageInputRef.current.click(); }, disabled: blocked, className: "text-[#0d9488] w-9 h-9 hidden sm:flex items-center justify-center disabled:opacity-40 text-lg" },
-                    React.createElement("i", { className: "fa-solid fa-camera" })),
-                React.createElement("button", { onClick: startRecording, disabled: blocked, className: "text-[#0d9488] w-9 h-9 flex items-center justify-center disabled:opacity-40 text-lg" },
-                    React.createElement("i", { className: "fa-solid fa-microphone" })),
+                    React.createElement("i", { className: "fa-solid fa-image" })),
                 React.createElement("div", { className: "flex-1 relative flex items-center" },
                     React.createElement("input", { value: text, onChange: e => onTextChange(e.target.value), onKeyDown: e => { if (e.key === 'Enter' && !e.shiftKey) {
                             e.preventDefault();
@@ -10154,8 +10051,8 @@ function ChatWindow({ chatId, otherUid, pageId, go, headerHeight }) {
                     React.createElement("button", { onClick: () => { setEmojiOpen(a => !a); setAttachOpen(false); }, disabled: blocked, className: "absolute right-2 text-[#0d9488] w-6 h-6 flex items-center justify-center disabled:opacity-40" },
                         React.createElement("i", { className: "fa-regular fa-face-smile" }))),
                 text.trim() ? (React.createElement("button", { onClick: sendText, className: "text-[#0d9488] rounded-full w-9 h-9 flex items-center justify-center shrink-0 text-xl" },
-                    React.createElement("i", { className: "fa-solid fa-paper-plane" }))) : (React.createElement("button", { onClick: sendLike, disabled: blocked, className: "text-[#0d9488] w-9 h-9 flex items-center justify-center disabled:opacity-40 text-xl active:scale-90 transition" },
-                    React.createElement("i", { className: "fa-solid fa-thumbs-up" })))))),
+                    React.createElement("i", { className: "fa-solid fa-paper-plane" }))) : (React.createElement("button", { onClick: startRecording, disabled: blocked, className: "text-[#0d9488] w-9 h-9 flex items-center justify-center disabled:opacity-40 text-xl" },
+                    React.createElement("i", { className: "fa-solid fa-microphone" })))))),
         forwardMsg && React.createElement(ForwardModal, { message: forwardMsg, onClose: () => setForwardMsg(null) }),
         reportUserOpen && React.createElement(ReportReasonSheet, { targetType: "user", targetId: otherUid, targetOwnerId: otherUid, onClose: () => setReportUserOpen(false) })));
 }
@@ -15458,46 +15355,6 @@ function AdminReferralsPanel({ adminUid, adminEmail }) {
 }
 
 /* ============================== RENDER ============================== */
-// Volume booster: browsers cap a <video>/<audio> element's own volume at 100%, which is why
-// quietly-recorded posted videos still sound low even with the built-in controls turned all the
-// way up. This routes every media element's output through a Web Audio GainNode set above 100%
-// so posted videos (and any other video/audio on the site) play noticeably louder. It attaches
-// lazily the first time each element starts playing, and only ever attaches once per element
-// (required — connecting the same element to a MediaElementSource twice throws).
-(function () {
-    var VOLUME_BOOST = 2.2; // ~220% loudness
-    var ctx = null;
-    var boosted = new WeakSet();
-    function getCtx() {
-        if (!ctx) {
-            var AC = window.AudioContext || window.webkitAudioContext;
-            if (!AC) return null;
-            ctx = new AC();
-        }
-        if (ctx.state === 'suspended') ctx.resume().catch(function () { });
-        return ctx;
-    }
-    function boost(el) {
-        if (boosted.has(el)) return;
-        var audioCtx = getCtx();
-        if (!audioCtx) return;
-        try {
-            var source = audioCtx.createMediaElementSource(el);
-            var gainNode = audioCtx.createGain();
-            gainNode.gain.value = VOLUME_BOOST;
-            source.connect(gainNode).connect(audioCtx.destination);
-            boosted.add(el);
-        } catch (e) {
-            // Element already routed elsewhere (e.g. a WebRTC call stream) or CORS-tainted — leave
-            // it playing through its normal, unboosted output rather than breaking playback.
-            boosted.add(el);
-        }
-    }
-    document.addEventListener('play', function (e) {
-        var el = e.target;
-        if (el && (el.tagName === 'VIDEO' || el.tagName === 'AUDIO')) boost(el);
-    }, true);
-})();
 ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App, null));
 document.getElementById('root').dataset.mounted = 'true';
 
