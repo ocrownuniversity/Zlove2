@@ -635,8 +635,13 @@ if(window._idleTimer)clearTimeout(window._idleTimer);
 if(!CU)return;
 window._idleTimer=setTimeout(async ()=>{
 if(!CU)return;
+if(UD&&UD.loginPinEnabled&&UD.loginPin){
+showLoginPinGate(CU);
+toast('Locked after 5 minutes of inactivity. Enter your PIN to continue.');
+}else{
 try{await auth.signOut();}catch(e){}
 toast('You were logged out after 5 minutes of inactivity.');
+}
 },IDLE_TIMEOUT_MS);
 }
 function startIdleTimer(){
