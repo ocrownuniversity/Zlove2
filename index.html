@@ -3213,14 +3213,12 @@ if(alreadyRan&&!forced){console.log('Contribution deductions already ran today')
 }catch(e){console.warn('Lock error:',e.message);}
 const activePlans=await db.collection('contributions').where('status','==','active').get();
 if(activePlans.empty)return;
-const today=new Date();
-let deducted=0,interestPaid=0,completedCount=0;
+let deducted=0,completedCount=0;
 for(const doc of activePlans.docs){
 const p=doc.data();
 let sch=p.repaymentSchedule||[];
 let amountContributed=p.amountContributed||0;
 let missedDeductions=p.missedDeductions||0;
-let interestPayments=p.interestPayments||[];
 let changed=false;
 const typeLabel=p.type==='daily'?'Daily':p.type==='weekly'?'Weekly':'Monthly';
 // --- Installment deductions ---
@@ -3249,39 +3247,24 @@ await db.collection('transactions').add({userId:p.userId,type:'contribution',amo
 }catch(e){console.warn('Contribution deduction error:',e.message);}
 }
 }
-// --- Monthly interest crediting (same timing rule as Fixed Investment) ---
-const createdAt=p.createdAt&&p.createdAt.toDate?p.createdAt.toDate():null;
-if(createdAt&&p.durationMonths&&p.monthlyInterestAmount){
-const monthsSince=Math.floor((today-createdAt)/(30*24*3600*1000));
-const nextMonth=interestPayments.length+1;
-if(nextMonth<=p.durationMonths&&monthsSince>=nextMonth){
-try{
-await db.collection('users').doc(p.userId).update({balance:firebase.firestore.FieldValue.increment(p.monthlyInterestAmount)});
-interestPayments=[...interestPayments,{month:nextMonth,amount:p.monthlyInterestAmount,payDate:todayStr,paidAt:today.toISOString()}];
-await db.collection('transactions').add({userId:p.userId,type:'contribution_interest',amount:p.monthlyInterestAmount,description:typeLabel+' Contribution Interest — Month '+nextMonth+'/'+p.durationMonths,status:'success',contributionId:doc.id,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
-await db.collection('financeNotifications').add({userId:p.userId,title:'💰 Monthly Interest Credited!',body:'NGN '+fmt(p.monthlyInterestAmount)+' (Month '+nextMonth+'/'+p.durationMonths+') has been credited to your wallet from your contribution plan.',read:false,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
-changed=true;interestPaid++;
-}catch(e){console.warn('Contribution interest error:',e.message);}
-}
-}
 if(!changed)continue;
 const allInstallmentsPaid=sch.length>0&&sch.every(s=>s.paid);
-const allInterestPaid=interestPayments.length>=(p.durationMonths||1);
-const updates={repaymentSchedule:sch,installmentsPaid:sch.filter(s=>s.paid).length,amountContributed,missedDeductions,interestPayments,lastDeductionDate:todayStr};
-if(allInstallmentsPaid&&allInterestPaid){
+const updates={repaymentSchedule:sch,installmentsPaid:sch.filter(s=>s.paid).length,amountContributed,missedDeductions,lastDeductionDate:todayStr};
+if(allInstallmentsPaid){
 try{
-const totalInterest=interestPayments.reduce((s,x)=>s+(x.amount||0),0);
-await db.collection('users').doc(p.userId).update({balance:firebase.firestore.FieldValue.increment(amountContributed)});
-await doc.ref.update(Object.assign({},updates,{status:'completed',finalPrincipal:amountContributed,finalInterest:totalInterest,finalPayout:amountContributed+totalInterest,completedAt:firebase.firestore.FieldValue.serverTimestamp()}));
-await db.collection('transactions').add({userId:p.userId,type:'contribution_payout',amount:amountContributed,description:typeLabel+' Contribution Matured — principal returned',status:'success',contributionId:doc.id,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
-await db.collection('financeNotifications').add({userId:p.userId,title:'🎉 Contribution Plan Matured!',body:'Your contribution plan matured. Principal of NGN '+fmt(amountContributed)+' has been returned to your wallet.',read:false,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+const completionFee=p.completionFee||0;
+const payout=Math.max(0,Math.round((amountContributed-completionFee)*100)/100);
+await db.collection('users').doc(p.userId).update({balance:firebase.firestore.FieldValue.increment(payout)});
+await doc.ref.update(Object.assign({},updates,{status:'completed',finalPrincipal:amountContributed,finalFee:completionFee,finalPayout:payout,completedAt:firebase.firestore.FieldValue.serverTimestamp()}));
+await db.collection('transactions').add({userId:p.userId,type:'contribution_payout',amount:payout,description:typeLabel+' Contribution Matured — NGN '+fmt(completionFee)+' completion fee deducted',status:'success',contributionId:doc.id,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+await db.collection('financeNotifications').add({userId:p.userId,title:'🎉 Contribution Plan Matured!',body:'Your contribution plan matured. NGN '+fmt(payout)+' (after a NGN '+fmt(completionFee)+' completion fee) has been credited to your wallet.',read:false,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
 completedCount++;
 }catch(e){console.warn('Contribution completion error:',e.message);}
 }else{
 try{await doc.ref.update(updates);}catch(e){}
 }
 }
-if(deducted>0||interestPaid>0||completedCount>0)toast('Contributions: '+deducted+' deduction(s), '+interestPaid+' interest credit(s), '+completedCount+' plan(s) matured.');
+if(deducted>0||completedCount>0)toast('Contributions: '+deducted+' deduction(s), '+completedCount+' plan(s) matured.');
 }
 async function forceContributionDeductions(){
 if(!confirm('Force-run contribution deductions & interest now for ALL active plans today?'))return;
@@ -10792,7 +10775,7 @@ Welcome! How can we help you today? Describe your issue and we will get back to 
   FUNDING REQUEST VERIFICATION MODAL
 ====================================== --><div class="modal" id="m-fund-verify"><div class="mbox" style="max-height:92vh;overflow-y:auto"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;position:sticky;top:0;background:#fff;padding-bottom:10px;border-bottom:1px solid #f1f5f9;z-index:1"><div><h3 style="font-size:17px;font-weight:700">&#128269; Verify Payment</h3><p style="font-size:11px;color:var(--g400);margin-top:2px">Check the receipt carefully before approving</p></div><button onclick="closeM('m-fund-verify')" style="background:var(--g100);border:none;width:30px;height:30px;border-radius:50%;cursor:pointer;color:var(--g600);flex-shrink:0">&#10005;</button></div>
 <div id="fv-body"><div style="text-align:center;padding:30px;color:var(--g400)">Loading request...</div></div>
-</div></div>====================================== --><div class="modal" id="m-sv-new"><div class="mbox" style="max-height:92vh;overflow-y:auto"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;position:sticky;top:0;background:#fff;padding-bottom:10px;border-bottom:1px solid #f1f5f9;z-index:1"><div><h3 style="font-size:17px;font-weight:700">&#128184; New Savings Plan</h3><p style="font-size:11px;color:var(--g400);margin-top:2px">Choose a savings type to get started</p></div><button onclick="closeM('m-sv-new')" style="background:var(--g100);border:none;width:30px;height:30px;border-radius:50%;cursor:pointer;color:var(--g600);flex-shrink:0">&#10005;</button></div><div id="sv-type-picker" style="display:flex;flex-direction:column;gap:10px;margin-bottom:18px"><button class="sv-type-btn" onclick="openSavingsType('fixed')"><div class="sv-type-ico">&#128274;</div><div><div style="font-size:14px;font-weight:700;color:var(--g700)">Fixed Savings</div><div style="font-size:11px;color:var(--g400);line-height:1.4;margin-top:2px">Lock money &amp; earn interest</div></div></button><button class="sv-type-btn" onclick="openSavingsType('target')"><div class="sv-type-ico">&#127919;</div><div><div style="font-size:14px;font-weight:700;color:var(--g700)">Target Savings</div><div style="font-size:11px;color:var(--g400);line-height:1.4;margin-top:2px">Save towards a goal</div></div></button><button class="sv-type-btn" onclick="openSavingsType('flexible')"><div class="sv-type-ico">&#128260;</div><div><div style="font-size:14px;font-weight:700;color:var(--g700)">Flexible Savings</div><div style="font-size:11px;color:var(--g400);line-height:1.4;margin-top:2px">Deposit anytime, withdraw anytime</div></div></button><button class="sv-type-btn" onclick="openSavingsType('spend-save')"><div class="sv-type-ico">&#128176;</div><div><div style="font-size:14px;font-weight:700;color:var(--g700)">Spend &amp; Save</div><div style="font-size:11px;color:var(--g400);line-height:1.4;margin-top:2px">Auto-save from transactions</div></div></button><button class="sv-type-btn" onclick="openSavingsType('contribution')"><div class="sv-type-ico">&#128197;</div><div><div style="font-size:14px;font-weight:700;color:var(--g700)">Daily/Weekly Contribution</div><div style="font-size:11px;color:var(--g400);line-height:1.4;margin-top:2px">Commit to a schedule &amp; earn interest</div></div></button></div><div id="sv-type-form"></div></div></div><!-- SAVINGS WITHDRAW MODAL --><div class="modal" id="m-sv-withdraw"><div class="mbox" style="max-height:92vh;overflow-y:auto"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;position:sticky;top:0;background:#fff;padding-bottom:10px;border-bottom:1px solid #f1f5f9;z-index:1"><div><h3 style="font-size:17px;font-weight:700">&#8659; Savings Withdrawal</h3><p style="font-size:11px;color:var(--g400);margin-top:2px">Transfer from savings to wallet</p></div><button onclick="closeM('m-sv-withdraw')" style="background:var(--g100);border:none;width:30px;height:30px;border-radius:50%;cursor:pointer;color:var(--g600);flex-shrink:0">&#10005;</button></div><div style="background:linear-gradient(135deg,#064e3b,#065f46);border-radius:13px;padding:14px 16px;margin-bottom:16px"><div style="font-size:10px;color:rgba(167,243,208,.7);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Savings Balance</div><div style="font-size:26px;font-weight:800;color:#fff" id="sv-wd-bal-display">NGN 0.00</div></div><div style="margin-bottom:12px"><label style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:5px;display:block">Select Plan to Withdraw From</label><select class="inp" id="sv-wd-plan-sel"><option value="">-- Select plan --</option></select></div><div style="margin-bottom:12px"><label style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:5px;display:block">Amount (NGN)</label><input class="inp" type="number" id="sv-wd-amount" placeholder="Enter amount"/></div><div style="margin-bottom:8px"><label style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:7px;display:block">Transaction PIN *</label><div style="display:flex;gap:10px;justify-content:center"><input class="pbox" type="password" maxlength="1" id="sv-wd-p1" oninput="pn('sv-wd-p1','sv-wd-p2')"/><input class="pbox" type="password" maxlength="1" id="sv-wd-p2" oninput="pn('sv-wd-p2','sv-wd-p3')"/><input class="pbox" type="password" maxlength="1" id="sv-wd-p3" oninput="pn('sv-wd-p3','sv-wd-p4')"/><input class="pbox" type="password" maxlength="1" id="sv-wd-p4"/></div></div><button onclick="submitSvWithdrawal()" class="btn-g" style="width:100%;padding:14px;border-radius:11px;font-size:15px;font-weight:700;margin-top:12px;background:linear-gradient(135deg,#059669,#047857)">Transfer to Wallet</button></div></div><!-- SAVINGS DEPOSIT MODAL --><div class="modal" id="m-sv-deposit"><div class="mbox" style="max-height:92vh;overflow-y:auto"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;position:sticky;top:0;background:#fff;padding-bottom:10px;border-bottom:1px solid #f1f5f9;z-index:1"><div><h3 style="font-size:17px;font-weight:700">&#128176; Top-Up Savings</h3><p style="font-size:11px;color:var(--g400);margin-top:2px">Add money from wallet to savings</p></div><button onclick="closeM('m-sv-deposit')" style="background:var(--g100);border:none;width:30px;height:30px;border-radius:50%;cursor:pointer;color:var(--g600);flex-shrink:0">&#10005;</button></div><div id="sv-dep-plan-info" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:11px;padding:12px;margin-bottom:14px;font-size:13px;color:var(--green-d)">Loading plan...</div><div style="background:linear-gradient(135deg,#0f172a,#1e3a5f);border-radius:13px;padding:14px 16px;margin-bottom:14px"><div style="font-size:10px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Wallet Balance</div><div style="font-size:22px;font-weight:800;color:#fff" id="sv-dep-wallet-bal">NGN 0.00</div></div><div style="margin-bottom:12px"><label style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:5px;display:block">Amount to Add (NGN)</label><input class="inp" type="number" id="sv-dep-amount" placeholder="Enter amount"/></div><div style="margin-bottom:8px"><label style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:7px;display:block">Transaction PIN *</label><div style="display:flex;gap:10px;justify-content:center"><input class="pbox" type="password" maxlength="1" id="sv-dep-p1" oninput="pn('sv-dep-p1','sv-dep-p2')"/><input class="pbox" type="password" maxlength="1" id="sv-dep-p2" oninput="pn('sv-dep-p2','sv-dep-p3')"/><input class="pbox" type="password" maxlength="1" id="sv-dep-p3" oninput="pn('sv-dep-p3','sv-dep-p4')"/><input class="pbox" type="password" maxlength="1" id="sv-dep-p4"/></div></div><input type="hidden" id="sv-dep-plan-id"/><button onclick="submitSvDeposit()" class="btn-g" style="width:100%;padding:14px;border-radius:11px;font-size:15px;font-weight:700;margin-top:12px;background:linear-gradient(135deg,#059669,#047857)">Add to Savings</button></div></div>
+</div></div>====================================== --><div class="modal" id="m-sv-new"><div class="mbox" style="max-height:92vh;overflow-y:auto"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;position:sticky;top:0;background:#fff;padding-bottom:10px;border-bottom:1px solid #f1f5f9;z-index:1"><div><h3 style="font-size:17px;font-weight:700">&#128184; New Savings Plan</h3><p style="font-size:11px;color:var(--g400);margin-top:2px">Choose a savings type to get started</p></div><button onclick="closeM('m-sv-new')" style="background:var(--g100);border:none;width:30px;height:30px;border-radius:50%;cursor:pointer;color:var(--g600);flex-shrink:0">&#10005;</button></div><div id="sv-type-picker" style="display:flex;flex-direction:column;gap:10px;margin-bottom:18px"><button class="sv-type-btn" onclick="openSavingsType('fixed')"><div class="sv-type-ico">&#128274;</div><div><div style="font-size:14px;font-weight:700;color:var(--g700)">Fixed Savings</div><div style="font-size:11px;color:var(--g400);line-height:1.4;margin-top:2px">Lock money &amp; earn interest</div></div></button><button class="sv-type-btn" onclick="openSavingsType('target')"><div class="sv-type-ico">&#127919;</div><div><div style="font-size:14px;font-weight:700;color:var(--g700)">Target Savings</div><div style="font-size:11px;color:var(--g400);line-height:1.4;margin-top:2px">Save towards a goal</div></div></button><button class="sv-type-btn" onclick="openSavingsType('flexible')"><div class="sv-type-ico">&#128260;</div><div><div style="font-size:14px;font-weight:700;color:var(--g700)">Flexible Savings</div><div style="font-size:11px;color:var(--g400);line-height:1.4;margin-top:2px">Deposit anytime, withdraw anytime</div></div></button><button class="sv-type-btn" onclick="openSavingsType('spend-save')"><div class="sv-type-ico">&#128176;</div><div><div style="font-size:14px;font-weight:700;color:var(--g700)">Spend &amp; Save</div><div style="font-size:11px;color:var(--g400);line-height:1.4;margin-top:2px">Auto-save from transactions</div></div></button><button class="sv-type-btn" onclick="openSavingsType('contribution')"><div class="sv-type-ico">&#128197;</div><div><div style="font-size:14px;font-weight:700;color:var(--g700)">Daily/Weekly Contribution</div><div style="font-size:11px;color:var(--g400);line-height:1.4;margin-top:2px">Commit to a schedule &amp; auto-save</div></div></button></div><div id="sv-type-form"></div></div></div><!-- SAVINGS WITHDRAW MODAL --><div class="modal" id="m-sv-withdraw"><div class="mbox" style="max-height:92vh;overflow-y:auto"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;position:sticky;top:0;background:#fff;padding-bottom:10px;border-bottom:1px solid #f1f5f9;z-index:1"><div><h3 style="font-size:17px;font-weight:700">&#8659; Savings Withdrawal</h3><p style="font-size:11px;color:var(--g400);margin-top:2px">Transfer from savings to wallet</p></div><button onclick="closeM('m-sv-withdraw')" style="background:var(--g100);border:none;width:30px;height:30px;border-radius:50%;cursor:pointer;color:var(--g600);flex-shrink:0">&#10005;</button></div><div style="background:linear-gradient(135deg,#064e3b,#065f46);border-radius:13px;padding:14px 16px;margin-bottom:16px"><div style="font-size:10px;color:rgba(167,243,208,.7);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Savings Balance</div><div style="font-size:26px;font-weight:800;color:#fff" id="sv-wd-bal-display">NGN 0.00</div></div><div style="margin-bottom:12px"><label style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:5px;display:block">Select Plan to Withdraw From</label><select class="inp" id="sv-wd-plan-sel"><option value="">-- Select plan --</option></select></div><div style="margin-bottom:12px"><label style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:5px;display:block">Amount (NGN)</label><input class="inp" type="number" id="sv-wd-amount" placeholder="Enter amount"/></div><div style="margin-bottom:8px"><label style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:7px;display:block">Transaction PIN *</label><div style="display:flex;gap:10px;justify-content:center"><input class="pbox" type="password" maxlength="1" id="sv-wd-p1" oninput="pn('sv-wd-p1','sv-wd-p2')"/><input class="pbox" type="password" maxlength="1" id="sv-wd-p2" oninput="pn('sv-wd-p2','sv-wd-p3')"/><input class="pbox" type="password" maxlength="1" id="sv-wd-p3" oninput="pn('sv-wd-p3','sv-wd-p4')"/><input class="pbox" type="password" maxlength="1" id="sv-wd-p4"/></div></div><button onclick="submitSvWithdrawal()" class="btn-g" style="width:100%;padding:14px;border-radius:11px;font-size:15px;font-weight:700;margin-top:12px;background:linear-gradient(135deg,#059669,#047857)">Transfer to Wallet</button></div></div><!-- SAVINGS DEPOSIT MODAL --><div class="modal" id="m-sv-deposit"><div class="mbox" style="max-height:92vh;overflow-y:auto"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;position:sticky;top:0;background:#fff;padding-bottom:10px;border-bottom:1px solid #f1f5f9;z-index:1"><div><h3 style="font-size:17px;font-weight:700">&#128176; Top-Up Savings</h3><p style="font-size:11px;color:var(--g400);margin-top:2px">Add money from wallet to savings</p></div><button onclick="closeM('m-sv-deposit')" style="background:var(--g100);border:none;width:30px;height:30px;border-radius:50%;cursor:pointer;color:var(--g600);flex-shrink:0">&#10005;</button></div><div id="sv-dep-plan-info" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:11px;padding:12px;margin-bottom:14px;font-size:13px;color:var(--green-d)">Loading plan...</div><div style="background:linear-gradient(135deg,#0f172a,#1e3a5f);border-radius:13px;padding:14px 16px;margin-bottom:14px"><div style="font-size:10px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Wallet Balance</div><div style="font-size:22px;font-weight:800;color:#fff" id="sv-dep-wallet-bal">NGN 0.00</div></div><div style="margin-bottom:12px"><label style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:5px;display:block">Amount to Add (NGN)</label><input class="inp" type="number" id="sv-dep-amount" placeholder="Enter amount"/></div><div style="margin-bottom:8px"><label style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:7px;display:block">Transaction PIN *</label><div style="display:flex;gap:10px;justify-content:center"><input class="pbox" type="password" maxlength="1" id="sv-dep-p1" oninput="pn('sv-dep-p1','sv-dep-p2')"/><input class="pbox" type="password" maxlength="1" id="sv-dep-p2" oninput="pn('sv-dep-p2','sv-dep-p3')"/><input class="pbox" type="password" maxlength="1" id="sv-dep-p3" oninput="pn('sv-dep-p3','sv-dep-p4')"/><input class="pbox" type="password" maxlength="1" id="sv-dep-p4"/></div></div><input type="hidden" id="sv-dep-plan-id"/><button onclick="submitSvDeposit()" class="btn-g" style="width:100%;padding:14px;border-radius:11px;font-size:15px;font-weight:700;margin-top:12px;background:linear-gradient(135deg,#059669,#047857)">Add to Savings</button></div></div><!-- CONTRIBUTION PLAN DETAIL MODAL --><div class="modal" id="m-contrib-detail"><div class="mbox" style="max-height:94vh;overflow-y:auto;padding:0;border-radius:24px 24px 0 0" id="contrib-detail-body"></div></div>
 <!-- RECEIPT MODAL --><div class="modal" id="m-receipt"><div class="mbox" style="max-height:92vh;overflow-y:auto"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px"><div style="font-size:16px;font-weight:800">Transaction Receipt</div><button onclick="closeM('m-receipt')" style="background:var(--g100);border:none;width:30px;height:30px;border-radius:50%;cursor:pointer;color:var(--g600)">&#10005;</button></div><div id="receipt-content" style="background:#fff;border-radius:16px;overflow:hidden"><!-- Filled by JS --></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px"><button onclick="shareReceipt('share')" style="display:flex;align-items:center;justify-content:center;gap:7px;padding:13px;background:#dcfce7;border:1px solid #86efac;border-radius:11px;color:#15803d;font-size:13px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif"><svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
   Share as Image
   </button><button onclick="shareReceipt('pdf-share')" style="display:flex;align-items:center;justify-content:center;gap:7px;padding:13px;background:#dbeafe;border:1px solid #93c5fd;border-radius:11px;color:#1d4ed8;font-size:13px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif"><svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -10944,22 +10927,22 @@ cont.innerHTML=plans.map(p=>{
 const pct=Math.min(100,Math.round(((p.installmentsPaid||0)/(p.totalInstallments||1))*100));
 const statusColor=p.status==='active'?'#059669':p.status==='completed'?'#1d4ed8':'#dc2626';
 const statusBg=p.status==='active'?'#dcfce7':p.status==='completed'?'#dbeafe':'#fee2e2';
-return`<div class="card" style="padding:15px;margin-bottom:10px">
+return`<div class="card" style="padding:15px;margin-bottom:10px;cursor:pointer" onclick="openContribDetail('${p.id}')">
 <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-<div><div style="font-weight:700;font-size:14px">${p.type==='daily'?'📅 Daily':p.type==='weekly'?'📆 Weekly':'🗓️ Monthly'} Contribution</div><div style="font-size:11px;color:var(--g400)">NGN ${fmt(p.amount)} per ${p.type==='daily'?'day':p.type==='weekly'?'week':'month'} &middot; ${p.durationMonths} month(s)</div></div>
+<div><div style="font-weight:700;font-size:14px">${p.name?p.name:(p.type==='daily'?'📅 Daily':p.type==='weekly'?'📆 Weekly':'🗓️ Monthly')+' Contribution'}</div><div style="font-size:11px;color:var(--g400)">NGN ${fmt(p.amount)} per ${p.type==='daily'?'day':p.type==='weekly'?'week':'month'} &middot; ${p.durationMonths} month(s)</div></div>
 <span style="font-size:10px;font-weight:700;padding:4px 9px;border-radius:50px;background:${statusBg};color:${statusColor}">${(p.status||'').toUpperCase()}</span>
 </div>
 ${p.status==='active'?`
 <div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:11px;color:var(--g500);margin-bottom:4px"><span>${p.installmentsPaid||0}/${p.totalInstallments} installments</span><span style="font-weight:700;color:var(--green-d)">${pct}%</span></div><div style="height:7px;background:#f1f5f9;border-radius:50px;overflow:hidden"><div style="height:100%;background:linear-gradient(90deg,#059669,#10b981);border-radius:50px;width:${pct}%"></div></div></div>
 <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:var(--g500)">Contributed So Far</span><strong>NGN ${fmt(p.amountContributed||0)}</strong></div>
-<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:var(--g500)">Interest Credited So Far</span><strong style="color:#15803d">NGN ${fmt((p.interestPayments||[]).reduce((s,x)=>s+(x.amount||0),0))}</strong></div>
+<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:var(--g500)">Completion Fee (at maturity)</span><strong style="color:#dc2626">-NGN ${fmt(p.completionFee||0)}</strong></div>
 <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:var(--g500)">Expected Payout</span><strong style="color:#15803d">NGN ${fmt(p.expectedPayout||0)}</strong></div>
 <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:10px"><span style="color:var(--g500)">Maturity Date</span><strong>${p.maturityDate||'—'}</strong></div>
 ${p.missedDeductions>0?`<div style="background:#fef3c7;border-radius:8px;padding:8px;margin-bottom:10px;font-size:11px;color:#92400e">⚠️ ${p.missedDeductions} missed deduction(s) — fund your wallet, it'll retry automatically.</div>`:''}
-<button onclick="requestContributionEarlyWithdrawal('${p.id}')" style="width:100%;padding:9px;background:#fee2e2;border:1px solid #fca5a5;color:#dc2626;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">Withdraw Early (Penalty Applies)</button>`:
+<button onclick="event.stopPropagation();requestContributionEarlyWithdrawal('${p.id}')" style="width:100%;padding:9px;background:#fee2e2;border:1px solid #fca5a5;color:#dc2626;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">Withdraw Early (Penalty Applies)</button>`:
 p.status==='completed'?`
 <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:var(--g500)">Principal</span><strong>NGN ${fmt(p.finalPrincipal||0)}</strong></div>
-<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:var(--g500)">Interest Earned</span><strong style="color:#15803d">NGN ${fmt(p.finalInterest||0)}</strong></div>
+<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:var(--g500)">Completion Fee</span><strong style="color:#dc2626">-NGN ${fmt(p.finalFee||0)}</strong></div>
 <div style="display:flex;justify-content:space-between;font-size:13px;border-top:1px solid #f1f5f9;padding-top:8px;margin-top:4px"><span style="font-weight:600">Total Paid Out</span><strong>NGN ${fmt(p.finalPayout||0)}</strong></div>`:
 p.status==='cancelled'?`
 <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:var(--g500)">Contributed</span><strong>NGN ${fmt(p.finalPrincipal||0)}</strong></div>
@@ -10971,7 +10954,7 @@ p.status==='cancelled'?`
 }
 function requestContributionEarlyWithdrawal(planId){
 customConfirm(
-'Withdraw this contribution plan early?<br/><br/>You\'ll receive what you\'ve contributed so far, minus an early withdrawal penalty — <strong>no further interest will be paid</strong>. This cannot be undone.',
+'Withdraw this contribution plan early?<br/><br/>You\'ll receive what you\'ve contributed so far, minus an early withdrawal penalty — <strong>the completion fee only applies if your plan matures</strong>, so it will not be charged here. This cannot be undone.',
 async()=>{
 await executeContributionEarlyWithdrawal(planId);
 },
@@ -11007,8 +10990,154 @@ UD=(await db.collection('users').doc(CU.uid).get()).data();
 const balEl=document.getElementById('d-bal');
 if(balEl)balEl.innerHTML=bHid?fmtCsym()+'****':fmtC(UD.balance||0);
 toast('NGN '+fmt(payout)+' credited to your wallet (NGN '+fmt(penalty)+' penalty applied).');
+closeContribDetail();
 loadSvContributionsTab();
 }catch(e){toast('Error: '+(e.message||'Could not process withdrawal.'));}
+}
+// ============================================================
+// CONTRIBUTION PLAN DETAIL VIEW (hero card + activity feed)
+// ============================================================
+let _contribCountdownTimer=null;
+async function openContribDetail(planId){
+if(!CU)return;
+const bodyEl=document.getElementById('contrib-detail-body');
+bodyEl.innerHTML='<div style="padding:70px 20px;text-align:center;color:var(--g400)"><div style="font-size:30px;margin-bottom:8px">⏳</div>Loading plan...</div>';
+openM('m-contrib-detail');
+try{
+const snap=await db.collection('contributions').doc(planId).get();
+if(!snap.exists){toast('Plan not found');closeM('m-contrib-detail');return;}
+const p={id:snap.id,...snap.data()};
+window._contribDetailPlan=p;
+renderContribDetailBody(p);
+loadContribActivity(planId,false);
+}catch(e){bodyEl.innerHTML='<div style="padding:30px;text-align:center;color:#dc2626">Error: '+e.message+'</div>';}
+}
+function closeContribDetail(){
+closeM('m-contrib-detail');
+if(_contribCountdownTimer){clearInterval(_contribCountdownTimer);_contribCountdownTimer=null;}
+}
+function renderContribDetailBody(p){
+const body=document.getElementById('contrib-detail-body');
+if(!body)return;
+const planName=p.name||((p.type==='daily'?'Daily':p.type==='weekly'?'Weekly':'Monthly')+' Contribution');
+const isActive=p.status==='active';
+const fee=isActive?(p.completionFee||0):(p.finalFee||0);
+const payout=isActive?(p.expectedPayout||0):(p.finalPayout||0);
+const bigAmt=isActive?(p.amountContributed||0):(p.finalPayout!=null?p.finalPayout:(p.amountContributed||0));
+body.innerHTML=`
+<div style="background:linear-gradient(135deg,#1e3a8a 0%,#1e40af 55%,#0f172a 100%);border-radius:24px 24px 0 0;padding:22px 18px 18px;color:#fff;position:relative;overflow:hidden">
+<div style="position:absolute;top:-40px;right:-40px;width:140px;height:140px;background:rgba(255,255,255,.06);border-radius:50%"></div>
+<div style="position:absolute;bottom:-30px;left:-20px;width:100px;height:100px;background:rgba(255,255,255,.04);border-radius:50%"></div>
+<button onclick="closeContribDetail()" style="position:absolute;top:16px;right:16px;width:32px;height:32px;background:rgba(255,255,255,.18);border:none;border-radius:50%;color:#fff;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:1">&#10005;</button>
+<div style="font-size:13px;color:rgba(255,255,255,.75);font-weight:500;margin-bottom:6px;position:relative;z-index:1;padding-right:40px">${planName}</div>
+<div style="font-size:32px;font-weight:800;letter-spacing:-.02em;position:relative;z-index:1">NGN ${fmt(bigAmt)}</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:16px 0 14px;position:relative;z-index:1">
+<div style="background:rgba(255,255,255,.12);border-radius:10px;padding:10px 12px"><div style="font-size:10px;color:rgba(255,255,255,.65);margin-bottom:2px">${isActive?'Completion Fee':'Fee Charged'}</div><div style="font-size:14px;font-weight:700;color:#fca5a5">NGN ${fmt(fee)}</div></div>
+<div style="background:rgba(255,255,255,.12);border-radius:10px;padding:10px 12px"><div style="font-size:10px;color:rgba(255,255,255,.65);margin-bottom:2px">${isActive?'Expected Payout':'Amount Paid Out'}</div><div style="font-size:14px;font-weight:700;color:#86efac">NGN ${fmt(payout)}</div></div>
+</div>
+${isActive?`<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;position:relative;z-index:1">
+<button onclick="toast('Installments are auto-deducted on schedule. Manual top-up isn\\'t available for Contribution plans.')" style="padding:11px 4px;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">&#43; Top up</button>
+<button onclick="requestContributionEarlyWithdrawal('${p.id}')" style="padding:11px 4px;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">&#8722; Withdraw</button>
+<button onclick="openContribManageInfo('${p.id}')" style="padding:11px 4px;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">&#9881; Manage</button>
+</div>`:`<div style="font-size:12px;color:rgba(255,255,255,.7);position:relative;z-index:1">Plan ${p.status}</div>`}
+</div>
+${isActive?`<div style="padding:13px 18px;background:#fff;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f1f5f9">
+<span style="font-size:12.5px;color:var(--g500);font-weight:600">Next Contribution</span>
+<span id="contrib-countdown" style="font-family:'Inter',monospace;font-weight:800;font-size:13px;color:var(--black);background:#f1f5f9;padding:5px 10px;border-radius:8px">--H : --M : --S</span>
+</div>`:''}
+<div style="padding:16px 18px 26px;background:#f8fafc">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+<span style="font-size:12px;font-weight:800;color:var(--g500);text-transform:uppercase;letter-spacing:.4px">Activity</span>
+<a href="javascript:void(0)" onclick="loadContribActivity('${p.id}',true)" style="font-size:12.5px;color:#2563eb;font-weight:700;text-decoration:none">View All</a>
+</div>
+<div id="contrib-activity-list" style="background:#fff;border-radius:14px;border:1px solid #eef0f3;overflow:hidden"><div style="padding:24px;text-align:center;color:var(--g400);font-size:12px">Loading...</div></div>
+</div>`;
+if(isActive)startContribCountdown(p);
+}
+function startContribCountdown(p){
+if(_contribCountdownTimer){clearInterval(_contribCountdownTimer);_contribCountdownTimer=null;}
+const sch=p.repaymentSchedule||[];
+const next=[...sch].filter(s=>!s.paid).sort((a,b)=>a.dueDate<b.dueDate?-1:(a.dueDate>b.dueDate?1:0))[0];
+const el=document.getElementById('contrib-countdown');
+if(!next){if(el)el.textContent='All installments paid';return;}
+const target=new Date(next.dueDate+'T23:59:59');
+function tick(){
+const el2=document.getElementById('contrib-countdown');
+if(!el2){clearInterval(_contribCountdownTimer);_contribCountdownTimer=null;return;}
+let diff=target-new Date();
+if(diff<0)diff=0;
+const h=Math.floor(diff/3600000);diff-=h*3600000;
+const m=Math.floor(diff/60000);diff-=m*60000;
+const s=Math.floor(diff/1000);
+el2.textContent=String(h).padStart(2,'0')+'H : '+String(m).padStart(2,'0')+'M : '+String(s).padStart(2,'0')+'S';
+}
+tick();
+_contribCountdownTimer=setInterval(tick,1000);
+}
+async function loadContribActivity(planId,viewAll){
+const el=document.getElementById('contrib-activity-list');
+if(!el)return;
+el.innerHTML='<div style="padding:24px;text-align:center;color:var(--g400);font-size:12px">Loading...</div>';
+try{
+const snap=await db.collection('transactions').where('contributionId','==',planId).get();
+let txs=snap.docs.map(d=>d.data()).sort((a,b)=>{
+const ta=a.createdAt?.toDate?a.createdAt.toDate():new Date(a.createdAt||0);
+const tb=b.createdAt?.toDate?b.createdAt.toDate():new Date(b.createdAt||0);
+return tb-ta;
+});
+if(!viewAll)txs=txs.slice(0,5);
+if(!txs.length){el.innerHTML='<div style="padding:24px;text-align:center;color:var(--g400);font-size:12px">No activity yet</div>';return;}
+el.innerHTML=txs.map(t=>contribActivityRow(t)).join('');
+}catch(e){el.innerHTML='<div style="padding:20px;text-align:center;color:#dc2626;font-size:12px">Error loading activity</div>';}
+}
+function contribActivityRow(t){
+const isPayout=t.type==='contribution_payout';
+const isEarlyWd=t.type==='contribution_early_withdrawal';
+const label=isPayout?'Contribution Payout':isEarlyWd?'Early Withdrawal':'Contribution';
+const d=t.createdAt?.toDate?t.createdAt.toDate():new Date(t.createdAt||Date.now());
+const now=new Date();
+const isToday=d.toDateString()===now.toDateString();
+const dateStr=(isToday?'Today, ':d.toLocaleDateString('en-NG',{day:'2-digit',month:'short',year:'numeric'})+', ')+d.toLocaleTimeString('en-NG',{hour:'numeric',minute:'2-digit',hour12:true});
+const badge=(!isPayout&&!isEarlyWd)?'<span style="display:inline-block;margin-top:4px;font-size:10px;font-weight:700;color:#1d4ed8;background:#dbeafe;padding:2px 8px;border-radius:50px">Auto-save</span>':`<span style="display:inline-block;margin-top:4px;font-size:10px;font-weight:700;color:${isPayout?'#15803d':'#dc2626'};background:${isPayout?'#dcfce7':'#fee2e2'};padding:2px 8px;border-radius:50px">${isPayout?'Matured':'Withdrawn'}</span>`;
+return`<div style="display:flex;align-items:center;gap:12px;padding:13px 14px;border-bottom:1px solid #f8fafc">
+<div style="width:38px;height:38px;border-radius:10px;background:#f0fdf4;border:1.5px solid #bbf7d0;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#15803d">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+</div>
+<div style="flex:1;min-width:0">
+<div style="font-weight:700;font-size:13.5px;color:var(--black)">${label}</div>
+<div style="font-size:11px;color:var(--g400);margin-top:1px">${dateStr}</div>
+</div>
+<div style="text-align:right;flex-shrink:0">
+<div style="font-weight:800;font-size:13.5px;color:#16a34a">+NGN ${fmt(t.amount)}</div>
+${badge}
+</div>
+</div>`;
+}
+function openContribManageInfo(planId){
+const p=window._contribDetailPlan;
+if(!p||p.id!==planId)return;
+const overlay=document.createElement('div');
+overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99998;display:flex;align-items:center;justify-content:center;padding:20px';
+const typeLabel=p.type==='daily'?'Daily':p.type==='weekly'?'Weekly':'Monthly';
+overlay.innerHTML=`<div style="background:#fff;border-radius:16px;padding:20px;max-width:340px;width:100%;max-height:80vh;overflow-y:auto">
+<div style="font-size:15px;font-weight:700;color:var(--black);margin-bottom:14px">Manage Plan</div>
+<div style="display:flex;justify-content:space-between;font-size:13px;padding:8px 0;border-bottom:1px solid #f8fafc"><span style="color:var(--g500)">Frequency</span><strong>${typeLabel}</strong></div>
+<div style="display:flex;justify-content:space-between;font-size:13px;padding:8px 0;border-bottom:1px solid #f8fafc"><span style="color:var(--g500)">Amount per ${p.type==='daily'?'Day':p.type==='weekly'?'Week':'Month'}</span><strong>NGN ${fmt(p.amount)}</strong></div>
+<div style="display:flex;justify-content:space-between;font-size:13px;padding:8px 0;border-bottom:1px solid #f8fafc"><span style="color:var(--g500)">Installments</span><strong>${p.installmentsPaid||0}/${p.totalInstallments}</strong></div>
+<div style="display:flex;justify-content:space-between;font-size:13px;padding:8px 0;border-bottom:1px solid #f8fafc"><span style="color:var(--g500)">Duration</span><strong>${p.durationMonths} month(s)</strong></div>
+<div style="display:flex;justify-content:space-between;font-size:13px;padding:8px 0;border-bottom:1px solid #f8fafc"><span style="color:var(--g500)">Maturity Date</span><strong>${p.maturityDate||'—'}</strong></div>
+<div style="display:flex;justify-content:space-between;font-size:13px;padding:8px 0;border-bottom:1px solid #f8fafc"><span style="color:var(--g500)">Completion Fee</span><strong style="color:#dc2626">-NGN ${fmt(p.completionFee||0)}</strong></div>
+<div style="display:flex;justify-content:space-between;font-size:13px;padding:8px 0"><span style="color:var(--g500)">Expected Payout</span><strong style="color:#15803d">NGN ${fmt(p.expectedPayout||0)}</strong></div>
+<div style="display:flex;gap:10px;margin-top:16px">
+<button id="cmi-close-btn" style="flex:1;padding:12px;border-radius:10px;background:var(--g100);border:none;font-weight:700;font-size:13px;cursor:pointer;font-family:'Inter',sans-serif;color:var(--g700)">Close</button>
+<button id="cmi-withdraw-btn" style="flex:1;padding:12px;border-radius:10px;background:#fee2e2;border:1px solid #fca5a5;font-weight:700;font-size:13px;cursor:pointer;font-family:'Inter',sans-serif;color:#dc2626">Withdraw Early</button>
+</div>
+</div>`;
+document.body.appendChild(overlay);
+const cleanup=()=>overlay.remove();
+overlay.querySelector('#cmi-close-btn').onclick=cleanup;
+overlay.addEventListener('click',e=>{if(e.target===overlay)cleanup();});
+overlay.querySelector('#cmi-withdraw-btn').onclick=()=>{cleanup();requestContributionEarlyWithdrawal(planId);};
 }
 async function loadSvHistory(){
   const cont=document.getElementById('sv-content');
@@ -11349,8 +11478,9 @@ function openSavingsType(type){
       if(lbl)lbl.textContent=this.value==='percent'?'Percentage per transaction (%)':'Fixed amount per transaction (NGN)';
     }));
   } else if(type==='contribution'){
-    el.innerHTML=`<div style="background:#eff6ff;border:1.5px solid #93c5fd;border-radius:11px;padding:13px;margin-bottom:14px"><div style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px">📅 Daily/Weekly/Monthly Contribution</div><p style="font-size:12px;color:#2563eb;line-height:1.7">Commit to contributing a fixed amount on a schedule. Your first installment is deducted now; the rest happen automatically. Earn interest monthly while your plan is active.</p></div>
+    el.innerHTML=`<div style="background:#eff6ff;border:1.5px solid #93c5fd;border-radius:11px;padding:13px;margin-bottom:14px"><div style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px">📅 Daily/Weekly/Monthly Contribution</div><p style="font-size:12px;color:#2563eb;line-height:1.7">Commit to contributing a fixed amount on a schedule. Your first installment is deducted now; the rest happen automatically. A one-time completion fee (equal to one installment) is deducted when your plan matures — no interest is paid on contributions.</p></div>
     <div id="contrib-config-note" style="display:none;background:#fef3c7;border:1px solid #fde68a;border-radius:10px;padding:11px;margin-bottom:12px;font-size:12px;color:#92400e"></div>
+    <div style="margin-bottom:11px"><label style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:5px;display:block">Plan Name (optional)</label><input class="inp" id="contrib-name" placeholder="e.g. Pay My Rent"/></div>
     <div style="margin-bottom:12px"><label style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:8px;display:block">Contribution Frequency</label><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px"><label style="display:flex;align-items:center;gap:8px;padding:11px;border:1.5px solid var(--green);border-radius:10px;cursor:pointer;background:#f0fdf4;font-size:13px;font-weight:600"><input type="radio" name="contrib-type" value="daily" checked style="accent-color:var(--green)" onchange="updateContribPreview()"/> Daily</label><label style="display:flex;align-items:center;gap:8px;padding:11px;border:1.5px solid var(--g200);border-radius:10px;cursor:pointer;font-size:13px;font-weight:600"><input type="radio" name="contrib-type" value="weekly" style="accent-color:var(--green)" onchange="updateContribPreview()"/> Weekly</label><label style="display:flex;align-items:center;gap:8px;padding:11px;border:1.5px solid var(--g200);border-radius:10px;cursor:pointer;font-size:13px;font-weight:600"><input type="radio" name="contrib-type" value="monthly" style="accent-color:var(--green)" onchange="updateContribPreview()"/> Monthly</label></div></div>
     <div style="margin-bottom:11px"><label style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:5px;display:block" id="contrib-amt-label">Amount per Day (NGN) *</label><input class="inp" type="number" id="contrib-amount" placeholder="e.g. 500" oninput="updateContribPreview()"/></div>
     <div style="margin-bottom:12px"><label style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:5px;display:block">Duration *</label><select class="inp" id="contrib-duration" onchange="updateContribPreview()"><option value="1">1 Month</option><option value="2">2 Months</option><option value="3">3 Months</option><option value="6">6 Months</option><option value="12">12 Months</option></select></div>
@@ -11373,7 +11503,7 @@ function openSavingsType(type){
 // ============================================================
 window._contribCfg=null;
 async function loadContributionConfigForUser(){
-const defaults={dailyEnabled:true,weeklyEnabled:true,monthlyEnabled:true,minAmount:100,maxAmount:100000,availableDurations:[1,2,3,6,12],dailyRates:{1:3,2:5,3:6,6:9,12:14},weeklyRates:{1:3,2:5,3:6,6:9,12:14},monthlyRates:{1:3,2:5,3:6,6:9,12:14}};
+const defaults={dailyEnabled:true,weeklyEnabled:true,monthlyEnabled:true,minAmount:100,maxAmount:100000,availableDurations:[1,2,3,6,12],feePercent:80};
 try{
 const snap=await db.collection('settings').doc('contributions').get();
 window._contribCfg=snap.exists?Object.assign({},defaults,snap.data()):defaults;
@@ -11417,16 +11547,14 @@ const prev=document.getElementById('contrib-preview');
 if(!prev)return;
 if(!amt||amt<=0){prev.style.display='none';return;}
 const totalInstallments=type==='daily'?months*30:type==='weekly'?months*4:months;
-const rateTable=type==='daily'?cfg.dailyRates:type==='weekly'?cfg.weeklyRates:cfg.monthlyRates;
-const rate=(rateTable&&rateTable[months]!=null)?rateTable[months]:0;
+const feePct=cfg.feePercent!=null?cfg.feePercent:80;
 const principal=amt*totalInstallments;
-const interest=Math.round(principal*(rate/100)*100)/100;
-const payout=Math.round((principal+interest)*100)/100;
+const completionFee=Math.round(amt*(feePct/100)*100)/100;
+const payout=Math.round((principal-completionFee)*100)/100;
 prev.style.display='block';
 prev.innerHTML=`<div style="display:flex;justify-content:space-between"><span>Total Installments</span><strong>${totalInstallments} (${type})</strong></div>
-<div style="display:flex;justify-content:space-between"><span>Total Principal</span><strong>NGN ${fmt(principal)}</strong></div>
-<div style="display:flex;justify-content:space-between"><span>Interest Rate</span><strong>${rate}% (for full term)</strong></div>
-<div style="display:flex;justify-content:space-between"><span>Expected Interest</span><strong style="color:#15803d">NGN ${fmt(interest)}</strong></div>
+<div style="display:flex;justify-content:space-between"><span>Total Contribution</span><strong>NGN ${fmt(principal)}</strong></div>
+<div style="display:flex;justify-content:space-between"><span>Completion Fee (one installment &times; ${feePct}%)</span><strong style="color:#dc2626">-NGN ${fmt(completionFee)}</strong></div>
 <div style="display:flex;justify-content:space-between;border-top:1px solid rgba(30,58,138,.2);margin-top:6px;padding-top:6px"><span>Expected Payout at Maturity</span><strong style="font-size:14px">NGN ${fmt(payout)}</strong></div>`;
 }
 async function submitCreateContribution(){
@@ -11446,12 +11574,11 @@ if(cfg.minAmount!=null&&amount<cfg.minAmount){toast('Minimum contribution amount
 if(cfg.maxAmount!=null&&amount>cfg.maxAmount){toast('Maximum contribution amount is NGN '+fmt(cfg.maxAmount));return;}
 if((UD?.balance||0)<amount){toast('Insufficient balance for the first installment');return;}
 const totalInstallments=type==='daily'?durationMonths*30:type==='weekly'?durationMonths*4:durationMonths;
-const rateTable=type==='daily'?cfg.dailyRates:type==='weekly'?cfg.weeklyRates:cfg.monthlyRates;
-const rate=(rateTable&&rateTable[durationMonths]!=null)?rateTable[durationMonths]:0;
+const feePct=cfg.feePercent!=null?cfg.feePercent:80;
 const principal=amount*totalInstallments;
-const expectedInterest=Math.round(principal*(rate/100)*100)/100;
-const expectedPayout=Math.round((principal+expectedInterest)*100)/100;
-const monthlyInterestAmount=Math.round((expectedInterest/durationMonths)*100)/100;
+const completionFee=Math.round(amount*(feePct/100)*100)/100;
+const expectedPayout=Math.round((principal-completionFee)*100)/100;
+const planName=(document.getElementById('contrib-name')?.value||'').trim()||((type==='daily'?'Daily':type==='weekly'?'Weekly':'Monthly')+' Contribution');
 const btn=document.getElementById('contrib-submit-btn');
 if(btn){btn.disabled=true;btn.textContent='Starting plan...';}
 try{
@@ -11473,9 +11600,10 @@ if(bal<amount)throw new Error('Insufficient balance for the first installment');
 t.update(uRef,{balance:firebase.firestore.FieldValue.increment(-amount)});
 t.set(planRef,{
 userId:CU.uid,userName:UD?.name||'',userEmail:CU.email||'',
-type,amount,durationMonths,interestRate:rate,
+name:planName,
+type,amount,durationMonths,feePercent:feePct,
 principal,totalInstallments,installmentsPaid:1,amountContributed:amount,
-expectedInterest,expectedPayout,monthlyInterestAmount,interestPayments:[],
+completionFee,expectedPayout,
 maturityDate,missedDeductions:0,
 repaymentSchedule:schedule,lastDeductionDate:todayStr,
 status:'active',
@@ -11913,7 +12041,7 @@ const active=plans.filter(p=>p.status==='active');
 const completed=plans.filter(p=>p.status==='completed');
 const cancelled=plans.filter(p=>p.status==='cancelled');
 const totalContributed=plans.reduce((s,p)=>s+(p.amountContributed||0),0);
-const interestPaid=completed.reduce((s,p)=>s+(p.finalInterest||0),0);
+const feesCollected=completed.reduce((s,p)=>s+(p.finalFee||0),0);
 const upcoming=active.filter(p=>{
 const days=(new Date(p.maturityDate)-new Date())/(1000*60*60*24);
 return days>=0&&days<=7;
@@ -11925,7 +12053,7 @@ el.innerHTML=`
 <div class="card" style="padding:14px"><div style="font-size:10px;color:var(--g400);text-transform:uppercase;margin-bottom:4px">Completed Plans</div><div style="font-size:22px;font-weight:800;color:#1d4ed8">${completed.length}</div></div>
 <div class="card" style="padding:14px"><div style="font-size:10px;color:var(--g400);text-transform:uppercase;margin-bottom:4px">Cancelled (Early)</div><div style="font-size:22px;font-weight:800;color:#dc2626">${cancelled.length}</div></div>
 <div class="card" style="padding:14px;grid-column:span 2"><div style="font-size:10px;color:var(--g400);text-transform:uppercase;margin-bottom:4px">Total Contributed (all plans)</div><div style="font-size:24px;font-weight:800">NGN ${fmt(totalContributed)}</div></div>
-<div class="card" style="padding:14px;grid-column:span 2"><div style="font-size:10px;color:var(--g400);text-transform:uppercase;margin-bottom:4px">Interest Paid Out (completed plans)</div><div style="font-size:24px;font-weight:800;color:#15803d">NGN ${fmt(interestPaid)}</div></div>
+<div class="card" style="padding:14px;grid-column:span 2"><div style="font-size:10px;color:var(--g400);text-transform:uppercase;margin-bottom:4px">Completion Fees Collected</div><div style="font-size:24px;font-weight:800;color:#15803d">NGN ${fmt(feesCollected)}</div></div>
 </div>
 <div class="card" style="padding:16px;margin-bottom:16px">
 <div style="font-size:13px;font-weight:700;margin-bottom:10px">Plans by Type &amp; Status</div>
@@ -11988,14 +12116,12 @@ const monthlyEnabled=cfg.monthlyEnabled!==false;
 const minAmount=cfg.minAmount!=null?cfg.minAmount:100;
 const maxAmount=cfg.maxAmount!=null?cfg.maxAmount:100000;
 const durations=cfg.availableDurations||[1,2,3,6,12];
-const dailyRates=cfg.dailyRates||{1:3,2:5,3:6,6:9,12:14};
-const weeklyRates=cfg.weeklyRates||{1:3,2:5,3:6,6:9,12:14};
-const monthlyRates=cfg.monthlyRates||{1:3,2:5,3:6,6:9,12:14};
+const feePercent=cfg.feePercent!=null?cfg.feePercent:80;
 const earlyEnabled=cfg.earlyWithdrawalEnabled!==false;
 const earlyPenalty=cfg.earlyWithdrawalPenaltyPct!=null?cfg.earlyWithdrawalPenaltyPct:5;
 el.innerHTML=`
 <div class="card" style="padding:14px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:10px">
-<div><div style="font-size:13px;font-weight:700">Automatic Deductions &amp; Interest</div><div style="font-size:11px;color:var(--g400)">Runs automatically once per day whenever an admin opens this panel.</div></div>
+<div><div style="font-size:13px;font-weight:700">Automatic Deductions &amp; Maturity Payouts</div><div style="font-size:11px;color:var(--g400)">Runs automatically once per day whenever an admin opens this panel.</div></div>
 <button onclick="forceContributionDeductions()" style="padding:9px 14px;background:#1d4ed8;border:1px solid #60a5fa;color:#fff;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif;white-space:nowrap;flex-shrink:0">⚡ Force Run</button>
 </div>
 <div class="card" style="padding:18px;margin-bottom:14px">
@@ -12012,15 +12138,17 @@ el.innerHTML=`
 </div>
 </div>
 <div class="card" style="padding:18px;margin-bottom:14px">
-<div style="font-size:14px;font-weight:700;margin-bottom:4px">Available Durations &amp; Interest Rates</div>
-<p style="font-size:11px;color:var(--g400);margin-bottom:14px">Rates are % of total principal for the full term. Changing a rate only affects plans created after you save — existing plans keep the rate they started with.</p>
-<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;font-size:11px;font-weight:700;color:var(--g400);margin-bottom:6px"><div>Duration</div><div>Daily Rate %</div><div>Weekly Rate %</div><div>Monthly Rate %</div></div>
-${[1,2,3,6,12].map(m=>`<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;align-items:center;margin-bottom:8px">
-<label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600"><input type="checkbox" id="contrib-dur-${m}" ${durations.includes(m)?'checked':''} style="accent-color:var(--green)"/> ${m} mo</label>
-<input class="inp" id="contrib-rate-daily-${m}" type="number" step="0.1" value="${dailyRates[m]!=null?dailyRates[m]:0}" style="padding:8px"/>
-<input class="inp" id="contrib-rate-weekly-${m}" type="number" step="0.1" value="${weeklyRates[m]!=null?weeklyRates[m]:0}" style="padding:8px"/>
-<input class="inp" id="contrib-rate-monthly-${m}" type="number" step="0.1" value="${monthlyRates[m]!=null?monthlyRates[m]:0}" style="padding:8px"/>
-</div>`).join('')}
+<div style="font-size:14px;font-weight:700;margin-bottom:4px">Available Durations</div>
+<p style="font-size:11px;color:var(--g400);margin-bottom:14px">Durations users can pick from when starting a plan.</p>
+<div style="display:flex;flex-wrap:wrap;gap:10px">
+${[1,2,3,6,12].map(m=>`<label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:8px 12px;border:1.5px solid var(--g200);border-radius:9px"><input type="checkbox" id="contrib-dur-${m}" ${durations.includes(m)?'checked':''} style="accent-color:var(--green)"/> ${m} mo</label>`).join('')}
+</div>
+</div>
+<div class="card" style="padding:18px;margin-bottom:14px">
+<div style="font-size:14px;font-weight:700;margin-bottom:4px">Completion Fee</div>
+<p style="font-size:11px;color:var(--g400);margin-bottom:12px">No interest is paid on contributions. Instead, a one-time fee equal to this percentage of <strong>one installment amount</strong> is deducted from the total when a plan matures. Example: 80% on a NGN 200/day plan run for 31 days (NGN 6,200 total) deducts a NGN 160 fee, paying out NGN 6,040. Changing this only affects plans created after you save — existing plans keep the fee they started with.</p>
+<label style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:5px;display:block">Completion Fee (% of one installment)</label>
+<input class="inp" id="contrib-fee-percent" type="number" step="0.1" value="${feePercent}"/>
 </div>
 <div class="card" style="padding:18px;margin-bottom:14px">
 <div style="font-size:14px;font-weight:700;margin-bottom:14px">Early Withdrawal</div>
@@ -12038,19 +12166,14 @@ const monthlyEnabled=document.getElementById('contrib-monthly-toggle').classList
 const minAmount=parseFloat(document.getElementById('contrib-min').value)||0;
 const maxAmount=parseFloat(document.getElementById('contrib-max').value)||0;
 const availableDurations=[1,2,3,6,12].filter(m=>document.getElementById('contrib-dur-'+m).checked);
-const dailyRates={},weeklyRates={},monthlyRates={};
-[1,2,3,6,12].forEach(m=>{
-dailyRates[m]=parseFloat(document.getElementById('contrib-rate-daily-'+m).value)||0;
-weeklyRates[m]=parseFloat(document.getElementById('contrib-rate-weekly-'+m).value)||0;
-monthlyRates[m]=parseFloat(document.getElementById('contrib-rate-monthly-'+m).value)||0;
-});
+const feePercent=parseFloat(document.getElementById('contrib-fee-percent').value)||0;
 const earlyWithdrawalEnabled=document.getElementById('contrib-early-toggle').classList.contains('on');
 const earlyWithdrawalPenaltyPct=parseFloat(document.getElementById('contrib-early-penalty').value)||0;
 if(minAmount>maxAmount){toast('Min amount cannot be greater than max amount');return;}
 if(!availableDurations.length){toast('Select at least one duration');return;}
 try{
 await db.collection('settings').doc('contributions').set({
-dailyEnabled,weeklyEnabled,monthlyEnabled,minAmount,maxAmount,availableDurations,dailyRates,weeklyRates,monthlyRates,
+dailyEnabled,weeklyEnabled,monthlyEnabled,minAmount,maxAmount,availableDurations,feePercent,
 earlyWithdrawalEnabled,earlyWithdrawalPenaltyPct,
 updatedAt:firebase.firestore.FieldValue.serverTimestamp()
 },{merge:true});
@@ -12075,7 +12198,7 @@ const statusColor=p.status==='active'?'#059669':p.status==='completed'?'#1d4ed8'
 const statusBg=p.status==='active'?'#dcfce7':p.status==='completed'?'#dbeafe':'#fee2e2';
 return`<div class="card contrib-row" data-name="${(p.userName||'').toLowerCase()}" data-id="${p.id.toLowerCase()}" data-status="${p.status}" style="padding:13px;margin-bottom:8px">
 <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
-<div><strong style="font-size:13px">${p.userName||p.userId}</strong><div style="font-size:11px;color:var(--g400)">${p.type} &middot; NGN ${fmt(p.amount)}/${p.type==='daily'?'day':p.type==='weekly'?'wk':'mo'} &middot; ${p.durationMonths}mo &middot; ${p.interestRate}% rate</div></div>
+<div><strong style="font-size:13px">${p.userName||p.userId}</strong><div style="font-size:11px;color:var(--g400)">${p.type} &middot; NGN ${fmt(p.amount)}/${p.type==='daily'?'day':p.type==='weekly'?'wk':'mo'} &middot; ${p.durationMonths}mo &middot; ${p.feePercent!=null?p.feePercent:80}% fee</div></div>
 <span style="font-size:9px;font-weight:700;padding:3px 8px;border-radius:50px;background:${statusBg};color:${statusColor}">${(p.status||'').toUpperCase()}</span>
 </div>
 <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--g500)"><span>Contributed: NGN ${fmt(p.amountContributed||0)}</span><span>Installments: ${p.installmentsPaid||0}/${p.totalInstallments}</span></div>
