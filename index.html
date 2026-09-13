@@ -206,7 +206,7 @@ body.dark-mode .statc{background:#1e293b!important;}
 @keyframes floatP{0%,100%{transform:translateY(0) scale(1);opacity:.4}50%{transform:translateY(-20px) scale(1.2);opacity:.8}}
 @keyframes onlineDot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(22,163,74,.3)}70%{box-shadow:0 0 0 8px rgba(22,163,74,0)}}
-</style></head><body><!-- ======== PWA INSTALL BANNER ======== -->
+</style></head><body><!-- ======== BOOT LOADER (hides login page flash while auth state resolves) ======== --><div id="boot-loader" style="position:fixed;inset:0;z-index:999999;background:linear-gradient(135deg,#0f172a,#15803d);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;transition:opacity .25s ease"><div style="width:52px;height:52px;border:4px solid rgba(255,255,255,.25);border-top-color:#4ade80;border-radius:50%;animation:bootspin .8s linear infinite"></div><div style="font-size:18px;font-weight:800;color:#fff;letter-spacing:.5px">ZMONIE</div><style>@keyframes bootspin{to{transform:rotate(360deg)}}</style></div><script>function hideBootLoader(){const el=document.getElementById('boot-loader');if(el){el.style.opacity='0';setTimeout(()=>{if(el&&el.parentNode)el.parentNode.removeChild(el);},260);}}setTimeout(hideBootLoader,8000);</script><!-- ======== PWA INSTALL BANNER ======== -->
 <script>window.__pwaPrompt = null;
 window.addEventListener('beforeinstallprompt', function(e) {
 e.preventDefault();
@@ -982,8 +982,8 @@ refreshAllCurrencyDisplays();
 function fdate(ts){if(!ts)return'&mdash;';const d=ts.toDate?ts.toDate():new Date(ts);return d.toLocaleDateString('en-NG',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
 auth.onAuthStateChanged(async u=>{
 loadRecaptchaConfig();
-if(window._isPasswordResetFlow) return;
-if(window._isRegistering) return; // doReg handles navigation and data load itself
+if(window._isPasswordResetFlow){hideBootLoader();return;}
+if(window._isRegistering){hideBootLoader();return;} // doReg handles navigation and data load itself
 var BUILTIN_SUBADMIN={
 'zmonieservice@gmail.com':['users','transactions','funding','withdrawals','wallet',
 'pins','pw-reset','broadcast','promos','fund-accounts','data-plans','recovery',
@@ -1034,6 +1034,7 @@ snap=await ref.get();
 }
 UD=snap.data()||{};
 if(UD.disabled){
+hideBootLoader();
 await auth.signOut();
 toast('This account has been disabled. Contact support if you believe this is a mistake.');
 return;
@@ -1044,27 +1045,27 @@ if(!UD.email&&u.email) UD.email=u.email;
 console.log('[Auth] User loaded - name:',UD.name,'phone:',UD.phone,'hasPhoto:',!!UD.photoURL,'hasPin:',!!UD.pin);
 loadSavedCurrency();
 // Check if super admin
-if(isAdmin(u.email)){showAdminSecurityGate();return;}
+if(isAdmin(u.email)){hideBootLoader();showAdminSecurityGate();return;}
 // Check built-in sub-admin map first
 if(BUILTIN_SUBADMIN.hasOwnProperty(u.email)){
 window._subAdminRolesCache=BUILTIN_SUBADMIN[u.email];
-showAdminSecurityGate();return;
+hideBootLoader();showAdminSecurityGate();return;
 }
 // Check Firestore sub-admins
 try{
 var subSnap=await db.collection('subAdmins').where('email','==',u.email).where('active','==',true).get();
-if(!subSnap.empty){showAdminSecurityGate();return;}
+if(!subSnap.empty){hideBootLoader();showAdminSecurityGate();return;}
 }catch(e2){}
 // Login PIN gate: only for a resumed/persisted session, never right after
 // the person just typed their real password (window._freshManualLogin).
 const skipGate=window._freshManualLogin;
 window._freshManualLogin=false;
 if(!skipGate&&UD.loginPinEnabled&&UD.loginPin){
-showLoginPinGate(u);
+hideBootLoader();showLoginPinGate(u);
 return;
 }
-enterUserDashboard(u);
-}else{CU=null;UD=null;stopIdleTimer();goPg('pg-login');}
+hideBootLoader();enterUserDashboard(u);
+}else{hideBootLoader();CU=null;UD=null;stopIdleTimer();goPg('pg-login');}
 });
 function enterUserDashboard(u){
 goPg('pg-dash');loadDash();startPinApprovalListener(u.uid);
@@ -6672,7 +6673,8 @@ if(!snap.exists)return;
 UD=snap.data();
 const balEl=document.getElementById('d-bal');
 if(balEl)balEl.innerHTML=bHid?fmtCsym()+'****':fmtC(UD.balance||0);
-const cb=document.getElementById('d-cashback');if(cb)cb.textContent='NGN 0.00';
+const cb=document.getElementById('d-cashback');if(cb)cb.innerHTML=fmtC(UD.cashbackEarned||0);
+const rf=document.getElementById('d-refearnings');if(rf)rf.innerHTML=fmtC(UD.referralEarned||0);
 });
 }
 function previewInvImg(inputId,previewId,dropId){
