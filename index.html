@@ -581,7 +581,17 @@ Need help? Chat on WhatsApp
 <!-- ===== ZMONIE USER TAB ===== -->
 <div id="tr-zmonie-panel">
 <div style="background:var(--green-xl);border-radius:12px;padding:12px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:10px;color:var(--g500);font-weight:600">YOUR ACCOUNT NUMBER</div><div style="font-size:18px;font-weight:900;color:var(--green-d);letter-spacing:.05em" id="tr-my-acc">-</div><div style="font-size:11px;color:var(--g500);margin-top:2px" id="tr-my-name">-</div></div><button onclick="copyAccNum()" style="padding:6px 12px;background:var(--green);color:#fff;border:none;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">Copy</button></div>
-<div id="tr-step-1"><div style="margin-bottom:13px"><label style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:6px;display:block">Recipient Account Number</label><input class="inp" id="tr-acc-inp" placeholder="Enter 11-digit account number" type="tel" maxlength="11" oninput="autoLookupTransferUser(this.value)" style="font-size:18px;font-weight:700;letter-spacing:.05em"/></div><div id="tr-user-found" style="display:none;background:#f0fdf4;border:1px solid #86efac;border-radius:11px;padding:12px;margin-bottom:13px"><div style="font-size:12px;color:var(--g500)">Sending to:</div><div style="font-size:15px;font-weight:800;color:var(--green-d);margin-top:2px" id="tr-found-name">-</div></div><div id="tr-user-notfound" style="display:none;background:#fef2f2;border:1px solid #fecaca;border-radius:11px;padding:10px;margin-bottom:13px;font-size:12px;color:#dc2626">Account not found. Check the number and try again.</div><div style="margin-bottom:13px"><label style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:6px;display:block">Amount (NGN)</label><input class="inp" id="tr-amount" placeholder="Enter amount" type="number" min="100" style="font-size:18px;font-weight:700"/></div><div style="margin-bottom:16px"><label style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:6px;display:block">Note (optional)</label><input class="inp" id="tr-note" placeholder="e.g. For lunch, Rent payment..."/></div><button onclick="initiateTransfer()" class="btn-g" style="width:100%;padding:13px;border-radius:11px;font-size:15px">Continue</button></div>
+<div id="tr-step-1"><div style="margin-bottom:13px"><label style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:6px;display:block">Recipient Account Number</label><input class="inp" id="tr-acc-inp" placeholder="Enter 11-digit account number" type="tel" maxlength="11" oninput="autoLookupTransferUser(this.value)" style="font-size:18px;font-weight:700;letter-spacing:.05em"/></div><div id="tr-recents" style="display:none;margin-bottom:13px"><div style="font-size:11px;font-weight:700;color:var(--g500);margin-bottom:7px">RECENT</div><div id="tr-recents-list" style="display:flex;gap:8px;overflow-x:auto;padding-bottom:2px"></div></div><div id="tr-user-found" style="display:none;background:#f0fdf4;border:1px solid #86efac;border-radius:11px;padding:12px;margin-bottom:13px"><div style="font-size:12px;color:var(--g500)">Sending to:</div><div style="font-size:15px;font-weight:800;color:var(--green-d);margin-top:2px" id="tr-found-name">-</div></div><div id="tr-user-notfound" style="display:none;background:#fef2f2;border:1px solid #fecaca;border-radius:11px;padding:10px;margin-bottom:13px;font-size:12px;color:#dc2626">Account not found. Check the number and try again.</div><div style="margin-bottom:9px"><label style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:6px;display:block">Amount (NGN)</label><input class="inp" id="tr-amount" placeholder="Enter amount" type="number" min="100" style="font-size:18px;font-weight:700"/></div><div id="tr-quick-amounts" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:13px">
+<button type="button" class="tr-qa-btn" data-amt="500" onclick="fillTrAmount(500,this)" style="padding:10px 4px;border-radius:10px;border:1.5px solid var(--g200);background:#fff;font-size:13px;font-weight:700;color:var(--g700);cursor:pointer;font-family:Inter,sans-serif">₦500</button>
+<button type="button" class="tr-qa-btn" data-amt="1000" onclick="fillTrAmount(1000,this)" style="padding:10px 4px;border-radius:10px;border:1.5px solid var(--g200);background:#fff;font-size:13px;font-weight:700;color:var(--g700);cursor:pointer;font-family:Inter,sans-serif">₦1,000</button>
+<button type="button" class="tr-qa-btn" data-amt="2000" onclick="fillTrAmount(2000,this)" style="padding:10px 4px;border-radius:10px;border:1.5px solid var(--g200);background:#fff;font-size:13px;font-weight:700;color:var(--g700);cursor:pointer;font-family:Inter,sans-serif">₦2,000</button>
+<button type="button" class="tr-qa-btn" data-amt="5000" onclick="fillTrAmount(5000,this)" style="padding:10px 4px;border-radius:10px;border:1.5px solid var(--g200);background:#fff;font-size:13px;font-weight:700;color:var(--g700);cursor:pointer;font-family:Inter,sans-serif">₦5,000</button>
+<button type="button" class="tr-qa-btn" data-amt="10000" onclick="fillTrAmount(10000,this)" style="padding:10px 4px;border-radius:10px;border:1.5px solid var(--g200);background:#fff;font-size:13px;font-weight:700;color:var(--g700);cursor:pointer;font-family:Inter,sans-serif">₦10,000</button>
+<button type="button" class="tr-qa-btn" data-amt="20000" onclick="fillTrAmount(20000,this)" style="padding:10px 4px;border-radius:10px;border:1.5px solid var(--g200);background:#fff;font-size:13px;font-weight:700;color:var(--g700);cursor:pointer;font-family:Inter,sans-serif">₦20,000</button>
+</div><div style="margin-bottom:9px"><label style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:6px;display:block">Note (optional)</label><input class="inp" id="tr-note" placeholder="e.g. For lunch, Rent payment..."/></div><div style="display:flex;gap:8px;margin-bottom:16px">
+<button type="button" onclick="fillTrNote('Purchase')" style="flex:1;padding:9px 4px;border-radius:10px;border:1.5px solid var(--g200);background:#fff;font-size:12px;font-weight:700;color:var(--g700);cursor:pointer;font-family:Inter,sans-serif">Purchase</button>
+<button type="button" onclick="fillTrNote('Personal')" style="flex:1;padding:9px 4px;border-radius:10px;border:1.5px solid var(--g200);background:#fff;font-size:12px;font-weight:700;color:var(--g700);cursor:pointer;font-family:Inter,sans-serif">Personal</button>
+</div><button onclick="initiateTransfer()" class="btn-g" style="width:100%;padding:13px;border-radius:11px;font-size:15px">Continue</button></div>
 <div id="tr-step-2" style="display:none"><div style="background:#f8fafc;border-radius:12px;padding:14px;margin-bottom:16px"><div style="font-size:12px;color:var(--g500);margin-bottom:8px">Transfer Summary</div><div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f1f5f9"><span style="font-size:13px;color:var(--g500)">To</span><span style="font-size:13px;font-weight:700" id="tr-sum-name">-</span></div><div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f1f5f9"><span style="font-size:13px;color:var(--g500)">Account</span><span style="font-size:13px;font-weight:700" id="tr-sum-acc">-</span></div><div style="display:flex;justify-content:space-between;padding:8px 0"><span style="font-size:13px;color:var(--g500)">Amount</span><span style="font-size:16px;font-weight:900;color:var(--green-d)" id="tr-sum-amt">NGN 0</span></div></div><div style="margin-bottom:16px"><label style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:7px;display:block">Enter your PIN to confirm</label><div style="display:flex;gap:12px;justify-content:center"><input class="pbox" type="password" maxlength="1" id="trp1" oninput="pn('trp1','trp2')"/><input class="pbox" type="password" maxlength="1" id="trp2" oninput="pn('trp2','trp3')"/><input class="pbox" type="password" maxlength="1" id="trp3" oninput="pn('trp3','trp4')"/><input class="pbox" type="password" maxlength="1" id="trp4" oninput="if(this.value.length===1)confirmTransfer()"/></div></div><button onclick="confirmTransfer()" class="btn-g" style="width:100%;padding:13px;border-radius:11px;font-size:15px;margin-bottom:9px">Send Money</button><button onclick="bioVerifyPin('trp',confirmTransfer)" style="display:none;width:100%;padding:12px;border-radius:11px;background:#f0fdf4;border:2px solid #86efac;color:#15803d;font-size:14px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif;margin-bottom:9px" id="bio-trp-btn">🔐 Use Fingerprint / Face ID</button><button onclick="document.getElementById('tr-step-1').style.display='block';document.getElementById('tr-step-2').style.display='none'" style="width:100%;padding:12px;border-radius:11px;background:var(--g100);border:none;font-size:14px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;color:var(--g600)">Back</button></div>
 </div>
 
@@ -3747,6 +3757,33 @@ document.getElementById('tr-found-name').textContent=_transferTarget.name;
 document.getElementById('tr-user-found').style.display='block';
 }catch(e){toast('Error: '+friendlyError(e));}
 }
+function fillTrAmount(v,btn){
+const inp=document.getElementById('tr-amount');if(inp)inp.value=v;
+document.querySelectorAll('.tr-qa-btn').forEach(b=>{b.style.borderColor='var(--g200)';b.style.background='#fff';b.style.color='var(--g700)';});
+if(btn){btn.style.borderColor='var(--green)';btn.style.background='var(--green-xl)';btn.style.color='var(--green-d)';}
+}
+function fillTrNote(v){
+const inp=document.getElementById('tr-note');if(inp)inp.value=v;
+}
+async function loadTransferRecents(){
+const wrap=document.getElementById('tr-recents');const list=document.getElementById('tr-recents-list');
+if(!wrap||!list||!CU)return;
+try{
+const s=await db.collection('transactions').where('userId','==',CU.uid).where('type','==','transfer_out').orderBy('createdAt','desc').limit(15).get();
+const seen=new Set();const recents=[];
+s.docs.forEach(d=>{const t=d.data();if(t.toPhone&&!seen.has(t.toPhone)){seen.add(t.toPhone);recents.push({name:t.toName||'ZMONIE User',phone:t.toPhone});}});
+if(!recents.length){wrap.style.display='none';return;}
+list.innerHTML=recents.slice(0,8).map(r=>`<div onclick="selectTrRecent('${r.phone}')" style="flex-shrink:0;text-align:center;cursor:pointer;width:62px">
+<div style="width:44px;height:44px;border-radius:50%;background:var(--green-xl);color:var(--green-d);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px;margin:0 auto 4px">${(r.name||'?').charAt(0).toUpperCase()}</div>
+<div style="font-size:10px;font-weight:600;color:var(--g600);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${(r.name||'').split(' ')[0]}</div>
+</div>`).join('');
+wrap.style.display='block';
+}catch(e){wrap.style.display='none';console.warn('[Transfer] recents load error:',e);}
+}
+function selectTrRecent(phone){
+const inp=document.getElementById('tr-acc-inp');if(!inp)return;
+inp.value=phone;autoLookupTransferUser(phone);
+}
 function openTransfer(){
 if(!CU){goPg('pg-login');return;}
 document.getElementById('tr-step-1').style.display='block';
@@ -3756,10 +3793,12 @@ document.getElementById('tr-amount').value='';
 document.getElementById('tr-note').value='';
 document.getElementById('tr-user-found').style.display='none';
 const _nf=document.getElementById('tr-user-notfound');if(_nf)_nf.style.display='none';
+document.querySelectorAll('.tr-qa-btn').forEach(b=>{b.style.borderColor='var(--g200)';b.style.background='#fff';b.style.color='var(--g700)';});
 _transferTarget=null;
 const myAcc=UD?.phone||'';
 document.getElementById('tr-my-acc').textContent=myAcc||'-';
 document.getElementById('tr-my-name').textContent=UD?.name||'';
+loadTransferRecents();
 openM('m-transfer');
 }
 function copyAccNum(){
