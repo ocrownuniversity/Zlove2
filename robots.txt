@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://medwhole.com.ng/sitemap.xml
