@@ -295,6 +295,35 @@ section{padding:84px 0;}
 .testi-name{font-size:13px; font-weight:600; color:var(--ink);}
 .testi-prop{font-size:11.5px; color:var(--muted-dark);}
 
+/* Skeleton Loading Placeholders */
+.skel{position:relative; overflow:hidden; background:#e9e1c9;}
+.skel::after{content:''; position:absolute; inset:0; transform:translateX(-100%); background:linear-gradient(90deg, transparent, rgba(255,255,255,.65), transparent); animation:skel-shimmer 1.4s infinite;}
+@keyframes skel-shimmer{100%{transform:translateX(100%);}}
+.skel-card{background:var(--paper); border:1px solid var(--line); overflow:hidden;}
+.skel-img{height:210px;}
+.skel-body{padding:22px;}
+.skel-line{height:11px; border-radius:2px; margin-bottom:11px; display:block;}
+.skel-row td{padding:14px 4px;}
+
+/* Banner Carousel (homepage advertising strip) */
+.banner-carousel{position:relative; width:100%; height:420px; overflow:hidden; background:var(--ink);}
+.banner-track{display:flex; height:100%; transition:transform .6s cubic-bezier(.65,0,.35,1);}
+.banner-slide{position:relative; min-width:100%; height:100%; background-size:cover; background-position:center; display:flex; align-items:center;}
+.banner-slide::before{content:''; position:absolute; inset:0; background:linear-gradient(90deg, rgba(20,17,13,.82) 0%, rgba(20,17,13,.5) 55%, rgba(20,17,13,.25) 100%);}
+.banner-slide-content{position:relative; z-index:2; max-width:1200px; margin:0 auto; width:100%; padding:0 24px;}
+.banner-slide-content .inner{max-width:560px;}
+.banner-eyebrow{font-size:12px; letter-spacing:2px; color:var(--gold-light); text-transform:uppercase; margin-bottom:14px;}
+.banner-headline{font-family:var(--serif); font-size:clamp(26px,4vw,42px); font-weight:500; color:var(--cream); line-height:1.15; margin-bottom:14px;}
+.banner-subtext{font-size:15px; color:var(--muted); margin-bottom:26px; max-width:480px; line-height:1.55;}
+.banner-arrow{position:absolute; top:50%; transform:translateY(-50%); width:42px; height:42px; border-radius:50%; background:rgba(20,17,13,.5); border:1px solid rgba(246,241,231,.35); color:var(--cream); font-size:22px; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center; z-index:3; transition:background .2s;}
+.banner-arrow:hover{background:rgba(20,17,13,.8);}
+.banner-arrow.prev{left:20px;}
+.banner-arrow.next{right:20px;}
+.banner-dots{position:absolute; bottom:22px; left:0; right:0; display:flex; justify-content:center; gap:8px; z-index:3;}
+.banner-dot{width:9px; height:9px; border-radius:50%; background:rgba(246,241,231,.4); border:none; cursor:pointer; padding:0; transition:background .2s, transform .2s;}
+.banner-dot.active{background:var(--gold); transform:scale(1.2);}
+@media(max-width:700px){.banner-carousel{height:380px;} .banner-arrow{width:36px; height:36px; font-size:18px;} .banner-arrow.prev{left:10px;} .banner-arrow.next{right:10px;}}
+
 /* Property Detail Map */
 .pd-map-wrap{position:relative; width:100%; height:280px; border:1px solid var(--line); overflow:hidden; background:var(--cream);}
 .pd-map-wrap iframe{width:100%; height:100%; border:0;}
@@ -518,6 +547,15 @@ tr:hover td{background:rgba(184,134,60,.05);}
       </div>
     </div>
   </div>
+
+  <section id="bannerSection" class="hidden">
+    <div class="banner-carousel" id="bannerCarousel">
+      <div class="banner-track" id="bannerTrack"></div>
+      <button class="banner-arrow prev" onclick="bannerNav(-1)" aria-label="Previous">‹</button>
+      <button class="banner-arrow next" onclick="bannerNav(1)" aria-label="Next">›</button>
+      <div class="banner-dots" id="bannerDots"></div>
+    </div>
+  </section>
 
   <section>
     <div class="wrap">
@@ -959,6 +997,7 @@ tr:hover td{background:rgba(184,134,60,.05);}
       <div class="dash-nav">
         <a class="active" data-panel="a-dashboard" onclick="switchAdminPanel('a-dashboard')">Dashboard</a>
         <a data-panel="a-properties" onclick="switchAdminPanel('a-properties')">Properties</a>
+        <a data-panel="a-banners" onclick="switchAdminPanel('a-banners')">Banners</a>
         <a data-panel="a-investments" onclick="switchAdminPanel('a-investments')">Investments</a>
         <a data-panel="a-purchases" onclick="switchAdminPanel('a-purchases')">Purchases</a>
         <a data-panel="a-inspections" onclick="switchAdminPanel('a-inspections')">Inspections</a>
@@ -1005,6 +1044,15 @@ tr:hover td{background:rgba(184,134,60,.05);}
         <div class="table-wrap"><table>
           <thead><tr><th>Property</th><th>Type</th><th>Beds/Baths</th><th>Location</th><th>Price</th><th>ROI</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody id="aPropTable"><tr><td colspan="8" class="small-muted" style="padding:20px;">No properties yet.</td></tr></tbody>
+        </table></div>
+      </div>
+
+      <div class="dash-panel" id="apanel-a-banners">
+        <div class="dash-head"><h2>Homepage Banners</h2><button class="btn btn-sm" onclick="openBannerModal()">+ Add Banner</button></div>
+        <p class="small-muted" style="margin-top:-10px; margin-bottom:18px;">These appear as a sliding advertisement carousel right below the homepage hero. Only banners marked Active are shown to visitors.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Image</th><th>Headline</th><th>Linked Property</th><th>Order</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody id="aBannerTable"><tr><td colspan="6" class="small-muted" style="padding:20px;">No banners yet.</td></tr></tbody>
         </table></div>
       </div>
 
@@ -1515,7 +1563,11 @@ tr:hover td{background:rgba(184,134,60,.05);}
     <div class="modal-head"><h3>Installment Payment History</h3><button class="modal-close" onclick="closeModal('installmentHistoryModalBg')">&times;</button></div>
     <div class="modal-body">
       <p class="small-muted" style="margin-bottom:16px;" id="ihPurchaseInfo"></p>
-      <div id="ihList"><p class="small-muted">Loading payments...</p></div>
+      <div id="ihList">
+        <div class="skel skel-line" style="width:85%;"></div>
+        <div class="skel skel-line" style="width:70%;"></div>
+        <div class="skel skel-line" style="width:55%;"></div>
+      </div>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="printElementContent('ihList','Installment Payment History')">🖨️ Print</button>
@@ -1678,6 +1730,41 @@ tr:hover td{background:rgba(184,134,60,.05);}
   </div>
 </div>
 
+<!-- Banner Add/Edit Modal -->
+<div class="modal-bg" id="bannerModalBg">
+  <div class="modal wide">
+    <div class="modal-head"><h3 id="bannerModalTitle">New Banner</h3><button class="modal-close" onclick="closeModal('bannerModalBg')">&times;</button></div>
+    <div class="modal-body">
+      <div id="bannerMsg"></div>
+      <form id="bannerForm" onsubmit="saveBanner(event)">
+        <input type="hidden" id="bannerId">
+        <div class="field">
+          <label>Banner Image</label>
+          <div class="upload-drop" onclick="document.getElementById('bannerImgInput').click()">Click to upload a banner image — auto-compressed</div>
+          <input type="file" id="bannerImgInput" accept="image/*" class="hidden" onchange="handleBannerImageUpload(event)">
+          <div class="img-upload-grid" id="bannerImgGrid"></div>
+          <p class="hint">Wide landscape images work best (e.g. 1600×700). Text is overlaid on top of the image.</p>
+        </div>
+        <div class="field"><label>Headline</label><input required id="bannerHeadline" placeholder="e.g. New Launch: Palm Court Villas"></div>
+        <div class="field"><label>Subtext (optional)</label><input id="bannerSubtext" placeholder="e.g. Now open for investment — limited units available"></div>
+        <div class="field-row">
+          <div class="field"><label>Button Text</label><input id="bannerBtnText" placeholder="e.g. View Property" value="View Property"></div>
+          <div class="field"><label>Display Order</label><input type="number" id="bannerOrder" min="0" placeholder="e.g. 1"></div>
+        </div>
+        <div class="field"><label>Link to Property</label><select id="bannerPropertyId"><option value="">— No property link —</option></select></div>
+        <div class="field" style="display:flex; align-items:center; gap:10px;">
+          <input type="checkbox" id="bannerActive" style="width:auto;" checked>
+          <label style="margin:0;" for="bannerActive">Active — show this banner on the homepage</label>
+        </div>
+      </form>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('bannerModalBg')">Cancel</button>
+      <button class="btn" id="saveBannerBtn" onclick="document.getElementById('bannerForm').requestSubmit()">Save Banner</button>
+    </div>
+  </div>
+</div>
+
 <!-- Announcement Modal -->
 <div class="modal-bg" id="announcementModalBg">
   <div class="modal">
@@ -1720,6 +1807,10 @@ let allInvestments = [];     // admin: all; user: own
 let allPurchases = [];       // admin: all; user: own — property buy/installment purchases
 let allUsers = [];
 let allInspections = [];     // admin: all — site inspection booking requests (no payment required)
+let allBanners = [];         // public: active homepage banners, sorted for display
+let allBannersAdmin = [];    // admin: all banners (active + inactive) for management
+let bannerIndex = 0;
+let bannerTimer = null;
 let siteSettings = { companyName:"Royal Luxury Mini Estate", email:"royalluxuryestate@gmail.com", phone:"+234 913 488 2222", whatsapp:"2349134882222", address:"Abeokuta, Ogun State, Nigeria", aboutText:"", bankName:"", accountName:"", accountNumber:"", paymentNote:"", installmentInterestRate:2, terms:"1. All investments are subject to availability at the time of confirmation.\n2. Returns are paid at the stated maturity date, based on the ROI shown for each property.\n3. Investment amounts are non-refundable once an investment is approved, except where otherwise agreed in writing.\n4. Royal Luxury Mini Estate reserves the right to request additional verification before approving an investment.\n5. All communications regarding an investment should be directed to our official email or WhatsApp number." };
 let currentDetailProperty = null;
 let pendingImageFiles = [];      // {file, url} for new uploads not yet saved
@@ -2386,7 +2477,7 @@ function viewProperty(id){
         <div class="section-title-sm">Investment Terms & Conditions</div>
         <p style="color:var(--muted-dark); font-size:14.5px; white-space:pre-line;">${siteSettings.terms || 'Standard terms apply. Contact us for full documentation.'}</p>
         <div class="section-title-sm">Customer Reviews</div>
-        <div id="reviewsList"><p class="small-muted">Loading reviews...</p></div>
+        <div id="reviewsList">${skeletonLines(2)}</div>
         <div class="divider"></div>
         ${currentUser
           ? `<div class="form-card" style="max-width:none; padding:22px;">
@@ -3351,7 +3442,7 @@ async function openInstallmentHistoryModal(purchaseId){
   if(!pu) return;
   document.getElementById('ihPurchaseInfo').textContent = pu.propertyName + ' — Purchase ID ' + pu.purchaseId + ' — ' + (Number(pu.monthsPaid)||0) + ' of ' + pu.months + ' months paid';
   const list = document.getElementById('ihList');
-  list.innerHTML = '<p class="small-muted">Loading payments...</p>';
+  list.innerHTML = skeletonLines(4);
   openModalEl('installmentHistoryModalBg');
   try{
     const snap = await db.collection('purchases').doc(purchaseId).collection('payments').orderBy('monthNumber','asc').get();
@@ -3370,6 +3461,8 @@ async function openInstallmentHistoryModal(purchaseId){
 
 async function loadUserPurchases(){
   if(!currentUser) return;
+  const puTbody = document.getElementById('uPurchaseTable');
+  if(puTbody) puTbody.innerHTML = skeletonTableRows(9);
   try{
     const snap = await db.collection('purchases').where('userId','==',currentUser.uid).get();
     allPurchases = snap.docs.map(d=>({id:d.id, ...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
@@ -3419,6 +3512,10 @@ function switchDashPanel(panel){
 
 async function loadUserInvestments(){
   if(!currentUser) return;
+  ['uRecentTable','uActiveTable','uCompletedTable','uHistoryTable'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.innerHTML = skeletonTableRows(id==='uActiveTable' ? 8 : id==='uRecentTable' ? 6 : 5);
+  });
   try{
     const snap = await db.collection('investments').where('userId','==',currentUser.uid).get();
     allInvestments = snap.docs.map(d=>({id:d.id, ...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
@@ -3527,7 +3624,12 @@ async function submitContact(e){
 
 /* ================= ADMIN: LOAD ALL ================= */
 async function loadAdminData(){
-  await Promise.all([loadAdminProperties(), loadAdminInvestments(), loadAdminPurchases(), loadAdminInspections(), loadAdminUsers(), loadAdminPosts(), loadAdminAnnouncements(), loadAdminReviews()]);
+  const skelCols = {aPropTable:8, aBannerTable:6, aInvTable:8, aPurTable:7, aInspTable:8, aUserTable:6, aPostTable:3, aAnnTable:4, aReviewTable:6};
+  Object.entries(skelCols).forEach(([id, cols])=>{
+    const el = document.getElementById(id);
+    if(el) el.innerHTML = skeletonTableRows(cols);
+  });
+  await Promise.all([loadAdminProperties(), loadAdminBanners(), loadAdminInvestments(), loadAdminPurchases(), loadAdminInspections(), loadAdminUsers(), loadAdminPosts(), loadAdminAnnouncements(), loadAdminReviews()]);
   renderAdminDashboardStats();
   fillSettingsForm();
 }
@@ -3538,6 +3640,117 @@ async function loadAdminInspections(){
     allInspections = snap.docs.map(d=>({id:d.id, ...d.data()}));
   }catch(e){ console.warn(e); allInspections=[]; }
   renderAdminInspections();
+}
+
+async function loadAdminBanners(){
+  try{
+    const snap = await db.collection('banners').orderBy('order','asc').get();
+    allBannersAdmin = snap.docs.map(d=>({id:d.id, ...d.data()}));
+  }catch(e){ console.warn(e); allBannersAdmin=[]; }
+  renderAdminBanners();
+}
+function renderAdminBanners(){
+  document.getElementById('aBannerTable').innerHTML = allBannersAdmin.map(b=>{
+    const linkedProp = allProperties.find(p=>p.id===b.propertyId);
+    return `
+    <tr>
+      <td>${b.image ? `<img src="${b.image}" style="width:64px; height:40px; object-fit:cover; border:1px solid var(--line);">` : '—'}</td>
+      <td>${b.headline||''}</td>
+      <td>${linkedProp ? linkedProp.name : '<span class="small-muted">None</span>'}</td>
+      <td>${b.order||0}</td>
+      <td><span class="badge ${b.active!==false ? 'badge-approved' : 'badge-rejected'}">${b.active!==false ? 'Active' : 'Inactive'}</span></td>
+      <td class="row-actions">
+        <button class="icon-btn" onclick="openBannerModal('${b.id}')" title="Edit">✎</button>
+        <button class="icon-btn" onclick="deleteBanner('${b.id}')" title="Delete">🗑</button>
+      </td>
+    </tr>
+  `;}).join('') || '<tr><td colspan="6" class="small-muted" style="padding:20px;">No banners yet.</td></tr>';
+}
+let pendingBannerImage = null;
+function openBannerModal(id){
+  document.getElementById('bannerMsg').innerHTML = '';
+  pendingBannerImage = null;
+  const propSel = document.getElementById('bannerPropertyId');
+  propSel.innerHTML = '<option value="">— No property link —</option>' + allProperties.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+  if(id){
+    const b = allBannersAdmin.find(x=>x.id===id);
+    document.getElementById('bannerModalTitle').textContent = 'Edit Banner';
+    document.getElementById('bannerId').value = id;
+    document.getElementById('bannerHeadline').value = b.headline||'';
+    document.getElementById('bannerSubtext').value = b.subtext||'';
+    document.getElementById('bannerBtnText').value = b.buttonText||'View Property';
+    document.getElementById('bannerOrder').value = (b.order!==undefined) ? b.order : '';
+    document.getElementById('bannerActive').checked = b.active!==false;
+    propSel.value = b.propertyId||'';
+    pendingBannerImage = b.image || null;
+  } else {
+    document.getElementById('bannerModalTitle').textContent = 'New Banner';
+    document.getElementById('bannerForm').reset();
+    document.getElementById('bannerId').value = '';
+    document.getElementById('bannerOrder').value = allBannersAdmin.length;
+    document.getElementById('bannerActive').checked = true;
+  }
+  renderBannerImgGrid();
+  openModalEl('bannerModalBg');
+}
+function renderBannerImgGrid(){
+  document.getElementById('bannerImgGrid').innerHTML = pendingBannerImage
+    ? `<div class="img-thumb"><img src="${pendingBannerImage}"><button type="button" onclick="pendingBannerImage=null; renderBannerImgGrid();">&times;</button></div>` : '';
+}
+async function handleBannerImageUpload(e){
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if(!file) return;
+  try{
+    pendingBannerImage = await compressImage(file, 1600, 0.7);
+    renderBannerImgGrid();
+  }catch(err){ toast('Could not process that image.'); }
+}
+async function saveBanner(e){
+  e.preventDefault();
+  const id = document.getElementById('bannerId').value;
+  const btn = document.getElementById('saveBannerBtn');
+  const msgEl = document.getElementById('bannerMsg');
+  if(!pendingBannerImage){
+    msgEl.innerHTML = '<div class="err-msg">Please upload a banner image.</div>';
+    return;
+  }
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Saving...';
+  try{
+    const data = {
+      headline: document.getElementById('bannerHeadline').value.trim(),
+      subtext: document.getElementById('bannerSubtext').value.trim(),
+      buttonText: document.getElementById('bannerBtnText').value.trim() || 'View Property',
+      order: Number(document.getElementById('bannerOrder').value)||0,
+      propertyId: document.getElementById('bannerPropertyId').value || null,
+      active: document.getElementById('bannerActive').checked,
+      image: pendingBannerImage
+    };
+    if(id){
+      await db.collection('banners').doc(id).update(data);
+      toast('Banner updated');
+    } else {
+      data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+      await db.collection('banners').add(data);
+      toast('Banner added');
+    }
+    closeModal('bannerModalBg');
+    await loadAdminBanners();
+    await loadBanners();
+  }catch(err){
+    msgEl.innerHTML = '<div class="err-msg">'+err.message+'</div>';
+  }finally{
+    btn.disabled = false; btn.textContent = 'Save Banner';
+  }
+}
+async function deleteBanner(id){
+  if(!confirm('Delete this banner?')) return;
+  try{
+    await db.collection('banners').doc(id).delete();
+    toast('Banner deleted');
+    await loadAdminBanners();
+    await loadBanners();
+  }catch(err){ toast('Error: '+err.message); }
 }
 
 async function loadAdminProperties(){
@@ -4149,7 +4362,7 @@ function viewPurchaseDetail(id){
          <p class="small-muted" style="margin-top:6px;">Tap the image to view it full size before approving.</p>`
       : `<p class="err-msg">No receipt was uploaded for this purchase.</p>`}
     ${pu.paymentPlan==='installment' ? `<div class="section-title-sm">Monthly Installment Payments</div>
-    <div id="purchaseInstallmentPayments"><p class="small-muted">Loading payments...</p></div>` : ''}
+    <div id="purchaseInstallmentPayments">${skeletonLines(3)}</div>` : ''}
   `;
   let actions = '';
   if(pu.status==='pending'){
@@ -4518,6 +4731,29 @@ function animateStatFromText(el){
   animateCounter(el, num, {suffix});
 }
 
+/* ================= SKELETON LOADING PLACEHOLDERS ================= */
+function skeletonPropCards(count){
+  const card = `
+    <div class="skel-card">
+      <div class="skel skel-img"></div>
+      <div class="skel-body">
+        <div class="skel skel-line" style="width:70%; height:17px; margin-bottom:14px;"></div>
+        <div class="skel skel-line" style="width:45%;"></div>
+        <div class="skel skel-line" style="width:35%; height:20px; margin:14px 0;"></div>
+        <div class="skel skel-line" style="width:90%;"></div>
+        <div class="skel skel-line" style="width:60%; margin-bottom:0;"></div>
+      </div>
+    </div>`;
+  return Array(count).fill(card).join('');
+}
+function skeletonTableRows(colCount, rowCount=4){
+  const cells = Array(colCount).fill('<td><div class="skel skel-line" style="width:80%; margin-bottom:0;"></div></td>').join('');
+  return Array(rowCount).fill('<tr class="skel-row">'+cells+'</tr>').join('');
+}
+function skeletonLines(n=3){
+  return Array(n).fill(0).map((_,i)=>`<div class="skel skel-line" style="width:${85-i*15}%;"></div>`).join('');
+}
+
 /* ================= FAQ ACCORDION ================= */
 function toggleFaq(btn){
   const item = btn.closest('.faq-item');
@@ -4545,6 +4781,70 @@ function setCookieConsent(value){
 }
 
 /* ================= TESTIMONIALS (homepage) ================= */
+/* ================= HOMEPAGE BANNER CAROUSEL (advertising) ================= */
+async function loadBanners(){
+  try{
+    const snap = await db.collection('banners').orderBy('order','asc').get();
+    allBanners = snap.docs.map(d=>({id:d.id, ...d.data()})).filter(b=>b.active!==false);
+  }catch(e){ console.warn('banner load error', e); allBanners = []; }
+  renderBannerCarousel();
+}
+function renderBannerCarousel(){
+  const section = document.getElementById('bannerSection');
+  const track = document.getElementById('bannerTrack');
+  const dots = document.getElementById('bannerDots');
+  if(!section || !track || !dots) return;
+  clearInterval(bannerTimer);
+  if(!allBanners.length){ section.classList.add('hidden'); return; }
+  section.classList.remove('hidden');
+  bannerIndex = 0;
+  track.innerHTML = allBanners.map(b=>`
+    <div class="banner-slide" style="background-image:url('${b.image||''}');">
+      <div class="banner-slide-content"><div class="inner">
+        <div class="banner-eyebrow">ROYAL LUXURY MINI ESTATE</div>
+        <div class="banner-headline">${b.headline||''}</div>
+        ${b.subtext ? `<div class="banner-subtext">${b.subtext}</div>` : ''}
+        ${b.propertyId ? `<button class="btn" onclick="viewProperty('${b.propertyId}')">${b.buttonText || 'View Property'}</button>` : ''}
+      </div></div>
+    </div>
+  `).join('');
+  dots.innerHTML = allBanners.map((b,i)=>`<button class="banner-dot ${i===0?'active':''}" onclick="goToBanner(${i})" aria-label="Slide ${i+1}"></button>`).join('');
+  const carousel = document.getElementById('bannerCarousel');
+  if(carousel && !carousel.dataset.swipeBound){
+    let touchStartX = 0;
+    carousel.addEventListener('touchstart', e=>{ touchStartX = e.changedTouches[0].screenX; }, {passive:true});
+    carousel.addEventListener('touchend', e=>{
+      const dx = e.changedTouches[0].screenX - touchStartX;
+      if(Math.abs(dx) > 40) bannerNav(dx < 0 ? 1 : -1);
+    }, {passive:true});
+    carousel.dataset.swipeBound = 'true';
+  }
+  updateBannerPosition();
+  if(allBanners.length > 1) startBannerAutoplay();
+}
+function updateBannerPosition(){
+  const track = document.getElementById('bannerTrack');
+  if(track) track.style.transform = `translateX(-${bannerIndex*100}%)`;
+  document.querySelectorAll('#bannerDots .banner-dot').forEach((d,i)=>d.classList.toggle('active', i===bannerIndex));
+}
+function bannerNav(dir){
+  if(!allBanners.length) return;
+  bannerIndex = (bannerIndex + dir + allBanners.length) % allBanners.length;
+  updateBannerPosition();
+  startBannerAutoplay();
+}
+function goToBanner(i){
+  bannerIndex = i;
+  updateBannerPosition();
+  startBannerAutoplay();
+}
+function startBannerAutoplay(){
+  clearInterval(bannerTimer);
+  if(allBanners.length > 1){
+    bannerTimer = setInterval(()=>{ bannerIndex = (bannerIndex+1) % allBanners.length; updateBannerPosition(); }, 5500);
+  }
+}
+
 async function loadTestimonials(){
   const grid = document.getElementById('testimonialsGrid');
   const section = document.getElementById('testimonialsSection');
@@ -4582,12 +4882,15 @@ function testimonialCardHtml(r){
 /* ================= INIT ================= */
 (async function init(){
   document.querySelectorAll('.hero-stats b').forEach(animateStatFromText);
+  document.getElementById('homePropGrid').innerHTML = skeletonPropCards(3);
+  document.getElementById('allPropGrid').innerHTML = skeletonPropCards(6);
   loadWishlist();
   initCookieConsent();
   await loadSettings();
   await loadProperties();
   await loadPosts();
   loadTestimonials();
+  loadBanners();
 })();
 </script>
 </body>
