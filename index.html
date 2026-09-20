@@ -322,6 +322,7 @@ section{padding:84px 0;}
 .banner-dots{position:absolute; bottom:16px; left:0; right:0; display:flex; justify-content:center; gap:8px; z-index:3;}
 .banner-dot{width:9px; height:9px; border-radius:50%; background:rgba(246,241,231,.4); border:none; cursor:pointer; padding:0; transition:background .2s, transform .2s;}
 .banner-dot.active{background:var(--gold); transform:scale(1.2);}
+#bannerSection{padding:0;}
 @media(max-width:700px){
   .banner-carousel{height:260px;}
   .banner-slide-content{padding:0 50px;}
@@ -1012,6 +1013,7 @@ tr:hover td{background:rgba(184,134,60,.05);}
         <a data-panel="a-investments" onclick="switchAdminPanel('a-investments')">Investments</a>
         <a data-panel="a-purchases" onclick="switchAdminPanel('a-purchases')">Purchases</a>
         <a data-panel="a-inspections" onclick="switchAdminPanel('a-inspections')">Inspections</a>
+        <a data-panel="a-messages" onclick="switchAdminPanel('a-messages')">Messages</a>
         <a data-panel="a-users" onclick="switchAdminPanel('a-users')">Users</a>
         <a data-panel="a-posts" onclick="switchAdminPanel('a-posts')">Posts</a>
         <a data-panel="a-announcements" onclick="switchAdminPanel('a-announcements')">Announcements</a>
@@ -1033,6 +1035,7 @@ tr:hover td{background:rgba(184,134,60,.05);}
           <div class="stat-card"><b id="aStatPurchases">0</b><span>Total Purchases</span></div>
           <div class="stat-card"><b id="aStatPendingPurchases">0</b><span>Pending Purchases</span></div>
           <div class="stat-card"><b id="aStatInspections">0</b><span>Pending Inspections</span></div>
+          <div class="stat-card"><b id="aStatMessages">0</b><span>New Messages</span></div>
         </div>
         <div class="chart-grid">
           <div class="chart-card">
@@ -1121,6 +1124,23 @@ tr:hover td{background:rgba(184,134,60,.05);}
         <div class="table-wrap"><table>
           <thead><tr><th>Reference</th><th>Name</th><th>Phone</th><th>Property</th><th>Preferred Date</th><th>Time</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody id="aInspTable"><tr><td colspan="8" class="small-muted" style="padding:20px;">No inspection requests yet.</td></tr></tbody>
+        </table></div>
+      </div>
+
+      <div class="dash-panel" id="apanel-a-messages">
+        <div class="dash-head"><h2>Contact Messages</h2><div style="display:flex; gap:10px; flex-wrap:wrap;"><button class="btn btn-ghost btn-sm" onclick="printTableById('aMsgTable','Contact Messages')">🖨️ Print</button><button class="btn btn-ghost btn-sm" onclick="downloadTablePdf('aMsgTable','Contact Messages','contact-messages')">⬇️ PDF</button><button class="btn btn-ghost btn-sm" onclick="exportTableToCSV('aMsgTable','contact-messages')">⬇️ Export CSV</button></div></div>
+        <p class="small-muted" style="margin-top:-10px; margin-bottom:16px;">Messages submitted through the Contact page form.</p>
+        <div class="search-bar">
+          <input type="text" id="msgSearch" placeholder="Search name, email, or message..." oninput="renderAdminMessages()">
+          <select id="msgStatusFilter" onchange="renderAdminMessages()">
+            <option value="">All Status</option>
+            <option value="new">New</option>
+            <option value="read">Read</option>
+          </select>
+        </div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Message</th><th>Date</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody id="aMsgTable"><tr><td colspan="7" class="small-muted" style="padding:20px;">No messages yet.</td></tr></tbody>
         </table></div>
       </div>
 
@@ -1818,6 +1838,7 @@ let allInvestments = [];     // admin: all; user: own
 let allPurchases = [];       // admin: all; user: own — property buy/installment purchases
 let allUsers = [];
 let allInspections = [];     // admin: all — site inspection booking requests (no payment required)
+let allMessages = [];        // admin: all — contact form messages (stored as type:'contact_message' in transactions)
 let allBanners = [];         // public: active homepage banners, sorted for display
 let allBannersAdmin = [];    // admin: all banners (active + inactive) for management
 let bannerIndex = 0;
@@ -3635,12 +3656,12 @@ async function submitContact(e){
 
 /* ================= ADMIN: LOAD ALL ================= */
 async function loadAdminData(){
-  const skelCols = {aPropTable:8, aBannerTable:6, aInvTable:8, aPurTable:7, aInspTable:8, aUserTable:6, aPostTable:3, aAnnTable:4, aReviewTable:6};
+  const skelCols = {aPropTable:8, aBannerTable:6, aInvTable:8, aPurTable:7, aInspTable:8, aMsgTable:7, aUserTable:6, aPostTable:3, aAnnTable:4, aReviewTable:6};
   Object.entries(skelCols).forEach(([id, cols])=>{
     const el = document.getElementById(id);
     if(el) el.innerHTML = skeletonTableRows(cols);
   });
-  await Promise.all([loadAdminProperties(), loadAdminBanners(), loadAdminInvestments(), loadAdminPurchases(), loadAdminInspections(), loadAdminUsers(), loadAdminPosts(), loadAdminAnnouncements(), loadAdminReviews()]);
+  await Promise.all([loadAdminProperties(), loadAdminBanners(), loadAdminInvestments(), loadAdminPurchases(), loadAdminInspections(), loadAdminMessages(), loadAdminUsers(), loadAdminPosts(), loadAdminAnnouncements(), loadAdminReviews()]);
   renderAdminDashboardStats();
   fillSettingsForm();
 }
@@ -3807,6 +3828,7 @@ function renderAdminDashboardStats(){
   document.getElementById('aStatPurchases').textContent = allPurchases.length;
   document.getElementById('aStatPendingPurchases').textContent = allPurchases.filter(pu=>pu.status==='pending').length;
   document.getElementById('aStatInspections').textContent = allInspections.filter(i=>i.status==='pending').length;
+  document.getElementById('aStatMessages').textContent = allMessages.filter(m=>(m.status||'new')==='new').length;
   renderAdminCharts();
 }
 
@@ -3951,6 +3973,56 @@ async function updateInspectionStatus(id, status){
 async function deleteInspection(id){
   if(!confirm('Delete this inspection request?')) return;
   try{ await db.collection('inspections').doc(id).delete(); toast('Inspection request deleted'); await loadAdminInspections(); renderAdminDashboardStats(); }
+  catch(err){ toast('Error: '+err.message); }
+}
+
+/* ---------- Admin: Contact Messages ---------- */
+async function loadAdminMessages(){
+  try{
+    const snap = await db.collection('transactions').where('type','==','contact_message').orderBy('createdAt','desc').get();
+    allMessages = snap.docs.map(d=>({id:d.id, ...d.data()}));
+  }catch(e){ console.warn(e); allMessages = []; }
+  renderAdminMessages();
+}
+function renderAdminMessages(){
+  const searchEl = document.getElementById('msgSearch');
+  const statusEl = document.getElementById('msgStatusFilter');
+  if(!searchEl || !statusEl) return;
+  const q = (searchEl.value||'').toLowerCase();
+  const status = statusEl.value;
+  let list = allMessages.filter(m=>{
+    const matchQ = !q || (m.name||'').toLowerCase().includes(q) || (m.email||'').toLowerCase().includes(q) || (m.message||'').toLowerCase().includes(q);
+    const matchS = !status || (m.status||'new')===status;
+    return matchQ && matchS;
+  });
+  document.getElementById('aMsgTable').innerHTML = list.map(m=>{
+    const st = m.status || 'new';
+    const waLink = m.phone ? 'https://wa.me/' + m.phone.replace(/[^0-9]/g,'') + '?text=' + encodeURIComponent('Hi ' + (m.name||'') + ', thanks for reaching out to Royal Luxury Mini Estate — ') : '';
+    return `
+    <tr>
+      <td>${m.name||''}</td><td>${m.email||''}</td><td>${m.phone||'—'}</td>
+      <td style="max-width:260px; white-space:normal;">${m.message||''}</td>
+      <td>${m.createdAt ? fmtDate(m.createdAt) : '—'}</td>
+      <td><span class="badge ${st==='new' ? 'badge-pending' : 'badge-approved'}">${st}</span></td>
+      <td class="row-actions">
+        ${st==='new' ? `<button class="icon-btn" onclick="updateMessageStatus('${m.id}','read')" title="Mark as Read">✔</button>` : ''}
+        ${m.phone ? `<a class="icon-btn" href="${waLink}" target="_blank" title="Reply on WhatsApp">💬</a>` : ''}
+        <button class="icon-btn" onclick="deleteMessage('${m.id}')" title="Delete">🗑</button>
+      </td>
+    </tr>
+  `;}).join('') || '<tr><td colspan="7" class="small-muted" style="padding:20px;">No messages yet.</td></tr>';
+}
+async function updateMessageStatus(id, status){
+  try{
+    await db.collection('transactions').doc(id).update({status});
+    toast('Message marked ' + status);
+    await loadAdminMessages();
+    renderAdminDashboardStats();
+  }catch(err){ toast('Error: '+err.message); }
+}
+async function deleteMessage(id){
+  if(!confirm('Delete this message?')) return;
+  try{ await db.collection('transactions').doc(id).delete(); toast('Message deleted'); await loadAdminMessages(); renderAdminDashboardStats(); }
   catch(err){ toast('Error: '+err.message); }
 }
 
