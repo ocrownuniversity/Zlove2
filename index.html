@@ -2295,6 +2295,68 @@ function downloadPropertyBrochurePdf(id){
   downloadPdfFromHtml('property-' + (p.pid || p.id), 'Property Details — ' + (p.name||''), propertyBrochureBodyHtml(p));
 }
 
+/* Certificate layout helpers: fixed A4-landscape page (1123x792px) so the PDF is always positioned
+   correctly on phones, plus the applicant's own signature (captured on the application form). */
+const CERT_W = 1123, CERT_H = 792;
+function certEsc(v){
+  return String(v==null ? '' : v).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function certSignatureBlock(sigUrl, label, name){
+  const img = (sigUrl && /^data:image\//.test(sigUrl))
+    ? `<img src="${sigUrl}" style="max-height:62px; max-width:210px; display:block; margin:0 auto; object-fit:contain;">`
+    : '';
+  return `
+    <div style="width:230px; text-align:center; font-size:11.5px; color:#666;">
+      <div style="height:66px; display:flex; align-items:flex-end; justify-content:center;">${img}</div>
+      <div style="border-top:1px solid #14110d; margin-top:4px; padding-top:6px;">${label}</div>
+      <div style="font-weight:600; color:#14110d; margin-top:2px;">${certEsc(name)}</div>
+    </div>`;
+}
+function certificatePageHtml(o){
+  return `
+    <div style="width:${CERT_W}px; height:${CERT_H}px; box-sizing:border-box; padding:26px; background:#faf7ef; font-family:Georgia,'Times New Roman',serif; color:#14110d; overflow:hidden;">
+      <div style="height:100%; box-sizing:border-box; border:2px solid #b8863c; padding:6px;">
+        <div style="height:100%; box-sizing:border-box; border:1px solid #b8863c; padding:34px 60px 26px; text-align:center; display:flex; flex-direction:column;">
+          <div style="font-size:12px; letter-spacing:4px; color:#b8863c; margin-bottom:6px;">${certEsc(o.company).toUpperCase()}</div>
+          <div style="font-size:34px; font-weight:700; letter-spacing:2px; margin-bottom:6px;">${o.title}</div>
+          <div style="width:120px; height:2px; background:#b8863c; margin:12px auto 0;"></div>
+
+          <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+            <div style="font-size:14px; color:#555; margin-bottom:10px;">This is to certify that</div>
+            <div style="font-size:30px; font-weight:600; margin-bottom:8px; border-bottom:1px solid #d8cba8; padding:0 30px 8px;">${certEsc(o.name)}</div>
+            <div style="font-size:14px; color:#555; max-width:760px; margin:14px auto 0; line-height:1.8;">${o.bodyHtml}</div>
+          </div>
+
+          <div style="font-size:11.5px; color:#666; margin-bottom:18px;">
+            Certificate No: <b style="color:#14110d;">${certEsc(o.certNo)}</b>
+            &nbsp;&nbsp;•&nbsp;&nbsp;
+            Date Issued: <b style="color:#14110d;">${o.issueDate}</b>
+          </div>
+
+          <div style="display:flex; justify-content:space-between; align-items:flex-end; padding:0 20px;">
+            ${certSignatureBlock(o.sigUrl, o.sigLabel, o.name)}
+            <div style="width:90px; height:90px; border:2px solid #b8863c; border-radius:50%; display:flex; align-items:center; justify-content:center; flex-direction:column; color:#b8863c; font-size:10px; letter-spacing:1px; text-align:center;">
+              <div style="font-size:20px;">★</div>
+              <div>OFFICIAL<br>SEAL</div>
+            </div>
+            ${certSignatureBlock('', 'Authorized Signatory', o.company)}
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+function certificatePdfOptions(filename){
+  return {
+    margin: 0,
+    filename,
+    image: { type:'jpeg', quality:0.98 },
+    html2canvas: { scale:2, useCORS:true, backgroundColor:'#faf7ef',
+      width:CERT_W, height:CERT_H, windowWidth:CERT_W, windowHeight:CERT_H, x:0, y:0 },
+    jsPDF: { unit:'mm', format:'a4', orientation:'landscape' },
+    pagebreak: { mode:'avoid-all' }
+  };
+}
+
 /* ================= INVESTMENT CERTIFICATE (decorative landscape PDF) ================= */
 function downloadInvestmentCertificate(id){
   const inv = allInvestments.find(x=>x.id===id);
@@ -2306,57 +2368,22 @@ function downloadInvestmentCertificate(id){
   if(typeof html2pdf === 'undefined'){ toast('PDF tool failed to load — check your connection and try again.'); return; }
 
   const company = siteSettings.companyName || 'Royal Luxury Mini Estate';
-  const investorName = inv.userName || 'Valued Investor';
+  const investorName = inv.investorFullName || inv.userName || 'Valued Investor';
   const issueDate = new Date().toLocaleDateString('en-NG', {year:'numeric', month:'long', day:'numeric'});
   const startDate = inv.createdAt ? fmtDate(inv.createdAt) : '—';
   const maturityDate = inv.maturityDate ? fmtDate(inv.maturityDate) : '—';
   const certNo = inv.investmentId || inv.id;
 
-  const html = `
-    <div style="width:1000px; padding:26px; background:#faf7ef; font-family:Georgia,'Times New Roman',serif; color:#14110d;">
-      <div style="border:2px solid #b8863c; padding:6px;">
-        <div style="border:1px solid #b8863c; padding:50px 60px; text-align:center; position:relative;">
-          <div style="font-size:12px; letter-spacing:4px; color:#b8863c; margin-bottom:6px;">${company.toUpperCase()}</div>
-          <div style="font-size:34px; font-weight:700; letter-spacing:2px; margin-bottom:6px;">CERTIFICATE OF INVESTMENT</div>
-          <div style="width:120px; height:2px; background:#b8863c; margin:14px auto 30px;"></div>
+  const html = certificatePageHtml({
+    company, title:'CERTIFICATE OF INVESTMENT', name:investorName, certNo, issueDate,
+    sigUrl: inv.signatureUrl, sigLabel:'Investor Signature',
+    bodyHtml: `has invested the sum of <b style="color:#b8863c; font-size:18px;">${fmtNaira(inv.amount)}</b> in
+      <b>${inv.propertyName||''}</b> under ${certEsc(company)}'s investment plan, at a fixed monthly return of
+      <b>${inv.roi||0}%</b> for a duration of <b>${inv.duration||0} months</b>, commencing
+      <b>${startDate}</b> and maturing on <b>${maturityDate}</b>.`
+  });
 
-          <div style="font-size:14px; color:#555; margin-bottom:10px;">This is to certify that</div>
-          <div style="font-size:30px; font-weight:600; margin-bottom:14px; border-bottom:1px solid #d8cba8; display:inline-block; padding:0 30px 8px;">${investorName}</div>
-          <div style="font-size:14px; color:#555; max-width:720px; margin:18px auto; line-height:1.8;">
-            has invested the sum of <b style="color:#b8863c; font-size:18px;">${fmtNaira(inv.amount)}</b> in
-            <b>${inv.propertyName||''}</b> under ${company}'s investment plan, at a fixed monthly return of
-            <b>${inv.roi||0}%</b> for a duration of <b>${inv.duration||0} months</b>, commencing
-            <b>${startDate}</b> and maturing on <b>${maturityDate}</b>.
-          </div>
-
-          <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-top:60px; padding:0 20px;">
-            <div style="text-align:left; font-size:11.5px; color:#666;">
-              <div>Certificate No: <b style="color:#14110d;">${certNo}</b></div>
-              <div>Date Issued: <b style="color:#14110d;">${issueDate}</b></div>
-            </div>
-            <div style="width:90px; height:90px; border:2px solid #b8863c; border-radius:50%; display:flex; align-items:center; justify-content:center; flex-direction:column; color:#b8863c; font-size:10px; letter-spacing:1px; text-align:center;">
-              <div style="font-size:20px;">★</div>
-              <div>OFFICIAL<br>SEAL</div>
-            </div>
-            <div style="text-align:center; font-size:11.5px; color:#666;">
-              <div style="border-bottom:1px solid #14110d; width:160px; margin-bottom:6px;">&nbsp;</div>
-              <div>Authorized Signatory</div>
-              <div style="font-weight:600; color:#14110d;">${company}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
-
-  const opt = {
-    margin: 0,
-    filename: 'investment-certificate-' + certNo + '.pdf',
-    image: { type:'jpeg', quality:0.98 },
-    html2canvas: { scale:2, useCORS:true, backgroundColor:'#faf7ef' },
-    jsPDF: { unit:'mm', format:'a4', orientation:'landscape' }
-  };
-  capturePdfElement(html, opt).catch((e)=>{
+  capturePdfElement(html, certificatePdfOptions('investment-certificate-' + certNo + '.pdf')).catch((e)=>{
     console.warn(e);
     toast('Could not generate certificate PDF.');
   });
@@ -2372,7 +2399,7 @@ function downloadPurchaseCertificate(id){
   if(typeof html2pdf === 'undefined'){ toast('PDF tool failed to load — check your connection and try again.'); return; }
 
   const company = siteSettings.companyName || 'Royal Luxury Mini Estate';
-  const buyerName = pu.userName || 'Valued Client';
+  const buyerName = pu.buyerFullName || pu.userName || 'Valued Client';
   const issueDate = new Date().toLocaleDateString('en-NG', {year:'numeric', month:'long', day:'numeric'});
   const purchaseDate = pu.createdAt ? fmtDate(pu.createdAt) : '—';
   const certNo = pu.purchaseId || pu.id;
@@ -2381,51 +2408,16 @@ function downloadPurchaseCertificate(id){
     ? 'Fully Paid'
     : (Number(pu.monthsPaid)||0) >= (pu.months||0) ? 'Fully Paid' : `${Number(pu.monthsPaid)||0} of ${pu.months||0} installments paid`;
 
-  const html = `
-    <div style="width:1000px; padding:26px; background:#faf7ef; font-family:Georgia,'Times New Roman',serif; color:#14110d;">
-      <div style="border:2px solid #b8863c; padding:6px;">
-        <div style="border:1px solid #b8863c; padding:50px 60px; text-align:center; position:relative;">
-          <div style="font-size:12px; letter-spacing:4px; color:#b8863c; margin-bottom:6px;">${company.toUpperCase()}</div>
-          <div style="font-size:34px; font-weight:700; letter-spacing:2px; margin-bottom:6px;">CERTIFICATE OF PURCHASE</div>
-          <div style="width:120px; height:2px; background:#b8863c; margin:14px auto 30px;"></div>
+  const html = certificatePageHtml({
+    company, title:'CERTIFICATE OF PURCHASE', name:buyerName, certNo, issueDate,
+    sigUrl: pu.signatureUrl, sigLabel:'Buyer Signature',
+    bodyHtml: `has entered into an agreement to purchase <b>${pu.propertyName||''}</b> from ${certEsc(company)}
+      for the total sum of <b style="color:#b8863c; font-size:18px;">${fmtNaira(pu.totalPayable)}</b>,
+      under a <b>${planText}</b>, recorded on <b>${purchaseDate}</b>.
+      <br><br>Payment Status: <b>${paymentStatus}</b>`
+  });
 
-          <div style="font-size:14px; color:#555; margin-bottom:10px;">This is to certify that</div>
-          <div style="font-size:30px; font-weight:600; margin-bottom:14px; border-bottom:1px solid #d8cba8; display:inline-block; padding:0 30px 8px;">${buyerName}</div>
-          <div style="font-size:14px; color:#555; max-width:720px; margin:18px auto; line-height:1.8;">
-            has entered into an agreement to purchase <b>${pu.propertyName||''}</b> from ${company}
-            for the total sum of <b style="color:#b8863c; font-size:18px;">${fmtNaira(pu.totalPayable)}</b>,
-            under a <b>${planText}</b>, recorded on <b>${purchaseDate}</b>.
-            <br><br>Payment Status: <b>${paymentStatus}</b>
-          </div>
-
-          <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-top:50px; padding:0 20px;">
-            <div style="text-align:left; font-size:11.5px; color:#666;">
-              <div>Certificate No: <b style="color:#14110d;">${certNo}</b></div>
-              <div>Date Issued: <b style="color:#14110d;">${issueDate}</b></div>
-            </div>
-            <div style="width:90px; height:90px; border:2px solid #b8863c; border-radius:50%; display:flex; align-items:center; justify-content:center; flex-direction:column; color:#b8863c; font-size:10px; letter-spacing:1px; text-align:center;">
-              <div style="font-size:20px;">★</div>
-              <div>OFFICIAL<br>SEAL</div>
-            </div>
-            <div style="text-align:center; font-size:11.5px; color:#666;">
-              <div style="border-bottom:1px solid #14110d; width:160px; margin-bottom:6px;">&nbsp;</div>
-              <div>Authorized Signatory</div>
-              <div style="font-weight:600; color:#14110d;">${company}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
-
-  const opt = {
-    margin: 0,
-    filename: 'purchase-certificate-' + certNo + '.pdf',
-    image: { type:'jpeg', quality:0.98 },
-    html2canvas: { scale:2, useCORS:true, backgroundColor:'#faf7ef' },
-    jsPDF: { unit:'mm', format:'a4', orientation:'landscape' }
-  };
-  capturePdfElement(html, opt).catch((e)=>{
+  capturePdfElement(html, certificatePdfOptions('purchase-certificate-' + certNo + '.pdf')).catch((e)=>{
     console.warn(e);
     toast('Could not generate certificate PDF.');
   });
