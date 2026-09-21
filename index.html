@@ -310,6 +310,25 @@ section{padding:84px 0;}
 .bulk-toolbar span{font-size:13px; font-weight:600; color:var(--ink);}
 .bulk-actions{display:flex; gap:8px; flex-wrap:wrap;}
 
+/* Property Comparison */
+.prop-cta-row{display:flex; align-items:center; justify-content:space-between; gap:10px;}
+.compare-check{display:flex; align-items:center; gap:5px; font-size:11.5px; color:var(--muted-dark); cursor:pointer; white-space:nowrap;}
+.compare-check input{width:auto; margin:0; cursor:pointer;}
+.compare-bar{position:fixed; left:0; right:0; bottom:0; background:var(--ink); color:var(--cream); z-index:400; padding:14px 20px; box-shadow:0 -8px 24px rgba(0,0,0,.3); transform:translateY(120%); transition:transform .3s ease;}
+.compare-bar.show{transform:translateY(0);}
+.compare-bar-inner{max-width:1100px; margin:0 auto; display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;}
+.compare-chips{display:flex; gap:8px; flex-wrap:wrap;}
+.compare-chip{display:flex; align-items:center; gap:6px; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.15); padding:6px 12px; border-radius:20px; font-size:12px;}
+.compare-chip button{background:none; border:none; color:var(--muted); cursor:pointer; font-size:15px; line-height:1; padding:0;}
+.compare-chip button:hover{color:var(--bad);}
+.compare-bar-actions{display:flex; gap:10px;}
+.compare-table{min-width:560px;}
+.compare-table th, .compare-table td{padding:12px 14px; border-bottom:1px solid var(--line); text-align:center; vertical-align:top;}
+.compare-table .compare-label{text-align:left; font-weight:600; color:var(--muted-dark); font-size:12.5px; white-space:nowrap; background:var(--cream);}
+.compare-col-head img{width:100%; max-width:160px; height:90px; object-fit:cover; border-radius:4px; margin-bottom:8px;}
+.compare-col-name{font-family:var(--serif); font-size:14px; font-weight:600;}
+@media(max-width:700px){.compare-bar-inner{flex-direction:column; align-items:stretch;} .compare-bar-actions{justify-content:flex-end;}}
+
 /* Banner Carousel (homepage advertising strip) */
 .banner-carousel{position:relative; width:100%; height:400px; overflow:hidden; background:var(--ink);}
 .banner-track{display:flex; height:100%; transition:transform .6s cubic-bezier(.65,0,.35,1);}
@@ -789,6 +808,26 @@ tr:hover td{background:rgba(184,134,60,.05);}
       <div class="prop-grid" id="allPropGrid"><div class="empty-state">Loading properties…</div></div>
     </div>
   </section>
+  <div class="compare-bar" id="compareBar">
+    <div class="compare-bar-inner">
+      <div class="compare-chips" id="compareChips"></div>
+      <div class="compare-bar-actions">
+        <button class="btn btn-ghost btn-sm" onclick="clearCompare()">Clear</button>
+        <button class="btn btn-sm" id="compareNowBtn" onclick="openCompareModal()" disabled>Compare (<span id="compareCount">0</span>)</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Property Comparison Modal -->
+<div class="modal-bg" id="compareModalBg">
+  <div class="modal wide">
+    <div class="modal-head"><h3>Compare Properties</h3><button class="modal-close" onclick="closeModal('compareModalBg')">&times;</button></div>
+    <div class="modal-body" id="compareModalBody"></div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('compareModalBg')">Close</button>
+    </div>
+  </div>
 </div>
 
 <!-- ============================================================= -->
@@ -1902,6 +1941,7 @@ const db = firebase.firestore();
 let currentUser = null;      // firebase auth user
 let currentUserDoc = null;   // users/{uid} doc data
 let wishlist = [];           // array of property IDs saved by the current visitor
+let compareList = [];        // array of up to 3 property IDs selected for side-by-side comparison
 let isAdmin = false;
 let allProperties = [];
 let allInvestments = [];     // admin: all; user: own
@@ -2179,12 +2219,52 @@ function stripInteractiveHtml(html){
   tmp.querySelectorAll('button, input, select, textarea, .row-actions, .icon-btn, form').forEach(el=>el.remove());
   return tmp.innerHTML;
 }
+/* Renders innerHtml inside a temporary on-screen element (covered by a loading overlay so
+   nothing looks broken to the user), captures it to PDF with html2pdf, then cleans up.
+   html2canvas needs the captured element inside the visible viewport — off-screen positions
+   (negative OR very large offsets) can silently produce a blank canvas, so we keep it on-screen
+   here and simply cover it with an opaque loading overlay instead of hiding it off-page. */
+function capturePdfElement(innerHtml, opt){
+  return new Promise((resolve, reject)=>{
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed; inset:0; background:rgba(20,17,13,.94); z-index:999998; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:14px; color:#f6f1e7; font-family:Georgia,\'Times New Roman\',serif; font-size:14px;';
+    overlay.innerHTML = '<span class="spinner" style="width:26px; height:26px; border-width:3px;"></span><span>Preparing your document…</span>';
+
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'position:fixed; top:0; left:0; z-index:999997; background:#ffffff;';
+    wrapper.innerHTML = innerHtml;
+
+    document.body.appendChild(wrapper);
+    document.body.appendChild(overlay);
+
+    // Give the browser a frame to lay out and paint the wrapper before capturing it.
+    requestAnimationFrame(()=>{ requestAnimationFrame(()=>{
+      // Passing a position:fixed (or absolute) element as the *root* node to html2canvas/
+      // html2pdf is a known bug that silently produces a blank capture, independent of scroll.
+      // The wrapper above only needs to be position:fixed so it can sit on screen behind the
+      // loading overlay — the actual printable content is its first child, a normal
+      // (statically positioned) div, so that's what we hand to html2pdf instead of the wrapper.
+      const captureTarget = wrapper.firstElementChild || wrapper;
+      // Belt-and-braces: also force html2canvas to capture from (0,0) regardless of the
+      // page's current scroll position, since the wrapper is viewport-relative.
+      opt = Object.assign({}, opt, {
+        html2canvas: Object.assign({ scrollX: -window.scrollX, scrollY: -window.scrollY }, opt.html2canvas)
+      });
+      html2pdf().set(opt).from(captureTarget).save().then(()=>{
+        document.body.removeChild(wrapper);
+        document.body.removeChild(overlay);
+        resolve();
+      }).catch(err=>{
+        if(wrapper.parentNode) document.body.removeChild(wrapper);
+        if(overlay.parentNode) document.body.removeChild(overlay);
+        reject(err);
+      });
+    });});
+  });
+}
 function downloadPdfFromHtml(filenameBase, title, bodyHtml){
   if(typeof html2pdf === 'undefined'){ toast('PDF tool failed to load — check your connection and try again.'); return; }
-  const wrapper = document.createElement('div');
-  wrapper.style.cssText = 'position:fixed; left:-9999px; top:0; width:760px; background:#ffffff;';
-  wrapper.innerHTML = pdfLetterheadHtml(title, stripInteractiveHtml(bodyHtml));
-  document.body.appendChild(wrapper);
+  const innerHtml = `<div style="width:760px;">${pdfLetterheadHtml(title, stripInteractiveHtml(bodyHtml))}</div>`;
   const opt = {
     margin: 10,
     filename: filenameBase + '-' + new Date().toISOString().split('T')[0] + '.pdf',
@@ -2193,12 +2273,8 @@ function downloadPdfFromHtml(filenameBase, title, bodyHtml){
     jsPDF: { unit:'mm', format:'a4', orientation:'portrait' },
     pagebreak: { mode:['avoid-all','css','legacy'] }
   };
-  toast('Preparing PDF…');
-  html2pdf().set(opt).from(wrapper).save().then(()=>{
-    document.body.removeChild(wrapper);
-  }).catch((e)=>{
+  capturePdfElement(innerHtml, opt).catch((e)=>{
     console.warn(e);
-    if(wrapper.parentNode) document.body.removeChild(wrapper);
     toast('Could not generate PDF — try Print instead.');
   });
 }
@@ -2273,11 +2349,6 @@ function downloadInvestmentCertificate(id){
     </div>
   `;
 
-  const wrapper = document.createElement('div');
-  wrapper.style.cssText = 'position:fixed; left:-9999px; top:0;';
-  wrapper.innerHTML = html;
-  document.body.appendChild(wrapper);
-
   const opt = {
     margin: 0,
     filename: 'investment-certificate-' + certNo + '.pdf',
@@ -2285,12 +2356,77 @@ function downloadInvestmentCertificate(id){
     html2canvas: { scale:2, useCORS:true, backgroundColor:'#faf7ef' },
     jsPDF: { unit:'mm', format:'a4', orientation:'landscape' }
   };
-  toast('Preparing certificate…');
-  html2pdf().set(opt).from(wrapper).save().then(()=>{
-    document.body.removeChild(wrapper);
-  }).catch((e)=>{
+  capturePdfElement(html, opt).catch((e)=>{
     console.warn(e);
-    if(wrapper.parentNode) document.body.removeChild(wrapper);
+    toast('Could not generate certificate PDF.');
+  });
+}
+
+function downloadPurchaseCertificate(id){
+  const pu = allPurchases.find(x=>x.id===id);
+  if(!pu) return;
+  if(!['approved','completed'].includes(pu.status)){
+    toast('Certificates are available once a purchase has been approved.');
+    return;
+  }
+  if(typeof html2pdf === 'undefined'){ toast('PDF tool failed to load — check your connection and try again.'); return; }
+
+  const company = siteSettings.companyName || 'Royal Luxury Mini Estate';
+  const buyerName = pu.userName || 'Valued Client';
+  const issueDate = new Date().toLocaleDateString('en-NG', {year:'numeric', month:'long', day:'numeric'});
+  const purchaseDate = pu.createdAt ? fmtDate(pu.createdAt) : '—';
+  const certNo = pu.purchaseId || pu.id;
+  const planText = pu.paymentPlan==='full' ? 'Full Payment' : `Installment Plan (${pu.months||0} months)`;
+  const paymentStatus = pu.paymentPlan==='full'
+    ? 'Fully Paid'
+    : (Number(pu.monthsPaid)||0) >= (pu.months||0) ? 'Fully Paid' : `${Number(pu.monthsPaid)||0} of ${pu.months||0} installments paid`;
+
+  const html = `
+    <div style="width:1000px; padding:26px; background:#faf7ef; font-family:Georgia,'Times New Roman',serif; color:#14110d;">
+      <div style="border:2px solid #b8863c; padding:6px;">
+        <div style="border:1px solid #b8863c; padding:50px 60px; text-align:center; position:relative;">
+          <div style="font-size:12px; letter-spacing:4px; color:#b8863c; margin-bottom:6px;">${company.toUpperCase()}</div>
+          <div style="font-size:34px; font-weight:700; letter-spacing:2px; margin-bottom:6px;">CERTIFICATE OF PURCHASE</div>
+          <div style="width:120px; height:2px; background:#b8863c; margin:14px auto 30px;"></div>
+
+          <div style="font-size:14px; color:#555; margin-bottom:10px;">This is to certify that</div>
+          <div style="font-size:30px; font-weight:600; margin-bottom:14px; border-bottom:1px solid #d8cba8; display:inline-block; padding:0 30px 8px;">${buyerName}</div>
+          <div style="font-size:14px; color:#555; max-width:720px; margin:18px auto; line-height:1.8;">
+            has entered into an agreement to purchase <b>${pu.propertyName||''}</b> from ${company}
+            for the total sum of <b style="color:#b8863c; font-size:18px;">${fmtNaira(pu.totalPayable)}</b>,
+            under a <b>${planText}</b>, recorded on <b>${purchaseDate}</b>.
+            <br><br>Payment Status: <b>${paymentStatus}</b>
+          </div>
+
+          <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-top:50px; padding:0 20px;">
+            <div style="text-align:left; font-size:11.5px; color:#666;">
+              <div>Certificate No: <b style="color:#14110d;">${certNo}</b></div>
+              <div>Date Issued: <b style="color:#14110d;">${issueDate}</b></div>
+            </div>
+            <div style="width:90px; height:90px; border:2px solid #b8863c; border-radius:50%; display:flex; align-items:center; justify-content:center; flex-direction:column; color:#b8863c; font-size:10px; letter-spacing:1px; text-align:center;">
+              <div style="font-size:20px;">★</div>
+              <div>OFFICIAL<br>SEAL</div>
+            </div>
+            <div style="text-align:center; font-size:11.5px; color:#666;">
+              <div style="border-bottom:1px solid #14110d; width:160px; margin-bottom:6px;">&nbsp;</div>
+              <div>Authorized Signatory</div>
+              <div style="font-weight:600; color:#14110d;">${company}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const opt = {
+    margin: 0,
+    filename: 'purchase-certificate-' + certNo + '.pdf',
+    image: { type:'jpeg', quality:0.98 },
+    html2canvas: { scale:2, useCORS:true, backgroundColor:'#faf7ef' },
+    jsPDF: { unit:'mm', format:'a4', orientation:'landscape' }
+  };
+  capturePdfElement(html, opt).catch((e)=>{
+    console.warn(e);
     toast('Could not generate certificate PDF.');
   });
 }
@@ -2589,7 +2725,7 @@ function badgeClass(status){
   return '';
 }
 
-function propCardHtml(p){
+function propCardHtml(p, withCompare){
   const img = (p.images && p.images[0]) || '';
   const photoCount = (p.images && p.images.length) || 0;
   const tags = (p.tags||[]).slice(0,3);
@@ -2619,7 +2755,10 @@ function propCardHtml(p){
         <span><b>${fmtNaira(p.minInvestment)}</b> Min. Invest</span>
       </div>
       ${tags.length ? `<div class="prop-tags">${tags.map(t=>`<span>${t}</span>`).join('')}</div>` : ''}
-      <div class="prop-cta">View Details →</div>
+      <div class="prop-cta-row">
+        <span class="prop-cta">View Details →</span>
+        ${withCompare ? `<label class="compare-check" onclick="event.stopPropagation();"><input type="checkbox" onchange="toggleCompare('${p.id}', this)" ${compareList.includes(p.id)?'checked':''}> Compare</label>` : ''}
+      </div>
     </div>
     <div class="prop-footer">
       <div class="prop-agent-avatar">${initials}</div>
@@ -2634,7 +2773,7 @@ function propCardHtml(p){
 function renderHomeProperties(){
   const grid = document.getElementById('homePropGrid');
   const list = allProperties.filter(p=>p.status==='Available').slice(0,3);
-  grid.innerHTML = list.length ? list.map(propCardHtml).join('') : '<div class="empty-state">No properties listed yet. Check back soon.</div>';
+  grid.innerHTML = list.length ? list.map(p=>propCardHtml(p)).join('') : '<div class="empty-state">No properties listed yet. Check back soon.</div>';
 }
 
 function renderProperties(){
@@ -2661,7 +2800,78 @@ function renderProperties(){
 
   const countEl = document.getElementById('propResultsCount');
   if(countEl) countEl.textContent = list.length + ' propert' + (list.length===1?'y':'ies') + ' found';
-  grid.innerHTML = list.length ? list.map(propCardHtml).join('') : '<div class="empty-state">No properties match your search.</div>';
+  grid.innerHTML = list.length ? list.map(p=>propCardHtml(p, true)).join('') : '<div class="empty-state">No properties match your search.</div>';
+}
+
+/* ================= PROPERTY COMPARISON ================= */
+function toggleCompare(id, checkboxEl){
+  if(checkboxEl.checked){
+    if(compareList.length>=3){
+      checkboxEl.checked = false;
+      toast('You can compare up to 3 properties at a time.');
+      return;
+    }
+    if(!compareList.includes(id)) compareList.push(id);
+  } else {
+    compareList = compareList.filter(x=>x!==id);
+  }
+  updateCompareBar();
+}
+function removeFromCompare(id){
+  compareList = compareList.filter(x=>x!==id);
+  updateCompareBar();
+  renderProperties();
+}
+function clearCompare(){
+  compareList = [];
+  updateCompareBar();
+  renderProperties();
+}
+function updateCompareBar(){
+  const bar = document.getElementById('compareBar');
+  const chips = document.getElementById('compareChips');
+  const countEl = document.getElementById('compareCount');
+  const btn = document.getElementById('compareNowBtn');
+  if(!bar) return;
+  bar.classList.toggle('show', compareList.length>0);
+  chips.innerHTML = compareList.map(id=>{
+    const p = allProperties.find(x=>x.id===id);
+    return p ? `<span class="compare-chip">${p.name}<button onclick="removeFromCompare('${id}')" aria-label="Remove">&times;</button></span>` : '';
+  }).join('');
+  countEl.textContent = compareList.length;
+  btn.disabled = compareList.length < 2;
+}
+function openCompareModal(){
+  if(compareList.length<2) return;
+  const props = compareList.map(id=>allProperties.find(p=>p.id===id)).filter(Boolean);
+  const rows = [
+    {label:'Price', get:p=>fmtNaira(p.price)},
+    {label:'Type', get:p=>p.type||'—'},
+    {label:'Status', get:p=>p.status||'—'},
+    {label:'Location', get:p=>p.location||'—'},
+    {label:'Monthly ROI', get:p=>(p.roi||0)+'%'},
+    {label:'Duration', get:p=>(p.duration||0)+' months'},
+    {label:'Min. Investment', get:p=>fmtNaira(p.minInvestment)},
+    {label:'Bedrooms', get:p=>p.bedrooms||'—'},
+    {label:'Bathrooms', get:p=>p.bathrooms||'—'},
+    {label:'Features', get:p=>(p.tags&&p.tags.length)?p.tags.join(', '):'—'}
+  ];
+  let html = '<div class="table-wrap"><table class="compare-table"><thead><tr><th></th>';
+  props.forEach(p=>{
+    const img = (p.images && p.images[0]) || '';
+    html += `<th><div class="compare-col-head">${img?`<img src="${img}">`:''}<div class="compare-col-name">${p.name}</div></div></th>`;
+  });
+  html += '</tr></thead><tbody>';
+  rows.forEach(r=>{
+    html += `<tr><td class="compare-label">${r.label}</td>`;
+    props.forEach(p=>{ html += `<td>${r.get(p)}</td>`; });
+    html += '</tr>';
+  });
+  html += `<tr><td></td>`;
+  props.forEach(p=>{ html += `<td><button class="btn btn-sm btn-block" onclick="closeModal('compareModalBg'); viewProperty('${p.id}');">View Property</button></td>`; });
+  html += '</tr></tbody></table></div>';
+  document.getElementById('compareModalBody').innerHTML = html;
+  openModalEl('compareModalBg');
 }
 
 function clearPropertyFilters(){
@@ -3715,6 +3925,9 @@ function renderUserPurchases(){
         actionHtml = '<span class="small-muted">Awaiting approval</span>';
       }
     }
+    if(pu.status==='approved' || pu.status==='completed'){
+      actionHtml += `<br><button class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="downloadPurchaseCertificate('${pu.id}')">🎓 Certificate</button>`;
+    }
     return `
     <tr><td>${pu.purchaseId}</td><td>${pu.propertyName}</td>
     <td>${pu.paymentPlan==='full' ? 'Full Payment' : 'Installment ('+pu.months+' mo)'}</td>
@@ -4740,7 +4953,7 @@ function viewPurchaseDetail(id){
   } else if(pu.status==='approved'){
     actions = `<button class="btn btn-sm" onclick="updatePurchaseStatus('${pu.id}','completed')">Mark Completed</button>`;
   }
-  document.getElementById('purchaseDetailFoot').innerHTML = `<button class="btn btn-ghost btn-sm" onclick="printElementContent('purchaseDetailBody','Purchase Details')">🖨️ Print</button><button class="btn btn-ghost btn-sm" onclick="downloadElementPdf('purchaseDetailBody','Purchase Details','purchase-details')">⬇️ PDF</button>` + actions + `<button class="btn btn-ghost btn-sm" onclick="closeModal('purchaseDetailModalBg')">Close</button>`;
+  document.getElementById('purchaseDetailFoot').innerHTML = `<button class="btn btn-ghost btn-sm" onclick="printElementContent('purchaseDetailBody','Purchase Details')">🖨️ Print</button><button class="btn btn-ghost btn-sm" onclick="downloadElementPdf('purchaseDetailBody','Purchase Details','purchase-details')">⬇️ PDF</button>${(pu.status==='approved'||pu.status==='completed') ? `<button class="btn btn-ghost btn-sm" onclick="downloadPurchaseCertificate('${pu.id}')">🎓 Certificate</button>` : ''}` + actions + `<button class="btn btn-ghost btn-sm" onclick="closeModal('purchaseDetailModalBg')">Close</button>`;
   openModalEl('purchaseDetailModalBg');
   if(pu.paymentPlan==='installment') loadInstallmentPaymentsForAdmin(pu.id);
 }
