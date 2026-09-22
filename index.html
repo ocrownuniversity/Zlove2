@@ -1010,6 +1010,12 @@ body:has(#page-home.active) footer a{cursor:pointer;}
 </div>
 
 <!-- Property Comparison Modal -->
+<div class="modal-bg" id="imgLightboxBg" onclick="if(event.target===this) closeModal('imgLightboxBg')">
+  <div class="modal wide" style="background:transparent; box-shadow:none; padding:0;">
+    <div class="modal-head" style="border:none;"><span></span><button class="modal-close" onclick="closeModal('imgLightboxBg')">&times;</button></div>
+    <div class="modal-body" style="padding:0; text-align:center;"><img id="imgLightboxImg" src="" style="max-width:100%; max-height:80vh; object-fit:contain; background:var(--cream); border-radius:4px;"></div>
+  </div>
+</div>
 <div class="modal-bg" id="compareModalBg">
   <div class="modal wide">
     <div class="modal-head"><h3>Compare Properties</h3><button class="modal-close" onclick="closeModal('compareModalBg')">&times;</button></div>
@@ -2544,6 +2550,16 @@ function downloadAllRegisteredDocuments(){
   });
   toast('Downloading ' + docDownloadRegistry.length + ' document(s)...');
 }
+/* Full-size in-app viewer for uploaded document/photo images. Opening a large
+   base64 image directly in a new browser tab (via a plain <a target="_blank">)
+   can render blank on mobile because the data URL is too long for the browser
+   to navigate to — so instead we show it full-size inside the app itself. */
+function viewDocImage(idx){
+  const item = docDownloadRegistry[idx];
+  if(!item || !item.url){ toast('That file is no longer available.'); return; }
+  document.getElementById('imgLightboxImg').src = item.url;
+  openModalEl('imgLightboxBg');
+}
 
 /* ================= CERTIFICATE ENGINE =================
    Certificates are drawn straight onto a canvas (A4 landscape) and wrapped into a one-page PDF,
@@ -2776,6 +2792,9 @@ function downloadInvestmentCertificate(id){
   const startDate = inv.createdAt ? fmtDate(inv.createdAt) : '—';
   const maturityDate = inv.maturityDate ? fmtDate(inv.maturityDate) : '—';
   const certNo = inv.investmentId || inv.id;
+  const totalPayout = (inv.totalReturn != null && inv.totalReturn !== '')
+    ? Number(inv.totalReturn)
+    : Number(inv.amount||0) + (Number(inv.amount||0) * (Number(inv.roi||0)/100)) * Number(inv.duration||0);
 
   certDownload({
     company, title:'CERTIFICATE OF INVESTMENT', name:investorName, certNo, issueDate,
@@ -2792,7 +2811,8 @@ function downloadInvestmentCertificate(id){
       ['Amount Invested', fmtNaira(inv.amount)],
       ['Monthly Return', `${inv.roi||0}%`],
       ['Duration', `${inv.duration||0} months`],
-      ['Maturity Date', maturityDate]
+      ['Maturity Date', maturityDate],
+      ['Total Payout at Maturity', fmtNaira(totalPayout)]
     ]
   }, 'investment-certificate-' + certNo + '.pdf').catch((e)=>{
     console.warn(e);
@@ -3236,7 +3256,7 @@ function propCardHtml(p, withCompare){
       <div class="prop-agent-avatar">${initials}</div>
       <div>
         <div class="fname">${companyName}</div>
-        <div class="fsub">${p.pid ? 'PID: '+p.pid : 'Verified Listing'}</div>
+        <div class="fsub">Verified Listing</div>
       </div>
     </div>
   </div>`;
@@ -5324,7 +5344,7 @@ function viewInvestmentDetail(id){
   const imgRow = (url, label, filename) => {
     if(!url) return `<p class="err-msg" style="margin-bottom:14px;">${label}: not provided.</p>`;
     const idx = registerDocDownload(url, filename || ((i.investmentId||'investment') + '-' + label));
-    return `<div style="margin-bottom:14px;"><p class="small-muted" style="margin-bottom:6px;">${label}</p><a href="${url}" target="_blank"><img src="${url}" style="width:100%; max-height:300px; object-fit:contain; border:1px solid var(--line); background:var(--cream);"></a><button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="downloadDocFromRegistry(${idx})">⬇️ Download</button></div>`;
+    return `<div style="margin-bottom:14px;"><p class="small-muted" style="margin-bottom:6px;">${label}</p><img src="${url}" style="width:100%; max-height:300px; object-fit:contain; border:1px solid var(--line); background:var(--cream); cursor:zoom-in;" onclick="viewDocImage(${idx})"><button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="downloadDocFromRegistry(${idx})">⬇️ Download</button></div>`;
   };
   document.getElementById('invDetailBody').innerHTML = `
     <div class="summary-box">
@@ -5439,7 +5459,7 @@ function viewPurchaseDetail(id){
   const imgRow = (url, label, filename) => {
     if(!url) return `<p class="err-msg" style="margin-bottom:14px;">${label}: not provided.</p>`;
     const idx = registerDocDownload(url, filename || ((pu.purchaseId||'purchase') + '-' + label));
-    return `<div style="margin-bottom:14px;"><p class="small-muted" style="margin-bottom:6px;">${label}</p><a href="${url}" target="_blank"><img src="${url}" style="width:100%; max-height:300px; object-fit:contain; border:1px solid var(--line); background:var(--cream);"></a><button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="downloadDocFromRegistry(${idx})">⬇️ Download</button></div>`;
+    return `<div style="margin-bottom:14px;"><p class="small-muted" style="margin-bottom:6px;">${label}</p><img src="${url}" style="width:100%; max-height:300px; object-fit:contain; border:1px solid var(--line); background:var(--cream); cursor:zoom-in;" onclick="viewDocImage(${idx})"><button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="downloadDocFromRegistry(${idx})">⬇️ Download</button></div>`;
   };
   document.getElementById('purchaseDetailBody').innerHTML = `
     <div class="summary-box">
