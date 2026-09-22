@@ -1510,10 +1510,9 @@ body:has(#page-home.active) footer a{cursor:pointer;}
             <div class="field"><label>CEO Name</label><input id="setCeoName" placeholder="e.g. Jane Doe"></div>
             <div class="field">
               <label>CEO Signature</label>
-              <div class="upload-drop" onclick="document.getElementById('ceoSigInput').click()">Click to upload a photo or scan of the CEO's signature</div>
-              <input type="file" id="ceoSigInput" accept="image/*" class="hidden" onchange="handleCeoSigUpload(event)">
-              <div class="img-upload-grid" id="ceoSigPreviewGrid"></div>
-              <p class="hint">Best results: a signature signed on plain white paper, photographed in good light.</p>
+              <p class="small-muted" style="margin-bottom:8px;">Sign inside the box below with your finger, stylus or mouse.</p>
+              <canvas id="ceoSigCanvas" width="600" height="180" style="width:100%; height:150px; border:1px solid var(--line); background:#fff; touch-action:none; border-radius:3px; display:block;"></canvas>
+              <button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="clearCeoSignature()">Clear Signature</button>
             </div>
             <button class="btn" type="submit">Save Settings</button>
           </form>
@@ -1632,7 +1631,7 @@ body:has(#page-home.active) footer a{cursor:pointer;}
       <div class="field"><label>Expected Return Plan</label><input type="text" id="investReturnPlan" readonly></div>
       <div class="field">
         <label>Payment Method <span style="color:var(--bad)">*</span></label>
-        <select id="investPaymentMethod">
+        <select id="investPaymentMethod" onchange="onInvestPaymentMethodChange()">
           <option value="">Select payment method</option>
           <option>Bank Transfer</option>
           <option>Cash Deposit</option>
@@ -1683,12 +1682,13 @@ body:has(#page-home.active) footer a{cursor:pointer;}
 
       <div class="divider"></div>
       <div class="section-title-sm">Supporting Documents</div>
-      <div class="field">
+      <div class="field" id="investReceiptField">
         <label>Proof of Payment <span style="color:var(--bad)">*</span></label>
         <div class="upload-drop" onclick="document.getElementById('receiptInput').click()">Click to upload your proof of payment (image)</div>
         <input type="file" id="receiptInput" accept="image/*" class="hidden" onchange="handleReceiptUpload(event)">
         <div class="img-upload-grid" id="receiptPreviewGrid"></div>
       </div>
+      <p class="hint" id="investCashDepositNote" style="display:none;">No receipt needed — your cash deposit will be confirmed by our team directly.</p>
       <div class="field">
         <label>Signature <span style="color:var(--bad)">*</span></label>
         <p class="hint" style="margin-top:0; margin-bottom:8px;">Sign inside the box below with your finger or mouse.</p>
@@ -2511,6 +2511,40 @@ function downloadPropertyBrochurePdf(id){
   downloadPdfFromHtml('property-' + (p.pid || p.id), 'Property Details — ' + (p.name||''), propertyBrochureBodyHtml(p));
 }
 
+/* ================= ADMIN: DOWNLOAD UPLOADED DOCUMENTS =================
+   Used by the Investment Details and Purchase Details admin modals so the admin
+   can download the passport, ID, next-of-kin photo, receipt and signature images
+   that the investor/purchaser uploaded — individually or all at once. */
+let docDownloadRegistry = [];
+function resetDocDownloadRegistry(){ docDownloadRegistry = []; }
+function registerDocDownload(url, filename){
+  if(!url) return -1;
+  docDownloadRegistry.push({url, filename});
+  return docDownloadRegistry.length - 1;
+}
+function downloadDataUrl(url, filename){
+  try{
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || 'document';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }catch(err){ toast('Could not download that file.'); }
+}
+function downloadDocFromRegistry(idx){
+  const item = docDownloadRegistry[idx];
+  if(!item){ toast('That file is no longer available.'); return; }
+  downloadDataUrl(item.url, item.filename);
+}
+function downloadAllRegisteredDocuments(){
+  if(!docDownloadRegistry.length){ toast('No uploaded documents to download.'); return; }
+  docDownloadRegistry.forEach((item, idx)=>{
+    setTimeout(()=> downloadDataUrl(item.url, item.filename), idx * 450);
+  });
+  toast('Downloading ' + docDownloadRegistry.length + ' document(s)...');
+}
+
 /* ================= CERTIFICATE ENGINE =================
    Certificates are drawn straight onto a canvas (A4 landscape) and wrapped into a one-page PDF,
    so the result never depends on the phone's screen size or scroll position. */
@@ -2829,27 +2863,58 @@ async function loadSettings(){
   applySettingsToUI();
 }
 
-let ceoSigDataUrl = null;
+let ceoSigCtx = null;
+let ceoSigDrawing = false;
+let ceoSigHasContent = false;
 let ceoSigRemoved = false;
-async function handleCeoSigUpload(e){
-  const file = e.target.files && e.target.files[0];
-  e.target.value = '';
-  if(!file) return;
-  const grid = document.getElementById('ceoSigPreviewGrid');
-  grid.innerHTML = '<span class="small-muted">Compressing signature...</span>';
-  try{
-    ceoSigDataUrl = await compressImage(file, 700, 0.8);
-    ceoSigRemoved = false;
-    grid.innerHTML = `<div class="img-thumb"><img src="${ceoSigDataUrl}" style="background:#fff;"><button type="button" onclick="removeCeoSigImg()">&times;</button></div>`;
-  }catch(err){
-    grid.innerHTML = '';
-    toast('Could not process that signature image.');
+
+/* Signature pad (canvas) for the CEO signature in Settings */
+function initCeoSignaturePad(){
+  const canvas = document.getElementById('ceoSigCanvas');
+  if(!canvas) return;
+  ceoSigCtx = canvas.getContext('2d');
+  ceoSigCtx.clearRect(0,0,canvas.width,canvas.height);
+  ceoSigCtx.strokeStyle = '#14110d';
+  ceoSigCtx.lineWidth = 2.5;
+  ceoSigCtx.lineJoin = 'round';
+  ceoSigCtx.lineCap = 'round';
+  ceoSigHasContent = false;
+  ceoSigRemoved = false;
+  if(siteSettings.ceoSignatureUrl){
+    const im = new Image();
+    im.onload = ()=>{
+      const k = Math.min(canvas.width/im.width, canvas.height/im.height);
+      const w = im.width*k, h = im.height*k;
+      ceoSigCtx.drawImage(im, (canvas.width-w)/2, (canvas.height-h)/2, w, h);
+      ceoSigHasContent = true;
+    };
+    im.src = siteSettings.ceoSignatureUrl;
   }
+  if(canvas.dataset.wired) return;
+  canvas.dataset.wired = '1';
+  function pos(evt){
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const p = evt.touches ? evt.touches[0] : evt;
+    return {x: (p.clientX-rect.left)*scaleX, y: (p.clientY-rect.top)*scaleY};
+  }
+  function start(evt){ evt.preventDefault(); ceoSigDrawing = true; const p = pos(evt); ceoSigCtx.beginPath(); ceoSigCtx.moveTo(p.x,p.y); }
+  function move(evt){ if(!ceoSigDrawing) return; evt.preventDefault(); const p = pos(evt); ceoSigCtx.lineTo(p.x,p.y); ceoSigCtx.stroke(); ceoSigHasContent = true; ceoSigRemoved = false; }
+  function end(evt){ ceoSigDrawing = false; }
+  canvas.addEventListener('mousedown', start);
+  canvas.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', end);
+  canvas.addEventListener('touchstart', start, {passive:false});
+  canvas.addEventListener('touchmove', move, {passive:false});
+  canvas.addEventListener('touchend', end);
 }
-function removeCeoSigImg(){
-  ceoSigDataUrl = null;
+function clearCeoSignature(){
+  const canvas = document.getElementById('ceoSigCanvas');
+  if(!canvas || !ceoSigCtx) return;
+  ceoSigCtx.clearRect(0,0,canvas.width,canvas.height);
+  ceoSigHasContent = false;
   ceoSigRemoved = true;
-  document.getElementById('ceoSigPreviewGrid').innerHTML = '';
 }
 
 async function saveSettings(e){
@@ -2869,15 +2934,15 @@ async function saveSettings(e){
     installmentInterestRate: Number(document.getElementById('setInstallmentRate').value)||0,
     ceoName: document.getElementById('setCeoName').value.trim()
   };
-  if(ceoSigDataUrl){
-    data.ceoSignatureUrl = ceoSigDataUrl;
+  if(ceoSigHasContent){
+    data.ceoSignatureUrl = document.getElementById('ceoSigCanvas').toDataURL('image/png');
   } else if(ceoSigRemoved){
     data.ceoSignatureUrl = '';
   }
   try{
     await db.collection('settings').doc('main').set(data, {merge:true});
     siteSettings = Object.assign(siteSettings, data);
-    ceoSigDataUrl = null; ceoSigRemoved = false;
+    ceoSigRemoved = false;
     applySettingsToUI();
     document.getElementById('settingsMsg').innerHTML = '<div class="ok-msg">Settings saved successfully.</div>';
     toast('Settings updated');
@@ -2900,11 +2965,7 @@ function fillSettingsForm(){
   document.getElementById('setPaymentNote').value = siteSettings.paymentNote||'';
   document.getElementById('setInstallmentRate').value = (siteSettings.installmentInterestRate!==undefined && siteSettings.installmentInterestRate!==null) ? siteSettings.installmentInterestRate : '';
   document.getElementById('setCeoName').value = siteSettings.ceoName||'';
-  ceoSigDataUrl = null; ceoSigRemoved = false;
-  const ceoGrid = document.getElementById('ceoSigPreviewGrid');
-  ceoGrid.innerHTML = siteSettings.ceoSignatureUrl
-    ? `<div class="img-thumb"><img src="${siteSettings.ceoSignatureUrl}" style="background:#fff;"><button type="button" onclick="removeCeoSigImg()">&times;</button></div>`
-    : '';
+  initCeoSignaturePad();
 }
 
 /* ================= AUTH ================= */
@@ -3578,6 +3639,7 @@ function openInvestModal(propId){
   document.getElementById('investDurationHint').textContent = 'Minimum for this property: ' + minDur + ' months (3 years). You may choose a longer duration — there is no maximum.';
   document.getElementById('investReturnPlan').value = 'Fixed ' + (Number(p.roi)||0) + '%/month for ' + minDur + ' months';
   document.getElementById('investPaymentMethod').value = '';
+  onInvestPaymentMethodChange();
   document.getElementById('investDate').value = new Date().toLocaleDateString('en-NG', {year:'numeric', month:'long', day:'numeric'});
   document.getElementById('investPayoutAccountName').value = '';
   document.getElementById('investPayoutBankName').value = '';
@@ -3590,6 +3652,15 @@ function openInvestModal(propId){
 
   updateInvestPreview();
   openModalEl('investModalBg');
+}
+
+function onInvestPaymentMethodChange(){
+  const isCash = document.getElementById('investPaymentMethod').value === 'Cash Deposit';
+  const field = document.getElementById('investReceiptField');
+  const note = document.getElementById('investCashDepositNote');
+  if(field) field.style.display = isCash ? 'none' : '';
+  if(note) note.style.display = isCash ? '' : 'none';
+  if(isCash){ receiptDataUrl = null; document.getElementById('receiptPreviewGrid').innerHTML = ''; }
 }
 
 let receiptDataUrl = null;
@@ -3797,7 +3868,7 @@ async function submitInvestment(){
     msgEl.innerHTML = '<div class="err-msg">Please upload a passport photograph of your next of kin.</div>';
     return;
   }
-  if(!receiptDataUrl){
+  if(!receiptDataUrl && paymentMethod !== 'Cash Deposit'){
     msgEl.innerHTML = '<div class="err-msg">Please upload your proof of payment before confirming.</div>';
     return;
   }
@@ -5249,9 +5320,12 @@ function renderAdminInvestments(){
 function viewInvestmentDetail(id){
   const i = allInvestments.find(x=>x.id===id);
   if(!i) return;
-  const imgRow = (url, label) => url
-    ? `<div style="margin-bottom:14px;"><p class="small-muted" style="margin-bottom:6px;">${label}</p><a href="${url}" target="_blank"><img src="${url}" style="width:100%; max-height:300px; object-fit:contain; border:1px solid var(--line); background:var(--cream);"></a></div>`
-    : `<p class="err-msg" style="margin-bottom:14px;">${label}: not provided.</p>`;
+  resetDocDownloadRegistry();
+  const imgRow = (url, label, filename) => {
+    if(!url) return `<p class="err-msg" style="margin-bottom:14px;">${label}: not provided.</p>`;
+    const idx = registerDocDownload(url, filename || ((i.investmentId||'investment') + '-' + label));
+    return `<div style="margin-bottom:14px;"><p class="small-muted" style="margin-bottom:6px;">${label}</p><a href="${url}" target="_blank"><img src="${url}" style="width:100%; max-height:300px; object-fit:contain; border:1px solid var(--line); background:var(--cream);"></a><button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="downloadDocFromRegistry(${idx})">⬇️ Download</button></div>`;
+  };
   document.getElementById('invDetailBody').innerHTML = `
     <div class="summary-box">
       <div class="summary-row"><span>Investment ID</span><b>${i.investmentId}</b></div>
@@ -5321,7 +5395,7 @@ function viewInvestmentDetail(id){
   } else if(i.status==='withdrawal_requested'){
     actions = `<button class="btn btn-sm" onclick="updateInvestmentStatus('${i.id}','withdrawn')">Mark Withdrawn (Paid)</button>`;
   }
-  document.getElementById('invDetailFoot').innerHTML = `<button class="btn btn-ghost btn-sm" onclick="printElementContent('invDetailBody','Investment Details')">🖨️ Print</button><button class="btn btn-ghost btn-sm" onclick="downloadElementPdf('invDetailBody','Investment Details','investment-details')">⬇️ PDF</button>${(i.status==='approved'||i.status==='withdrawal_requested'||i.status==='completed'||i.status==='withdrawn') ? `<button class="btn btn-ghost btn-sm" onclick="downloadInvestmentCertificate('${i.id}')">🎓 Certificate</button>` : ''}` + actions + `<button class="btn btn-ghost btn-sm" onclick="closeModal('invDetailModalBg')">Close</button>`;
+  document.getElementById('invDetailFoot').innerHTML = `<button class="btn btn-ghost btn-sm" onclick="printElementContent('invDetailBody','Investment Details')">🖨️ Print</button><button class="btn btn-ghost btn-sm" onclick="downloadElementPdf('invDetailBody','Investment Details','investment-details')">⬇️ PDF</button>${docDownloadRegistry.length ? `<button class="btn btn-ghost btn-sm" onclick="downloadAllRegisteredDocuments()">📎 Download All Documents</button>` : ''}${(i.status==='approved'||i.status==='withdrawal_requested'||i.status==='completed'||i.status==='withdrawn') ? `<button class="btn btn-ghost btn-sm" onclick="downloadInvestmentCertificate('${i.id}')">🎓 Certificate</button>` : ''}` + actions + `<button class="btn btn-ghost btn-sm" onclick="closeModal('invDetailModalBg')">Close</button>`;
   openModalEl('invDetailModalBg');
 }
 
@@ -5360,10 +5434,13 @@ function renderAdminPurchases(){
 function viewPurchaseDetail(id){
   const pu = allPurchases.find(x=>x.id===id);
   if(!pu) return;
+  resetDocDownloadRegistry();
   const planText = pu.paymentPlan==='full' ? 'Full Payment — No Interest' : `Installment — ${pu.months} months at ${pu.interestRate}%/month`;
-  const imgRow = (url, label) => url
-    ? `<div style="margin-bottom:14px;"><p class="small-muted" style="margin-bottom:6px;">${label}</p><a href="${url}" target="_blank"><img src="${url}" style="width:100%; max-height:300px; object-fit:contain; border:1px solid var(--line); background:var(--cream);"></a></div>`
-    : `<p class="err-msg" style="margin-bottom:14px;">${label}: not provided.</p>`;
+  const imgRow = (url, label, filename) => {
+    if(!url) return `<p class="err-msg" style="margin-bottom:14px;">${label}: not provided.</p>`;
+    const idx = registerDocDownload(url, filename || ((pu.purchaseId||'purchase') + '-' + label));
+    return `<div style="margin-bottom:14px;"><p class="small-muted" style="margin-bottom:6px;">${label}</p><a href="${url}" target="_blank"><img src="${url}" style="width:100%; max-height:300px; object-fit:contain; border:1px solid var(--line); background:var(--cream);"></a><button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="downloadDocFromRegistry(${idx})">⬇️ Download</button></div>`;
+  };
   document.getElementById('purchaseDetailBody').innerHTML = `
     <div class="summary-box">
       <div class="summary-row"><span>Purchase ID</span><b>${pu.purchaseId}</b></div>
@@ -5430,6 +5507,7 @@ function viewPurchaseDetail(id){
     <div class="section-title-sm">Payment Receipt (deposit / full payment)</div>
     ${pu.receiptUrl
       ? `<a href="${pu.receiptUrl}" target="_blank"><img src="${pu.receiptUrl}" style="width:100%; max-height:360px; object-fit:contain; border:1px solid var(--line); background:var(--cream);"></a>
+         <button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="downloadDocFromRegistry(${registerDocDownload(pu.receiptUrl, (pu.purchaseId||'purchase') + '-Payment Receipt')})">⬇️ Download</button>
          <p class="small-muted" style="margin-top:6px;">Tap the image to view it full size before approving.</p>`
       : `<p class="err-msg">No receipt was uploaded for this purchase.</p>`}
     ${pu.paymentPlan==='installment' ? `<div class="section-title-sm">Monthly Installment Payments</div>
@@ -5442,7 +5520,7 @@ function viewPurchaseDetail(id){
   } else if(pu.status==='approved'){
     actions = `<button class="btn btn-sm" onclick="updatePurchaseStatus('${pu.id}','completed')">Mark Completed</button>`;
   }
-  document.getElementById('purchaseDetailFoot').innerHTML = `<button class="btn btn-ghost btn-sm" onclick="printElementContent('purchaseDetailBody','Purchase Details')">🖨️ Print</button><button class="btn btn-ghost btn-sm" onclick="downloadElementPdf('purchaseDetailBody','Purchase Details','purchase-details')">⬇️ PDF</button>${(pu.status==='approved'||pu.status==='completed') ? `<button class="btn btn-ghost btn-sm" onclick="downloadPurchaseCertificate('${pu.id}')">🎓 Certificate</button>` : ''}` + actions + `<button class="btn btn-ghost btn-sm" onclick="closeModal('purchaseDetailModalBg')">Close</button>`;
+  document.getElementById('purchaseDetailFoot').innerHTML = `<button class="btn btn-ghost btn-sm" onclick="printElementContent('purchaseDetailBody','Purchase Details')">🖨️ Print</button><button class="btn btn-ghost btn-sm" onclick="downloadElementPdf('purchaseDetailBody','Purchase Details','purchase-details')">⬇️ PDF</button>${docDownloadRegistry.length ? `<button class="btn btn-ghost btn-sm" onclick="downloadAllRegisteredDocuments()">📎 Download All Documents</button>` : ''}${(pu.status==='approved'||pu.status==='completed') ? `<button class="btn btn-ghost btn-sm" onclick="downloadPurchaseCertificate('${pu.id}')">🎓 Certificate</button>` : ''}` + actions + `<button class="btn btn-ghost btn-sm" onclick="closeModal('purchaseDetailModalBg')">Close</button>`;
   openModalEl('purchaseDetailModalBg');
   if(pu.paymentPlan==='installment') loadInstallmentPaymentsForAdmin(pu.id);
 }
