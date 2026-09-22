@@ -1795,7 +1795,7 @@ body:has(#page-home.active) footer a{cursor:pointer;}
       <div class="field"><label>Property Address / Unit Number <span style="color:var(--bad)">*</span></label><input type="text" id="buyUnitNumber" placeholder="e.g. Block A, Plot 12"></div>
       <div class="field"><label>Agreed Purchase Price (₦) <span style="color:var(--bad)">*</span></label><input type="number" id="buyAgreedPrice" min="0"><p class="hint">Defaults to the listed price. Only change this if you and admin agreed a different price — the totals below are still calculated from the official listed price.</p></div>
       <div class="field">
-        <label>Payment Method</label>
+        <label>Purchase Plan</label>
         <select id="buyPlan" onchange="onBuyPlanChange()">
           <option value="full">Outright — Pay in Full, No Interest</option>
           <option value="installment">Installment — Interest Applies</option>
@@ -1806,6 +1806,16 @@ body:has(#page-home.active) footer a{cursor:pointer;}
         <input type="number" id="buyMonths" min="1" max="60" value="6" oninput="updateBuyPreview()">
         <p class="hint" id="buyRateHint"></p>
         <p class="hint" id="buyDepositHint" style="color:var(--gold);"></p>
+      </div>
+      <div class="field">
+        <label>Payment Method <span style="color:var(--bad)">*</span></label>
+        <select id="buyPaymentMethod" onchange="onBuyPaymentMethodChange()">
+          <option value="">Select payment method</option>
+          <option>Bank Transfer</option>
+          <option>Cash Deposit</option>
+          <option>Card Payment</option>
+          <option>Other</option>
+        </select>
       </div>
 
       <div class="divider"></div>
@@ -1848,12 +1858,13 @@ body:has(#page-home.active) footer a{cursor:pointer;}
       <div class="field"><label>Full Name</label><input type="text" id="buyEmergencyName" placeholder="Emergency contact name"></div>
       <div class="field"><label>Phone Number</label><input type="tel" id="buyEmergencyPhone" placeholder="Emergency contact phone number"></div>
 
-      <div class="field" style="margin-top:16px;">
+      <div class="field" style="margin-top:16px;" id="buyReceiptField">
         <label>Payment Receipt <span style="color:var(--bad)">*</span></label>
         <div class="upload-drop" onclick="document.getElementById('buyReceiptInput').click()">Click to upload your payment receipt (image)</div>
         <input type="file" id="buyReceiptInput" accept="image/*" class="hidden" onchange="handleBuyReceiptUpload(event)">
         <div class="img-upload-grid" id="buyReceiptPreviewGrid"></div>
       </div>
+      <p class="hint" id="buyCashDepositNote" style="display:none;">No receipt needed — your cash deposit will be confirmed by our team directly.</p>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="closeModal('buyModalBg')">Cancel</button>
@@ -2625,6 +2636,16 @@ function certRich(ctx, segs, cx, y, maxW, lineH, size){
   });
   return y + Math.max(0, lines.length-1)*lineH;
 }
+function certFitSpacedSize(ctx, text, maxSize, minSize, maxW, weight, spacing){
+  const measure = size=>{
+    certFont(ctx, size, weight);
+    const chars = Array.from(text);
+    return chars.reduce((a,ch)=>a+ctx.measureText(ch).width,0) + spacing*Math.max(0,chars.length-1);
+  };
+  let size = maxSize;
+  while(size > minSize && measure(size) > maxW){ size -= 0.5; }
+  return size;
+}
 function certSignature(ctx, cx, img, label, name){
   const lineY = 652;
   if(img){
@@ -2720,7 +2741,9 @@ async function certRender(o){
   o.facts.forEach((f,i)=>{
     const fx = bx + cw*i + cw/2;
     if(i>0){ ctx.strokeStyle = 'rgba(184,134,60,0.4)'; ctx.beginPath(); ctx.moveTo(bx+cw*i, by+14); ctx.lineTo(bx+cw*i, by+bh-14); ctx.stroke(); }
-    ctx.fillStyle = CERT_GOLD; certFont(ctx, 10.5, 600); certSpaced(ctx, f[0].toUpperCase(), fx, by+27, 2);
+    ctx.fillStyle = CERT_GOLD;
+    const labelSize = certFitSpacedSize(ctx, f[0].toUpperCase(), 10.5, 6.5, cw-16, 600, 2);
+    certFont(ctx, labelSize, 600); certSpaced(ctx, f[0].toUpperCase(), fx, by+27, 2);
     ctx.fillStyle = CERT_INK;
     certFitSize(ctx, String(f[1]), 18, 11, cw-24, 700); certCentered(ctx, String(f[1]), fx, by+53);
   });
@@ -2812,7 +2835,7 @@ function downloadInvestmentCertificate(id){
       ['Monthly Return', `${inv.roi||0}%`],
       ['Duration', `${inv.duration||0} months`],
       ['Maturity Date', maturityDate],
-      ['Total Payout at Maturity', fmtNaira(totalPayout)]
+      ['Total Payout', fmtNaira(totalPayout)]
     ]
   }, 'investment-certificate-' + certNo + '.pdf').catch((e)=>{
     console.warn(e);
@@ -4016,6 +4039,8 @@ function openBuyModal(propId){
   document.getElementById('bbNote').textContent = siteSettings.paymentNote || '';
   buyReceiptDataUrl = null;
   document.getElementById('buyReceiptPreviewGrid').innerHTML = '';
+  document.getElementById('buyPaymentMethod').value = '';
+  onBuyPaymentMethodChange();
 
   document.getElementById('buyFullName').value = currentUserDoc.name || currentUser.displayName || '';
   document.getElementById('buyPhone').value = currentUserDoc.phone || '';
@@ -4051,6 +4076,15 @@ function onBuyPlanChange(){
   const plan = document.getElementById('buyPlan').value;
   document.getElementById('buyMonthsField').classList.toggle('hidden', plan!=='installment');
   updateBuyPreview();
+}
+
+function onBuyPaymentMethodChange(){
+  const isCash = document.getElementById('buyPaymentMethod').value === 'Cash Deposit';
+  const field = document.getElementById('buyReceiptField');
+  const note = document.getElementById('buyCashDepositNote');
+  if(field) field.style.display = isCash ? 'none' : '';
+  if(note) note.style.display = isCash ? '' : 'none';
+  if(isCash){ buyReceiptDataUrl = null; document.getElementById('buyReceiptPreviewGrid').innerHTML = ''; }
 }
 
 // Installment purchases: buyer pays the property's admin-set deposit upfront; interest applies
@@ -4236,6 +4270,7 @@ async function submitPurchase(){
   const kinRelationship = document.getElementById('buyKinRelationship').value.trim();
   const unitNumber = document.getElementById('buyUnitNumber').value.trim();
   const agreedPrice = Number(document.getElementById('buyAgreedPrice').value) || 0;
+  const paymentMethod = document.getElementById('buyPaymentMethod').value;
   const purchaseDateText = document.getElementById('buyPurchaseDate').value;
   const emergencyName = document.getElementById('buyEmergencyName').value.trim();
   const emergencyPhone = document.getElementById('buyEmergencyPhone').value.trim();
@@ -4264,11 +4299,15 @@ async function submitPurchase(){
     msgEl.innerHTML = '<div class="err-msg">Please provide the property address/unit number and agreed purchase price.</div>';
     return;
   }
+  if(!paymentMethod){
+    msgEl.innerHTML = '<div class="err-msg">Please select a payment method.</div>';
+    return;
+  }
   if(!buySigHasStroke){
     msgEl.innerHTML = '<div class="err-msg">Please sign in the signature box before confirming.</div>';
     return;
   }
-  if(!buyReceiptDataUrl){
+  if(!buyReceiptDataUrl && paymentMethod !== 'Cash Deposit'){
     msgEl.innerHTML = '<div class="err-msg">Please upload your payment receipt before confirming.</div>';
     return;
   }
@@ -4317,6 +4356,7 @@ async function submitPurchase(){
     // Property purchase details
     unitNumber,
     agreedPurchasePrice: agreedPrice,
+    paymentMethod,
     // Documentation
     signatureUrl: buySignatureDataUrl,
     purchaseDateText,
@@ -5508,7 +5548,8 @@ function viewPurchaseDetail(id){
     <div class="summary-box">
       <div class="summary-row"><span>Property Address / Unit Number</span><b>${pu.unitNumber || '—'}</b></div>
       <div class="summary-row"><span>Agreed Purchase Price</span><b>${pu.agreedPurchasePrice ? fmtNaira(pu.agreedPurchasePrice) : '—'}</b></div>
-      <div class="summary-row"><span>Payment Method</span><b>${pu.paymentPlan==='full' ? 'Outright' : 'Installment'}</b></div>
+      <div class="summary-row"><span>Purchase Plan</span><b>${pu.paymentPlan==='full' ? 'Outright' : 'Installment'}</b></div>
+      <div class="summary-row"><span>Payment Method</span><b>${pu.paymentMethod || '—'}</b></div>
       ${pu.paymentPlan==='installment' ? `<div class="summary-row"><span>Payment Schedule</span><b>${pu.months} months at ${fmtNaira(pu.monthlyInstallment)}/month</b></div>` : ''}
     </div>
 
