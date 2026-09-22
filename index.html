@@ -1201,8 +1201,8 @@ body:has(#page-home.active) footer a{cursor:pointer;}
         </div>
         <div class="section-title-sm">Recent Investments</div>
         <div class="table-wrap"><table>
-          <thead><tr><th>ID</th><th>Property</th><th>Amount</th><th>ROI</th><th>Status</th><th>Maturity</th></tr></thead>
-          <tbody id="uRecentTable"><tr><td colspan="6" class="small-muted" style="padding:20px;">No investments yet.</td></tr></tbody>
+          <thead><tr><th>ID</th><th>Property</th><th>Amount</th><th>ROI</th><th>Status</th><th>Maturity</th><th>Certificate</th></tr></thead>
+          <tbody id="uRecentTable"><tr><td colspan="7" class="small-muted" style="padding:20px;">No investments yet.</td></tr></tbody>
         </table></div>
       </div>
 
@@ -1231,8 +1231,8 @@ body:has(#page-home.active) footer a{cursor:pointer;}
       <div class="dash-panel" id="dpanel-history">
         <div class="dash-head"><h2>Investment History</h2><div style="display:flex; gap:10px; flex-wrap:wrap;"><button class="btn btn-ghost btn-sm" onclick="printTableById('uHistoryTable','Investment History')">🖨️ Print</button><button class="btn btn-ghost btn-sm" onclick="downloadTablePdf('uHistoryTable','Investment History','investment-history')">⬇️ PDF</button></div></div>
         <div class="table-wrap"><table>
-          <thead><tr><th>Investment ID</th><th>Property</th><th>Amount</th><th>Status</th><th>Date</th></tr></thead>
-          <tbody id="uHistoryTable"><tr><td colspan="5" class="small-muted" style="padding:20px;">No history yet.</td></tr></tbody>
+          <thead><tr><th>Investment ID</th><th>Property</th><th>Amount</th><th>Status</th><th>Date</th><th>Certificate</th></tr></thead>
+          <tbody id="uHistoryTable"><tr><td colspan="6" class="small-muted" style="padding:20px;">No history yet.</td></tr></tbody>
         </table></div>
       </div>
 
@@ -1627,7 +1627,8 @@ body:has(#page-home.active) footer a{cursor:pointer;}
       <div class="field"><label>Investment Package / Plan</label><input type="text" id="investPackage" readonly></div>
       <div class="field"><label>Investment Amount (₦) <span style="color:var(--bad)">*</span></label><input type="number" id="investAmount" oninput="updateInvestPreview()"></div>
       <p class="hint" id="investMinHint"></p>
-      <div class="field"><label>Investment Duration</label><input type="text" id="investDurationDisplay" readonly></div>
+      <div class="field"><label>Investment Duration (months) <span style="color:var(--bad)">*</span></label><input type="number" id="investDuration" oninput="updateInvestPreview()"></div>
+      <p class="hint" id="investDurationHint"></p>
       <div class="field"><label>Expected Return Plan</label><input type="text" id="investReturnPlan" readonly></div>
       <div class="field">
         <label>Payment Method <span style="color:var(--bad)">*</span></label>
@@ -3570,8 +3571,12 @@ function openInvestModal(propId){
   investIdDataUrl = null;
   document.getElementById('investIdPreviewGrid').innerHTML = '';
   document.getElementById('investPackage').value = p.name || '';
-  document.getElementById('investDurationDisplay').value = (Number(p.duration)||0) + ' months';
-  document.getElementById('investReturnPlan').value = 'Fixed ' + (Number(p.roi)||0) + '%/month for ' + (Number(p.duration)||0) + ' months';
+  const minDur = Math.max(36, Number(p.duration)||36);
+  const durInput = document.getElementById('investDuration');
+  durInput.min = minDur;
+  durInput.value = minDur;
+  document.getElementById('investDurationHint').textContent = 'Minimum for this property: ' + minDur + ' months (3 years). You may choose a longer duration — there is no maximum.';
+  document.getElementById('investReturnPlan').value = 'Fixed ' + (Number(p.roi)||0) + '%/month for ' + minDur + ' months';
   document.getElementById('investPaymentMethod').value = '';
   document.getElementById('investDate').value = new Date().toLocaleDateString('en-NG', {year:'numeric', month:'long', day:'numeric'});
   document.getElementById('investPayoutAccountName').value = '';
@@ -3713,9 +3718,11 @@ function updateInvestPreview(){
   const p = currentDetailProperty;
   const amount = Number(document.getElementById('investAmount').value)||0;
   const box = document.getElementById('investPreviewBox');
-  if(!p || amount<=0){ box.style.display='none'; return; }
+  const minDur = Math.max(36, Number(p && p.duration)||36);
+  const duration = Number(document.getElementById('investDuration').value)||0; // investor-chosen, months
+  document.getElementById('investReturnPlan').value = p ? ('Fixed ' + (Number(p.roi)||0) + '%/month for ' + (duration||minDur) + ' months') : '';
+  if(!p || amount<=0 || duration < minDur){ box.style.display='none'; return; }
   const roi = Number(p.roi)||0;         // monthly ROI %
-  const duration = Number(p.duration)||0; // months
   const profit = amount * (roi/100) * duration; // interest accrues every month across the full term
   const total = amount + profit;
   const maturity = new Date();
@@ -3736,6 +3743,12 @@ async function submitInvestment(){
   if(!p){ return; }
   if(amount < (Number(p.minInvestment)||0)){
     msgEl.innerHTML = '<div class="err-msg">Amount must be at least '+fmtNaira(p.minInvestment)+'.</div>';
+    return;
+  }
+  const minDur = Math.max(36, Number(p.duration)||36);
+  const chosenDuration = Number(document.getElementById('investDuration').value)||0;
+  if(chosenDuration < minDur){
+    msgEl.innerHTML = '<div class="err-msg">Investment duration must be at least '+minDur+' months (3 years) for this property. Longer durations are welcome.</div>';
     return;
   }
 
@@ -3798,7 +3811,7 @@ async function submitInvestment(){
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Submitting...';
 
   const roi = Number(p.roi)||0;          // monthly ROI %
-  const duration = Number(p.duration)||0; // months
+  const duration = chosenDuration;        // months, chosen by the investor (>= property minimum)
   const profit = amount * (roi/100) * duration; // interest accrues every month across the full term
   const total = amount + profit;
   const maturity = new Date();
@@ -4482,8 +4495,9 @@ function renderUserDashboard(){
 
   document.getElementById('uRecentTable').innerHTML = allInvestments.slice(0,5).map(i=>`
     <tr><td>${i.investmentId}</td><td>${i.propertyName}</td><td>${fmtNaira(i.amount)}</td><td>${i.roi}%/mo</td>
-    <td><span class="badge badge-${i.status}">${i.status}</span></td><td>${fmtDate(i.maturityDate)}</td></tr>
-  `).join('') || '<tr><td colspan="6" class="small-muted" style="padding:20px;">No investments yet.</td></tr>';
+    <td><span class="badge badge-${i.status}">${i.status}</span></td><td>${fmtDate(i.maturityDate)}</td>
+    <td>${['approved','withdrawal_requested','completed','withdrawn'].includes(i.status) ? `<button class="btn btn-ghost btn-sm" onclick="downloadInvestmentCertificate('${i.id}')">🎓 Certificate</button>` : '<span class="small-muted">—</span>'}</td></tr>
+  `).join('') || '<tr><td colspan="7" class="small-muted" style="padding:20px;">No investments yet.</td></tr>';
 
   document.getElementById('uActiveTable').innerHTML = active.map(i=>{
     const matured = isInvestmentMatured(i);
@@ -4513,8 +4527,9 @@ function renderUserDashboard(){
 
   document.getElementById('uHistoryTable').innerHTML = allInvestments.map(i=>`
     <tr><td>${i.investmentId}</td><td>${i.propertyName}</td><td>${fmtNaira(i.amount)}</td>
-    <td><span class="badge badge-${i.status}">${i.status}</span></td><td>${i.createdAt?fmtDate(i.createdAt):'—'}</td></tr>
-  `).join('') || '<tr><td colspan="5" class="small-muted" style="padding:20px;">No history yet.</td></tr>';
+    <td><span class="badge badge-${i.status}">${i.status}</span></td><td>${i.createdAt?fmtDate(i.createdAt):'—'}</td>
+    <td>${['approved','withdrawal_requested','completed','withdrawn'].includes(i.status) ? `<button class="btn btn-ghost btn-sm" onclick="downloadInvestmentCertificate('${i.id}')">🎓 Certificate</button>` : '<span class="small-muted">—</span>'}</td></tr>
+  `).join('') || '<tr><td colspan="6" class="small-muted" style="padding:20px;">No history yet.</td></tr>';
 }
 
 /* ================= CONTACT FORM ================= */
