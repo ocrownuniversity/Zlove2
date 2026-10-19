@@ -392,6 +392,7 @@ mark{background:#fef08a;border-radius:3px;padding:0 2px}
   </header>
   <nav id="main-nav">
     <button class="nb active" onclick="showPage('dashboard')">&#128202; Dashboard</button>
+    <button class="nb" onclick="showPage('customers')">&#128100; Customers</button>
     <button class="nb" onclick="showPage('applicants')">&#128101; Borrowers</button>
     <button class="nb" onclick="showPage('new-application')">&#43; New Loan</button>
     <button class="nb" onclick="showPage('repayments')">&#128176; Repayments</button>
@@ -437,6 +438,67 @@ mark{background:#fef08a;border-radius:3px;padding:0 2px}
       <div class="dash-module-grid" id="dash-modules"></div>
     </div>
 
+    <!-- CUSTOMERS PAGE -->
+    <div class="page-section" id="page-customers">
+      <div class="mod-header" style="background:linear-gradient(135deg,#0f2342,#1a3a6b)"><div class="mod-icon">&#128100;</div><div><h2>Customer Registry</h2><p>Register customers once &amp; reuse their details for Loan, EasyBuy, Investment &amp; more</p></div><div style="margin-left:auto;display:flex;gap:8px"><button class="btn btn-sm no-print" style="background:rgba(255,255,255,.2);color:#fff;border:1px solid rgba(255,255,255,.3)" onclick="showPage('new-customer')">&#43; Register Customer</button></div></div>
+      <div class="stat-grid" id="cust-stat-grid"></div>
+      <div class="card">
+        <div class="card-title"><span>&#128100; Registered Customers</span></div>
+        <div class="search-row">
+          <input type="text" id="cust-srch" placeholder="Search name, phone, reg. no, address..." oninput="searchCust()"/>
+        </div>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>Reg. No</th><th>Name</th><th>Phone</th><th>Address</th><th>Occupation</th><th>Registered</th><th>Actions</th></tr></thead>
+          <tbody id="cust-tbody"></tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- NEW / EDIT CUSTOMER -->
+    <div class="page-section" id="page-new-customer">
+      <div class="card">
+        <div class="card-title" id="cust-form-title">&#128100; Register New Customer
+          <button class="btn btn-out btn-sm no-print" onclick="showPage('customers')">&#8592; Back</button>
+        </div>
+        <form id="cust-form" onsubmit="submitCustomer(event)">
+          <input type="hidden" id="cust-edit-id"/>
+          <div class="sh">&#128100; Customer Information</div>
+          <div class="form-grid">
+            <div class="fg"><label>Full Name *</label><input required id="cust-name" placeholder="Customer full name"/></div>
+            <div class="fg"><label>Phone Number *</label><input required id="cust-phone" placeholder="08XXXXXXXXX"/></div>
+            <div class="fg"><label>Address *</label><input required id="cust-address" placeholder="Residential address"/></div>
+            <div class="fg"><label>Office Address</label><input id="cust-office" placeholder="Office / business address"/></div>
+            <div class="fg"><label>Occupation / Business</label><input id="cust-occ" placeholder="Job title or business name"/></div>
+            <div class="fg"><label>ID Type</label><select id="cust-idtype"><option value="">Select</option><option>National ID (NIN)</option><option>Voter's Card</option><option>Driver's Licence</option><option>International Passport</option></select></div>
+            <div class="fg"><label>ID Number</label><input id="cust-idnum" placeholder="ID number"/></div>
+          </div>
+          <div class="sh">&#128247; Photo &amp; Identification</div>
+          <div class="form-grid">
+            <div class="fg"><label>Passport Photo</label>
+              <div class="photo-up" onclick="document.getElementById('cust-photo-file').click()">
+                <img id="cust-photo-prev" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Crect width='80' height='80' fill='%23e2e8f0'/%3E%3Ctext x='50%25' y='55%25' font-size='28' text-anchor='middle' fill='%2394a3b8'%3E%F0%9F%91%A4%3C/text%3E%3C/svg%3E" alt=""/>
+                <p>Click to upload photo</p>
+              </div>
+              <input type="file" id="cust-photo-file" accept="image/*" style="display:none" onchange="ebImgUp(this,'cust-photo-prev','cust-photo-data',500,0.75)"/>
+              <input type="hidden" id="cust-photo-data"/>
+            </div>
+            <div class="fg"><label>Means of Identification (Upload)</label>
+              <div class="photo-up" onclick="document.getElementById('cust-idpic-file').click()">
+                <img id="cust-idpic-prev" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Crect width='80' height='80' fill='%23e2e8f0'/%3E%3Ctext x='50%25' y='55%25' font-size='28' text-anchor='middle' fill='%2394a3b8'%3E%F0%9F%AA%AA%3C/text%3E%3C/svg%3E" alt=""/>
+                <p>Click to upload ID</p>
+              </div>
+              <input type="file" id="cust-idpic-file" accept="image/*" style="display:none" onchange="ebImgUp(this,'cust-idpic-prev','cust-idpic-data',500,0.75)"/>
+              <input type="hidden" id="cust-idpic-data"/>
+            </div>
+          </div>
+          <div class="btn-row">
+            <button type="submit" class="btn btn-navy">&#128190; Save Customer</button>
+            <button type="button" class="btn btn-out" onclick="resetCustomerForm()">&#8635; Reset</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <!-- EASYBUY PAGE -->
     <div class="page-section" id="page-easybuy">
       <div class="mod-header eb"><div class="mod-icon">&#128722;</div><div><h2>EasyBuy Module</h2><p>Hire-purchase &amp; instalment product management</p></div><div style="margin-left:auto;display:flex;gap:8px"><button class="btn btn-sm no-print" style="background:rgba(255,255,255,.2);color:#fff;border:1px solid rgba(255,255,255,.3)" onclick="exportEasyBuyExcel()">&#128190; Excel</button><button class="btn btn-sm no-print" style="background:rgba(255,255,255,.2);color:#fff;border:1px solid rgba(255,255,255,.3)" onclick="showPage('new-easybuy')">&#43; New EasyBuy</button></div></div>
@@ -464,7 +526,8 @@ mark{background:#fef08a;border-radius:3px;padding:0 2px}
         <form id="eb-form" onsubmit="submitEasyBuy(event)">
           <div class="sh">&#128100; Customer Information</div>
           <div class="form-grid">
-            <div class="fg"><label>Full Name *</label><input required id="eb-name" placeholder="Customer full name"/></div>
+            <div class="fg" style="grid-column:1/-1;background:#f0f7ff;border:1.5px dashed #0f2342;border-radius:10px;padding:10px 12px"><label style="color:#0f2342">&#128100; Use Registered Customer (optional)</label><select id="eb-cust-pick" onchange="useRegisteredCustomer('eb-',this.value)"><option value="">— Select a registered customer or fill details manually below —</option></select></div>
+          <div class="fg"><label>Full Name *</label><input required id="eb-name" placeholder="Customer full name"/></div>
             <div class="fg"><label>Phone Number *</label><input required id="eb-phone" placeholder="08XXXXXXXXX"/></div>
             <div class="fg"><label>Address *</label><input required id="eb-address" placeholder="Residential address"/></div>
             <div class="fg"><label>Office Address</label><input id="eb-office" placeholder="Office / business address"/></div>
@@ -597,7 +660,8 @@ mark{background:#fef08a;border-radius:3px;padding:0 2px}
         <form id="inv-form" onsubmit="submitInvestment(event)">
           <div class="sh">&#128100; Investor Information</div>
           <div class="form-grid">
-            <div class="fg"><label>Full Name *</label><input required id="inv-name" placeholder="Investor full name"/></div>
+            <div class="fg" style="grid-column:1/-1;background:#f0f7ff;border:1.5px dashed #0f2342;border-radius:10px;padding:10px 12px"><label style="color:#0f2342">&#128100; Use Registered Customer (optional)</label><select id="inv-cust-pick" onchange="useRegisteredCustomer('inv-',this.value)"><option value="">— Select a registered customer or fill details manually below —</option></select></div>
+          <div class="fg"><label>Full Name *</label><input required id="inv-name" placeholder="Investor full name"/></div>
             <div class="fg"><label>Phone Number *</label><input required id="inv-phone" placeholder="08XXXXXXXXX"/></div>
             <div class="fg"><label>Address *</label><input required id="inv-address" placeholder="Residential address"/></div>
             <div class="fg"><label>Occupation</label><input id="inv-occ" placeholder="Occupation"/></div>
@@ -728,7 +792,8 @@ mark{background:#fef08a;border-radius:3px;padding:0 2px}
         <form id="ctb-form" onsubmit="submitContribution(event)">
           <div class="sh">&#128100; Contributor Information</div>
           <div class="form-grid">
-            <div class="fg"><label>Full Name *</label><input required id="ctb-name" placeholder="Contributor full name"/></div>
+            <div class="fg" style="grid-column:1/-1;background:#f0f7ff;border:1.5px dashed #0f2342;border-radius:10px;padding:10px 12px"><label style="color:#0f2342">&#128100; Use Registered Customer (optional)</label><select id="ctb-cust-pick" onchange="useRegisteredCustomer('ctb-',this.value)"><option value="">— Select a registered customer or fill details manually below —</option></select></div>
+          <div class="fg"><label>Full Name *</label><input required id="ctb-name" placeholder="Contributor full name"/></div>
             <div class="fg"><label>Phone Number *</label><input required id="ctb-phone" placeholder="08XXXXXXXXX"/></div>
             <div class="fg"><label>Residential Address *</label><input required id="ctb-address" placeholder="Residential address"/></div>
           </div>
@@ -856,7 +921,8 @@ mark{background:#fef08a;border-radius:3px;padding:0 2px}
         <form id="fd-form" onsubmit="submitFD(event)">
           <div class="sh">&#128100; Customer Information</div>
           <div class="form-grid">
-            <div class="fg"><label>Full Name *</label><input required id="fd-name" placeholder="Customer full name"/></div>
+            <div class="fg" style="grid-column:1/-1;background:#f0f7ff;border:1.5px dashed #0f2342;border-radius:10px;padding:10px 12px"><label style="color:#0f2342">&#128100; Use Registered Customer (optional)</label><select id="fd-cust-pick" onchange="useRegisteredCustomer('fd-',this.value)"><option value="">— Select a registered customer or fill details manually below —</option></select></div>
+          <div class="fg"><label>Full Name *</label><input required id="fd-name" placeholder="Customer full name"/></div>
             <div class="fg"><label>Phone Number *</label><input required id="fd-phone" placeholder="08XXXXXXXXX"/></div>
             <div class="fg"><label>Address *</label><input required id="fd-address" placeholder="Residential address"/></div>
             <div class="fg"><label>Occupation</label><input id="fd-occ" placeholder="Occupation"/></div>
@@ -981,7 +1047,8 @@ mark{background:#fef08a;border-radius:3px;padding:0 2px}
         <form id="loan-form" onsubmit="submitForm(event)">
           <div class="sh">&#128100; Personal Information</div>
           <div class="form-grid">
-            <div class="fg"><label>Full Name *</label><input required id="f-name" placeholder="Applicant full name"/></div>
+            <div class="fg" style="grid-column:1/-1;background:#f0f7ff;border:1.5px dashed #0f2342;border-radius:10px;padding:10px 12px"><label style="color:#0f2342">&#128100; Use Registered Customer (optional)</label><select id="f-cust-pick" onchange="useRegisteredCustomer('f-',this.value)"><option value="">— Select a registered customer or fill details manually below —</option></select></div>
+          <div class="fg"><label>Full Name *</label><input required id="f-name" placeholder="Applicant full name"/></div>
             <div class="fg"><label>Date of Birth *</label>
               <div style="display:flex;gap:6px">
                 <select id="dob-d" required style="flex:1;padding:9px 5px;border:1.5px solid var(--border);border-radius:8px;font-size:.84rem;font-family:inherit"><option value="">Day</option></select>
@@ -1544,6 +1611,16 @@ mark{background:#fef08a;border-radius:3px;padding:0 2px}
 </div>
 
 <!-- EASYBUY PROFILE MODAL -->
+<div class="overlay" id="cust-profile-modal">
+  <div class="modal" style="max-width:640px">
+    <div class="mhead">
+      <h3 id="cust-pm-title">Customer Profile</h3>
+      <button class="mclose" onclick="closeModal('cust-profile-modal')">&times;</button>
+    </div>
+    <div class="mbody" id="cust-pm-body"></div>
+  </div>
+</div>
+
 <div class="overlay" id="eb-profile-modal">
   <div class="modal" style="max-width:740px">
     <div class="mhead">
@@ -1821,7 +1898,7 @@ const db = firebase.firestore();
 
 // ===== STATE =====
 let ADMIN_PIN = localStorage.getItem('zm_pin') || '1990';
-let pinBuf = '', allLoans = [], allBranches = [], allUsers = [];
+let pinBuf = '', allLoans = [], allBranches = [], allUsers = [], allCustomers = [], custEditId = null;
 let curId = null, stId = null, editBranchId = null, editUserId = null;
 
 // Session state
@@ -2060,6 +2137,8 @@ function showPage(id){
   }
   if(id==='fixeddeposit'){populateFDBranchDropdowns();renderFDStats();renderFD(scopedFD())}
   if(id==='new-fixeddeposit'){populateFDBranchDropdowns();resetFDForm()}
+  if(id==='customers'){renderCustStats();renderCust(allCustomers)}
+  if(id==='new-customer'){populateCustomerDropdowns()}
   if(id==='settings'){
     document.getElementById('si-total').textContent=getScopedLoans().length;
     document.getElementById('si-branches').textContent=allBranches.length;
@@ -2071,7 +2150,7 @@ function showPage(id){
 async function loadAll(){
   showLoader('Loading data...');
   try{
-    const [brSnap,usSnap,lnSnap,ebSnap,invSnap,fdSnap,ctbSnap,alSnap]=await Promise.all([
+    const [brSnap,usSnap,lnSnap,ebSnap,invSnap,fdSnap,ctbSnap,alSnap,csSnap]=await Promise.all([
       db.collection('branches').get(),
       db.collection('staff_users').get(),
       db.collection('loans').get(),
@@ -2079,7 +2158,8 @@ async function loadAll(){
       db.collection('investments').get(),
       db.collection('fixeddeposits').get(),
       db.collection('contributions').get(),
-      db.collection('auditlogs').get()
+      db.collection('auditlogs').get(),
+      db.collection('customers').get()
     ]);
     allBranches=brSnap.docs.map(d=>({id:d.id,...d.data()}));
     allUsers=usSnap.docs.map(d=>({id:d.id,...d.data()}));
@@ -2089,9 +2169,11 @@ async function loadAll(){
     allFDs=fdSnap.docs.map(d=>({id:d.id,...d.data()}));
     allContributions=ctbSnap.docs.map(d=>({id:d.id,...d.data()}));
     allAuditLogs=alSnap.docs.map(d=>({id:d.id,...d.data()}));
+    allCustomers=csSnap.docs.map(d=>({id:d.id,...d.data()}));
     populateAllBranchDropdowns();
     populateEBINVBranchDropdowns();
     populateCTBBranchDropdowns();
+    populateCustomerDropdowns();
     populateAllYearDropdowns();
     chkNotifBadge();
     populateLoginBranchSelect();
@@ -2576,6 +2658,7 @@ function submitForm(e){
   }).catch(e=>toast('Error: '+e.message,'e'));
 }
 function resetForm(){
+  const cp=document.getElementById('f-cust-pick');if(cp)cp.value='';
   document.getElementById('loan-form').reset();
   document.getElementById('f-interest').value='24%';
   ['f-photo-data','g1-photo-data','g2-photo-data'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=''});
@@ -3809,6 +3892,7 @@ function submitEasyBuy(e){
   }).catch(e=>toast('Error: '+e.message,'e'));
 }
 function resetEBForm(){
+  const cp=document.getElementById('eb-cust-pick');if(cp)cp.value='';
   document.getElementById('eb-form').reset();
   const blank="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Crect width='80' height='80' fill='%23e2e8f0'/%3E%3Ctext x='50%25' y='55%25' font-size='28' text-anchor='middle' fill='%2394a3b8'%3E%F0%9F%91%A4%3C/text%3E%3C/svg%3E";
   const pp=document.getElementById('eb-photo-prev');if(pp)pp.src=blank;
@@ -3830,6 +3914,170 @@ function delEB(id){
     renderEB(scopedEB());renderEBStats();renderDashModules();
     toast('EasyBuy record deleted.','w');
   }).catch(e=>toast('Error: '+e.message,'e'));
+}
+
+// ===== CUSTOMER REGISTRY =====
+const CUST_BLANK="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Crect width='80' height='80' fill='%23e2e8f0'/%3E%3Ctext x='50%25' y='55%25' font-size='28' text-anchor='middle' fill='%2394a3b8'%3E%F0%9F%91%A4%3C/text%3E%3C/svg%3E";
+const CUST_IDBLANK="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Crect width='80' height='80' fill='%23e2e8f0'/%3E%3Ctext x='50%25' y='55%25' font-size='28' text-anchor='middle' fill='%2394a3b8'%3E%F0%9F%AA%AA%3C/text%3E%3C/svg%3E";
+// Which form fields each product module has, so autofill only touches fields that exist.
+const CUST_FIELD_MAP={
+  'f-':  {name:'f-name',phone:'f-phone',address:'f-address',occupation:'f-occ',idtype:'f-idtype',idnum:'f-idnum',photo:'f-photo-data',photoPrev:'f-photo-prev'},
+  'eb-': {name:'eb-name',phone:'eb-phone',address:'eb-address',officeAddress:'eb-office',occupation:'eb-occ',idtype:'eb-idtype',idnum:'eb-idnum',idpic:'eb-idpic-data',idpicPrev:'eb-idpic-prev',photo:'eb-photo-data',photoPrev:'eb-photo-prev'},
+  'inv-':{name:'inv-name',phone:'inv-phone',address:'inv-address',occupation:'inv-occ',idtype:'inv-idtype',idnum:'inv-idnum',photo:'inv-photo-data',photoPrev:'inv-photo-prev'},
+  'ctb-':{name:'ctb-name',phone:'ctb-phone',address:'ctb-address',photo:'ctb-photo-data',photoPrev:'ctb-photo-prev'},
+  'fd-': {name:'fd-name',phone:'fd-phone',address:'fd-address',occupation:'fd-occ',idtype:'fd-idtype',idnum:'fd-idnum',photo:'fd-photo-data',photoPrev:'fd-photo-prev'}
+};
+function custGenRegNo(){
+  let n=allCustomers.length+1, regNo;
+  do{ regNo='CUS-'+String(n).padStart(5,'0'); n++; }while(allCustomers.some(c=>c.regNo===regNo));
+  return regNo;
+}
+function populateCustomerDropdowns(){
+  const opts='<option value="">\u2014 Select a registered customer or fill details manually below \u2014</option>'+
+    allCustomers.slice().sort((a,b)=>(a.name||'').localeCompare(b.name||''))
+      .map(c=>'<option value="'+c.id+'">'+c.regNo+' \u2014 '+c.name+' ('+(c.phone||'')+')</option>').join('');
+  document.querySelectorAll('[id$="cust-pick"]').forEach(sel=>{ sel.innerHTML=opts; });
+}
+function useRegisteredCustomer(prefix,custId){
+  const map=CUST_FIELD_MAP[prefix];if(!map)return;
+  if(!custId)return;
+  const c=allCustomers.find(x=>x.id===custId);if(!c)return;
+  Object.keys(map).forEach(key=>{
+    if(key==='photoPrev'||key==='idpicPrev')return;
+    const el=document.getElementById(map[key]);
+    if(el && c[key]!==undefined) el.value=c[key]||'';
+  });
+  if(map.photo && map.photoPrev){
+    const img=document.getElementById(map.photoPrev);
+    if(img) img.src=c.photo||CUST_BLANK;
+  }
+  if(map.idpic && map.idpicPrev){
+    const img=document.getElementById(map.idpicPrev);
+    if(img) img.src=c.idpic||CUST_IDBLANK;
+  }
+  toast('Loaded '+c.name+'\'s details','s');
+}
+function renderCustStats(){
+  const el=document.getElementById('cust-stat-grid');if(!el)return;
+  el.innerHTML=
+    '<div class="stat-card" style="border-color:#0f2342"><div class="stat-val">'+allCustomers.length+'</div><div class="stat-lbl">Total Registered Customers</div></div>';
+}
+function renderCust(list){
+  const tb=document.getElementById('cust-tbody');if(!tb)return;
+  tb.innerHTML=list.slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||'')).map(c=>
+    '<tr>'+
+    '<td><strong>'+c.regNo+'</strong></td>'+
+    '<td>'+(c.photo?'<img src="'+c.photo+'" style="width:22px;height:22px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:4px;border:1px solid #0f2342" alt=""/>':'')+c.name+'</td>'+
+    '<td>'+(c.phone||'--')+'</td>'+
+    '<td>'+(c.address||'--')+'</td>'+
+    '<td>'+(c.occupation||'--')+'</td>'+
+    '<td>'+(c.createdAt?c.createdAt.slice(0,10):'--')+'</td>'+
+    '<td><div style="display:flex;gap:3px;flex-wrap:wrap">'+
+      '<button class="btn btn-out btn-sm" onclick="openCustomerProfile(\''+c.id+'\')">&#128100;</button>'+
+      '<button class="btn btn-red btn-sm" onclick="delCustomer(\''+c.id+'\')">&#128465;</button>'+
+    '</div></td></tr>'
+  ).join('')||'<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:20px">No customers registered yet.</td></tr>';
+}
+function searchCust(){
+  const q=v('cust-srch').toLowerCase();
+  renderCust(allCustomers.filter(c=>(c.name||'').toLowerCase().includes(q)||(c.phone||'').includes(q)||(c.regNo||'').toLowerCase().includes(q)||(c.address||'').toLowerCase().includes(q)));
+}
+function resetCustomerForm(){
+  document.getElementById('cust-form').reset();
+  document.getElementById('cust-edit-id').value='';
+  document.getElementById('cust-photo-data').value='';
+  document.getElementById('cust-idpic-data').value='';
+  document.getElementById('cust-photo-prev').src=CUST_BLANK;
+  document.getElementById('cust-idpic-prev').src=CUST_IDBLANK;
+  document.getElementById('cust-form-title').innerHTML='&#128100; Register New Customer <button class="btn btn-out btn-sm no-print" onclick="showPage(\'customers\')">&#8592; Back</button>';
+}
+function submitCustomer(e){
+  e.preventDefault();
+  if(!v('cust-name')||!v('cust-phone')||!v('cust-address')){toast('Name, phone and address are required','e');return}
+  const editId=v('cust-edit-id');
+  const data={
+    name:v('cust-name'), phone:v('cust-phone'), address:v('cust-address'), officeAddress:v('cust-office'),
+    occupation:v('cust-occ'), idtype:v('cust-idtype'), idnum:v('cust-idnum'),
+    photo:v('cust-photo-data'), idpic:v('cust-idpic-data')
+  };
+  try{if(JSON.stringify(data).length>980000){toast('Images are too large in total. Use smaller/clearer photos and try again.','e');return}}catch(x){}
+  if(editId){
+    db.collection('customers').doc(editId).set(data,{merge:true}).then(()=>{
+      const c=allCustomers.find(x=>x.id===editId);if(c)Object.assign(c,data);
+      toast('Customer updated!','s');populateCustomerDropdowns();showPage('customers');
+    }).catch(err=>toast('Error: '+err.message,'e'));
+  }else{
+    data.regNo=custGenRegNo();
+    data.createdBy=currentSession.username||'admin';
+    data.createdAt=new Date().toISOString();
+    db.collection('customers').add(data).then(ref=>{
+      allCustomers.push({id:ref.id,...data});
+      toast('Customer registered! Reg. No: '+data.regNo,'s');
+      populateCustomerDropdowns();showPage('customers');
+    }).catch(err=>toast('Error: '+err.message,'e'));
+  }
+}
+function editCustomer(id){
+  const c=allCustomers.find(x=>x.id===id);if(!c)return;
+  showPage('new-customer');
+  document.getElementById('cust-edit-id').value=id;
+  document.getElementById('cust-name').value=c.name||'';
+  document.getElementById('cust-phone').value=c.phone||'';
+  document.getElementById('cust-address').value=c.address||'';
+  document.getElementById('cust-office').value=c.officeAddress||'';
+  document.getElementById('cust-occ').value=c.occupation||'';
+  document.getElementById('cust-idtype').value=c.idtype||'';
+  document.getElementById('cust-idnum').value=c.idnum||'';
+  document.getElementById('cust-photo-data').value=c.photo||'';
+  document.getElementById('cust-photo-prev').src=c.photo||CUST_BLANK;
+  document.getElementById('cust-idpic-data').value=c.idpic||'';
+  document.getElementById('cust-idpic-prev').src=c.idpic||CUST_IDBLANK;
+  document.getElementById('cust-form-title').innerHTML='&#9998; Edit Customer \u2014 '+c.regNo+' <button class="btn btn-out btn-sm no-print" onclick="showPage(\'customers\')">&#8592; Back</button>';
+  closeModal('cust-profile-modal');
+}
+function delCustomer(id){
+  const c=allCustomers.find(x=>x.id===id);if(!c)return;
+  if(!confirm('Delete customer '+c.regNo+' ('+c.name+')? This cannot be undone.'))return;
+  db.collection('customers').doc(id).delete().then(()=>{
+    allCustomers=allCustomers.filter(x=>x.id!==id);
+    toast('Customer deleted','s');populateCustomerDropdowns();
+    closeModal('cust-profile-modal');renderCustStats();renderCust(allCustomers);
+  }).catch(err=>toast('Error: '+err.message,'e'));
+}
+function custQuickAction(id,prefix,page){
+  closeModal('cust-profile-modal');
+  showPage(page);
+  setTimeout(()=>{
+    const sel=document.getElementById(prefix+'cust-pick');
+    if(sel){ sel.value=id; useRegisteredCustomer(prefix,id); }
+  },60);
+}
+function openCustomerProfile(id){
+  const c=allCustomers.find(x=>x.id===id);if(!c)return;
+  document.getElementById('cust-pm-title').textContent=c.regNo+' \u2014 '+c.name;
+  document.getElementById('cust-pm-body').innerHTML=
+    '<div class="sh" style="margin-top:0">Customer Details <button class="btn btn-out btn-sm no-print" style="margin-left:8px" onclick="editCustomer(\''+c.id+'\')">&#9998; Edit</button></div>'+
+    '<div class="info-grid" style="margin-top:0">'+
+    '<div class="iitem"><label>Registration Number</label><p>'+c.regNo+'</p></div>'+
+    '<div class="iitem"><label>Full Name</label><p>'+c.name+'</p></div>'+
+    '<div class="iitem"><label>Phone</label><p>'+(c.phone||'--')+'</p></div>'+
+    '<div class="iitem"><label>Address</label><p>'+(c.address||'--')+'</p></div>'+
+    '<div class="iitem"><label>Office Address</label><p>'+(c.officeAddress||'--')+'</p></div>'+
+    '<div class="iitem"><label>Occupation</label><p>'+(c.occupation||'--')+'</p></div>'+
+    '<div class="iitem"><label>ID</label><p>'+((c.idtype||'')+' '+(c.idnum||'')).trim()+(c.idtype||c.idnum?'':'--')+'</p></div>'+
+    '<div class="iitem"><label>Registered</label><p>'+(c.createdAt?c.createdAt.slice(0,10):'--')+'</p></div>'+
+    '</div>'+
+    (c.photo?'<div class="iitem" style="margin-top:10px"><label>Passport Photo</label><img src="'+c.photo+'" style="max-width:120px;border-radius:8px;border:1px solid var(--border)"/></div>':'')+
+    (c.idpic?'<div class="iitem" style="margin-top:10px"><label>Means of Identification</label><img src="'+c.idpic+'" style="max-width:100%;max-height:150px;border-radius:8px;border:1px solid var(--border);cursor:pointer" onclick="ebShowImg(this.src)"/></div>':'')+
+    '<div class="sh">&#9889; Use These Details For</div>'+
+    '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+    '<button class="btn btn-navy btn-sm" onclick="custQuickAction(\''+c.id+'\',\'f-\',\'new-application\')">&#128203; New Loan</button>'+
+    '<button class="btn btn-navy btn-sm" onclick="custQuickAction(\''+c.id+'\',\'eb-\',\'new-easybuy\')">&#128722; New EasyBuy</button>'+
+    '<button class="btn btn-navy btn-sm" onclick="custQuickAction(\''+c.id+'\',\'inv-\',\'new-investment\')">&#128200; New Investment</button>'+
+    '<button class="btn btn-navy btn-sm" onclick="custQuickAction(\''+c.id+'\',\'ctb-\',\'new-contribution\')">&#128021; New Contribution</button>'+
+    '<button class="btn btn-navy btn-sm" onclick="custQuickAction(\''+c.id+'\',\'fd-\',\'new-fixeddeposit\')">&#127974; New Fixed Deposit</button>'+
+    '</div>';
+  showModal('cust-profile-modal');
 }
 
 // ===== EASYBUY GUARANTORS & EDIT =====
@@ -4206,6 +4454,7 @@ function submitInvestment(e){
   }).catch(e=>toast('Error: '+e.message,'e'));
 }
 function resetINVForm(){
+  const cp=document.getElementById('inv-cust-pick');if(cp)cp.value='';
   document.getElementById('inv-form').reset();
   const blank="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Crect width='80' height='80' fill='%23e2e8f0'/%3E%3Ctext x='50%25' y='55%25' font-size='28' text-anchor='middle' fill='%2394a3b8'%3E%F0%9F%91%A4%3C/text%3E%3C/svg%3E";
   const pp=document.getElementById('inv-photo-prev');if(pp)pp.src=blank;
@@ -5114,6 +5363,7 @@ function submitFD(e){
 }
 
 function resetFDForm(){
+  const cp=document.getElementById('fd-cust-pick');if(cp)cp.value='';
   var form=document.getElementById('fd-form');if(form)form.reset();
   var blank="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Crect width='80' height='80' fill='%23e2e8f0'/%3E%3Ctext x='50%25' y='55%25' font-size='28' text-anchor='middle' fill='%2394a3b8'%3E%F0%9F%91%A4%3C/text%3E%3C/svg%3E";
   var pp=document.getElementById('fd-photo-prev');if(pp)pp.src=blank;
@@ -5546,6 +5796,7 @@ function submitContribution(e){
   }).catch(ex=>toast('Error: '+ex.message,'e'));
 }
 function resetCTBForm(){
+  const cp=document.getElementById('ctb-cust-pick');if(cp)cp.value='';
   const form=document.getElementById('ctb-form');if(form)form.reset();
   const pp=document.getElementById('ctb-photo-prev');if(pp)pp.src=CTB_BLANK;
   const pd=document.getElementById('ctb-photo-data');if(pd)pd.value='';
