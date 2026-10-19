@@ -402,6 +402,7 @@ mark{background:#fef08a;border-radius:3px;padding:0 2px}
     <button class="nb" onclick="showPage('easybuy')">&#128722; EasyBuy</button>
     <button class="nb" onclick="showPage('investment')">&#128200; Investment</button>
     <button class="nb" onclick="showPage('contribution')">&#128021; Contributions</button>
+    <button class="nb" onclick="showPage('salarycontribution')">&#128188; Salary Earners</button>
     <button class="nb" onclick="showPage('fixeddeposit')">&#127974; Fixed Deposit</button>
     <button class="nb" id="nav-branches" onclick="showPage('branches')" style="display:none">&#x1F3E6; Branches</button>
     <button class="nb" id="nav-users" onclick="showPage('users')" style="display:none">&#x1F464; Staff</button>
@@ -465,6 +466,7 @@ mark{background:#fef08a;border-radius:3px;padding:0 2px}
           <div class="sh">&#128100; Customer Information</div>
           <div class="form-grid">
             <div class="fg"><label>Full Name *</label><input required id="cust-name" placeholder="Customer full name"/></div>
+            <div class="fg"><label>Age</label><input type="number" min="1" max="120" id="cust-age" placeholder="e.g. 35"/></div>
             <div class="fg"><label>Phone Number *</label><input required id="cust-phone" placeholder="08XXXXXXXXX"/></div>
             <div class="fg"><label>Address *</label><input required id="cust-address" placeholder="Residential address"/></div>
             <div class="fg"><label>Office Address</label><input id="cust-office" placeholder="Office / business address"/></div>
@@ -489,6 +491,24 @@ mark{background:#fef08a;border-radius:3px;padding:0 2px}
               </div>
               <input type="file" id="cust-idpic-file" accept="image/*" style="display:none" onchange="ebImgUp(this,'cust-idpic-prev','cust-idpic-data',500,0.75)"/>
               <input type="hidden" id="cust-idpic-data"/>
+            </div>
+          </div>
+          <div class="sh">&#128101; Next of Kin Details</div>
+          <div class="form-grid">
+            <div class="fg"><label>Next of Kin Full Name</label><input id="cust-nok-name" placeholder="Full name of next of kin"/></div>
+            <div class="fg"><label>Relationship</label><input id="cust-nok-rel" placeholder="e.g. Wife, Brother, Son"/></div>
+            <div class="fg"><label>Phone Number</label><input id="cust-nok-phone" placeholder="08XXXXXXXXX"/></div>
+            <div class="fg"><label>Address</label><input id="cust-nok-addr" placeholder="Next of kin address"/></div>
+            <div class="fg"><label>Occupation</label><input id="cust-nok-occ" placeholder="Next of kin occupation"/></div>
+            <div class="fg"><label>ID Type</label><select id="cust-nok-idtype"><option value="">Select</option><option>National ID (NIN)</option><option>Voter's Card</option><option>Driver's Licence</option><option>International Passport</option></select></div>
+            <div class="fg"><label>ID Number</label><input id="cust-nok-idnum" placeholder="Next of kin ID number"/></div>
+            <div class="fg"><label>Next of Kin Photo</label>
+              <div class="photo-up" onclick="document.getElementById('cust-nok-photo-file').click()">
+                <img id="cust-nok-photo-prev" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Crect width='80' height='80' fill='%23e2e8f0'/%3E%3Ctext x='50%25' y='55%25' font-size='28' text-anchor='middle' fill='%2394a3b8'%3E%F0%9F%91%A4%3C/text%3E%3C/svg%3E" alt=""/>
+                <p>Click to upload photo</p>
+              </div>
+              <input type="file" id="cust-nok-photo-file" accept="image/*" style="display:none" onchange="ebImgUp(this,'cust-nok-photo-prev','cust-nok-photo-data',500,0.75)"/>
+              <input type="hidden" id="cust-nok-photo-data"/>
             </div>
           </div>
           <div class="btn-row">
@@ -869,6 +889,123 @@ mark{background:#fef08a;border-radius:3px;padding:0 2px}
           <button class="btn btn-out btn-sm" onclick="exportCTBReportPDF()">&#128424; PDF (Print)</button>
           <button class="btn btn-out btn-sm" onclick="exportCTBReportExcel()">&#128190; Excel</button>
           <button class="btn btn-out btn-sm" onclick="exportCTBReportCSV()">&#128190; CSV</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SALARY EARNER CONTRIBUTION PAGE -->
+    <div class="page-section" id="page-salarycontribution">
+      <div class="mod-header" style="background:linear-gradient(135deg,#0369a1,#0c4a6e)"><div class="mod-icon">&#128188;</div><div><h2>Salary Earner Contribution</h2><p>Monthly savings deducted directly from salary earners' pay</p></div><div style="margin-left:auto;display:flex;gap:8px"><button class="btn btn-sm no-print" style="background:rgba(255,255,255,.2);color:#fff;border:1px solid rgba(255,255,255,.3)" onclick="showPage('sal-reports')">&#128196; Reports</button><button class="btn btn-sm no-print" style="background:rgba(255,255,255,.2);color:#fff;border:1px solid rgba(255,255,255,.3)" onclick="showPage('new-salarycontribution')">&#43; New Salary Contributor</button></div></div>
+      <div class="stat-grid" id="sal-stat-grid"></div>
+      <div class="card">
+        <div class="card-title">&#9203; Recent Salary Contribution Activity</div>
+        <div id="sal-activity-feed"></div>
+      </div>
+      <div class="card">
+        <div class="card-title"><span>&#128188; Salary Contributor Records</span></div>
+        <div class="search-row">
+          <input type="text" id="sal-srch" placeholder="Search name, phone, employer, Contributor ID..." oninput="searchSAL()"/>
+          <select id="sal-fst" onchange="searchSAL()"><option value="">All Status</option><option>Active</option><option>Completed</option><option>Suspended</option><option value="Overdue">Overdue Only</option></select>
+          <select id="sal-fbr" onchange="searchSAL()" style="display:none"><option value="">All Branches</option></select>
+        </div>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>ID</th><th>Contributor</th><th>Phone</th><th>Employer</th><th>Branch</th><th>Monthly Amount</th><th>Total Saved</th><th>Missed</th><th>Next Due</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody id="sal-tbody"></tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- NEW SALARY CONTRIBUTOR REGISTRATION -->
+    <div class="page-section" id="page-new-salarycontribution">
+      <div class="card">
+        <div class="card-title">&#128188; New Salary Contributor Registration
+          <button class="btn btn-out btn-sm no-print" onclick="showPage('salarycontribution')">&#8592; Back</button>
+        </div>
+        <form id="sal-form" onsubmit="submitSalaryContribution(event)">
+          <div class="sh">&#128100; Contributor Information</div>
+          <div class="form-grid">
+            <div class="fg" style="grid-column:1/-1;background:#f0f7ff;border:1.5px dashed #0f2342;border-radius:10px;padding:10px 12px"><label style="color:#0f2342">&#128100; Use Registered Customer (optional)</label><select id="sal-cust-pick" onchange="useRegisteredCustomer('sal-',this.value)"><option value="">— Select a registered customer or fill details manually below —</option></select></div>
+            <div class="fg"><label>Full Name *</label><input required id="sal-name" placeholder="Contributor full name"/></div>
+            <div class="fg"><label>Phone Number *</label><input required id="sal-phone" placeholder="08XXXXXXXXX"/></div>
+            <div class="fg"><label>Residential Address *</label><input required id="sal-address" placeholder="Residential address"/></div>
+          </div>
+          <div class="sh">&#128188; Employment Details</div>
+          <div class="form-grid">
+            <div class="fg"><label>Employer / Organisation Name *</label><input required id="sal-employer" placeholder="e.g. Ministry of Works, GTBank"/></div>
+            <div class="fg"><label>Employer Address</label><input id="sal-employer-addr" placeholder="Office address of employer"/></div>
+            <div class="fg"><label>Staff / IPPIS Number</label><input id="sal-staffno" placeholder="Staff ID or IPPIS number"/></div>
+            <div class="fg"><label>Monthly Salary (&#8358;)</label><input type="number" id="sal-salary" placeholder="0"/></div>
+          </div>
+          <div class="sh">&#127970; Branch</div>
+          <div class="form-grid">
+            <div class="fg"><label>Branch *</label><select id="sal-branch" required><option value="">-- Select Branch --</option></select></div>
+          </div>
+          <div class="sh">&#128247; Contributor Photo</div>
+          <div class="form-grid">
+            <div class="fg"><label>Passport Photograph</label>
+              <div class="photo-up" onclick="document.getElementById('sal-photo-file').click()">
+                <img id="sal-photo-prev" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Crect width='80' height='80' fill='%23e2e8f0'/%3E%3Ctext x='50%25' y='55%25' font-size='28' text-anchor='middle' fill='%2394a3b8'%3E%F0%9F%91%A4%3C/text%3E%3C/svg%3E" alt=""/>
+                <p>Click to upload photo</p>
+              </div>
+              <input type="file" id="sal-photo-file" accept="image/*" style="display:none" onchange="ebImgUp(this,'sal-photo-prev','sal-photo-data',500,0.75)"/>
+              <input type="hidden" id="sal-photo-data"/>
+            </div>
+          </div>
+          <div class="sh">&#128176; Contribution Account</div>
+          <div class="form-grid">
+            <div class="fg"><label>Contribution Frequency</label><input value="Monthly (Salary Deduction)" readonly style="background:var(--bg);font-weight:700"/><input type="hidden" id="sal-type" value="Monthly"/></div>
+            <div class="fg"><label>Monthly Contribution Amount (&#8358;) *</label><input required type="number" id="sal-amount" placeholder="0"/></div>
+            <div class="fg"><label>Registration Date *</label><input required type="date" id="sal-regdate" value=""/></div>
+            <div class="fg"><label>Status</label><select id="sal-status"><option value="Active">Active</option><option value="Suspended">Suspended</option><option value="Completed">Completed</option></select></div>
+          </div>
+          <div class="sh">&#128101; Next of Kin Details</div>
+          <div class="form-grid">
+            <div class="fg"><label>Next of Kin Full Name *</label><input required id="sal-nok-name" placeholder="Full name of next of kin"/></div>
+            <div class="fg"><label>Phone Number *</label><input required id="sal-nok-phone" placeholder="08XXXXXXXXX"/></div>
+            <div class="fg"><label>Residential Address</label><input id="sal-nok-addr" placeholder="Next of kin address"/></div>
+            <div class="fg"><label>Next of Kin Photo</label>
+              <div class="photo-up" onclick="document.getElementById('sal-nok-photo-file').click()">
+                <img id="sal-nok-photo-prev" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Crect width='80' height='80' fill='%23e2e8f0'/%3E%3Ctext x='50%25' y='55%25' font-size='28' text-anchor='middle' fill='%2394a3b8'%3E%F0%9F%91%A4%3C/text%3E%3C/svg%3E" alt=""/>
+                <p>Click to upload photo</p>
+              </div>
+              <input type="file" id="sal-nok-photo-file" accept="image/*" style="display:none" onchange="ebImgUp(this,'sal-nok-photo-prev','sal-nok-photo-data',500,0.75)"/>
+              <input type="hidden" id="sal-nok-photo-data"/>
+            </div>
+          </div>
+          <div class="btn-row">
+            <button type="submit" class="btn btn-navy" style="background:#0369a1">&#128190; Save Salary Contributor</button>
+            <button type="button" class="btn btn-out" onclick="resetSALForm()">&#8635; Reset</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- SALARY CONTRIBUTION REPORTS -->
+    <div class="page-section" id="page-sal-reports">
+      <div class="card">
+        <div class="card-title">&#128196; Salary Contribution Reports
+          <button class="btn btn-out btn-sm no-print" onclick="showPage('salarycontribution')">&#8592; Back</button>
+        </div>
+        <div class="form-grid">
+          <div class="fg"><label>Report Type *</label><select id="salr-type">
+            <option value="monthly">Monthly Collections</option>
+            <option value="outstanding">Outstanding Contributions</option>
+            <option value="missed">Missed Contributions</option>
+            <option value="summary">Total Contributions Received (All Salary Contributors)</option>
+          </select></div>
+          <div class="fg"><label>From Date</label><input type="date" id="salr-from"/></div>
+          <div class="fg"><label>To Date</label><input type="date" id="salr-to" value=""/></div>
+        </div>
+        <button class="btn btn-navy" style="background:#0369a1" onclick="generateSALReport()">&#128269; Generate Report</button>
+        <div id="sal-report-meta" style="margin-top:14px"></div>
+        <div class="tbl-wrap" style="margin-top:10px"><table>
+          <thead id="sal-report-thead"></thead>
+          <tbody id="sal-report-tbody"></tbody>
+        </table></div>
+        <div class="btn-row no-print" id="sal-report-export-row" style="display:none">
+          <button class="btn btn-out btn-sm" onclick="exportSALReportPDF()">&#128424; PDF (Print)</button>
+          <button class="btn btn-out btn-sm" onclick="exportSALReportExcel()">&#128190; Excel</button>
+          <button class="btn btn-out btn-sm" onclick="exportSALReportCSV()">&#128190; CSV</button>
         </div>
       </div>
     </div>
@@ -1865,6 +2002,54 @@ mark{background:#fef08a;border-radius:3px;padding:0 2px}
   </div>
 </div>
 
+<div class="overlay" id="sal-profile-modal">
+  <div class="modal" style="max-width:740px">
+    <div class="mhead">
+      <h3 id="sal-pm-title">Salary Contributor Profile</h3>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-out btn-sm no-print" onclick="printSALStatement()">&#128424; Print Statement</button>
+        <button class="mclose no-print" onclick="closeModal('sal-profile-modal')">&times;</button>
+      </div>
+    </div>
+    <div class="mbody" id="sal-pm-body"></div>
+  </div>
+</div>
+
+<!-- RECORD SALARY CONTRIBUTION MODAL -->
+<div class="overlay" id="sal-pay-modal">
+  <div class="modal" style="max-width:540px">
+    <div class="mhead">
+      <h3 id="sal-pay-title">Record Salary Contribution</h3>
+      <button class="mclose" onclick="closeModal('sal-pay-modal')">&times;</button>
+    </div>
+    <div class="mbody" id="sal-pay-body"></div>
+  </div>
+</div>
+
+<!-- EDIT SALARY CONTRIBUTOR MODAL -->
+<div class="overlay" id="sal-edit-modal">
+  <div class="modal" style="max-width:480px">
+    <div class="mhead">
+      <h3>&#9998; Edit Salary Contributor Record</h3>
+      <button class="mclose" onclick="closeModal('sal-edit-modal')">&times;</button>
+    </div>
+    <div class="mbody">
+      <div class="form-grid">
+        <div class="fg"><label>Full Name *</label><input id="sale-name"/></div>
+        <div class="fg"><label>Phone *</label><input id="sale-phone"/></div>
+        <div class="fg"><label>Address *</label><input id="sale-address"/></div>
+        <div class="fg"><label>Employer / Organisation *</label><input id="sale-employer"/></div>
+        <div class="fg"><label>Employer Address</label><input id="sale-employer-addr"/></div>
+        <div class="fg"><label>Staff / IPPIS Number</label><input id="sale-staffno"/></div>
+        <div class="fg"><label>Monthly Salary (&#8358;)</label><input type="number" id="sale-salary"/></div>
+        <div class="fg"><label>Monthly Contribution Amount (&#8358;) *</label><input type="number" id="sale-amount"/></div>
+        <div class="fg"><label>Status *</label><select id="sale-status"><option value="Active">Active</option><option value="Suspended">Suspended</option><option value="Completed">Completed</option></select></div>
+      </div>
+      <button class="btn btn-navy" style="background:#0369a1;width:100%;justify-content:center;padding:11px;margin-top:12px" onclick="saveSALEdit()">&#128190; Save Changes</button>
+    </div>
+  </div>
+</div>
+
 <!-- FD PROFILE MODAL -->
 <div class="overlay" id="fd-profile-modal">
   <div class="modal" style="max-width:740px">
@@ -2139,6 +2324,14 @@ function showPage(id){
   if(id==='new-fixeddeposit'){populateFDBranchDropdowns();resetFDForm()}
   if(id==='customers'){renderCustStats();renderCust(allCustomers)}
   if(id==='new-customer'){populateCustomerDropdowns()}
+  if(id==='salarycontribution'){populateSALBranchDropdowns();renderSALStats();renderSAL(scopedSAL());renderSALActivity()}
+  if(id==='new-salarycontribution'){populateSALBranchDropdowns();populateCustomerDropdowns();resetSALForm()}
+  if(id==='sal-reports'){
+    document.getElementById('sal-report-thead').innerHTML='';
+    document.getElementById('sal-report-tbody').innerHTML='';
+    document.getElementById('sal-report-meta').innerHTML='';
+    document.getElementById('sal-report-export-row').style.display='none';
+  }
   if(id==='settings'){
     document.getElementById('si-total').textContent=getScopedLoans().length;
     document.getElementById('si-branches').textContent=allBranches.length;
@@ -2150,7 +2343,7 @@ function showPage(id){
 async function loadAll(){
   showLoader('Loading data...');
   try{
-    const [brSnap,usSnap,lnSnap,ebSnap,invSnap,fdSnap,ctbSnap,alSnap,csSnap]=await Promise.all([
+    const [brSnap,usSnap,lnSnap,ebSnap,invSnap,fdSnap,ctbSnap,alSnap,csSnap,salSnap]=await Promise.all([
       db.collection('branches').get(),
       db.collection('staff_users').get(),
       db.collection('loans').get(),
@@ -2159,7 +2352,8 @@ async function loadAll(){
       db.collection('fixeddeposits').get(),
       db.collection('contributions').get(),
       db.collection('auditlogs').get(),
-      db.collection('customers').get()
+      db.collection('customers').get(),
+      db.collection('salarycontributions').get()
     ]);
     allBranches=brSnap.docs.map(d=>({id:d.id,...d.data()}));
     allUsers=usSnap.docs.map(d=>({id:d.id,...d.data()}));
@@ -2170,9 +2364,11 @@ async function loadAll(){
     allContributions=ctbSnap.docs.map(d=>({id:d.id,...d.data()}));
     allAuditLogs=alSnap.docs.map(d=>({id:d.id,...d.data()}));
     allCustomers=csSnap.docs.map(d=>({id:d.id,...d.data()}));
+    allSalaryContributions=salSnap.docs.map(d=>({id:d.id,...d.data()}));
     populateAllBranchDropdowns();
     populateEBINVBranchDropdowns();
     populateCTBBranchDropdowns();
+    populateSALBranchDropdowns();
     populateCustomerDropdowns();
     populateAllYearDropdowns();
     chkNotifBadge();
@@ -3923,9 +4119,14 @@ const CUST_IDBLANK="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'
 const CUST_FIELD_MAP={
   'f-':  {name:'f-name',phone:'f-phone',address:'f-address',occupation:'f-occ',idtype:'f-idtype',idnum:'f-idnum',photo:'f-photo-data',photoPrev:'f-photo-prev'},
   'eb-': {name:'eb-name',phone:'eb-phone',address:'eb-address',officeAddress:'eb-office',occupation:'eb-occ',idtype:'eb-idtype',idnum:'eb-idnum',idpic:'eb-idpic-data',idpicPrev:'eb-idpic-prev',photo:'eb-photo-data',photoPrev:'eb-photo-prev'},
-  'inv-':{name:'inv-name',phone:'inv-phone',address:'inv-address',occupation:'inv-occ',idtype:'inv-idtype',idnum:'inv-idnum',photo:'inv-photo-data',photoPrev:'inv-photo-prev'},
-  'ctb-':{name:'ctb-name',phone:'ctb-phone',address:'ctb-address',photo:'ctb-photo-data',photoPrev:'ctb-photo-prev'},
-  'fd-': {name:'fd-name',phone:'fd-phone',address:'fd-address',occupation:'fd-occ',idtype:'fd-idtype',idnum:'fd-idnum',photo:'fd-photo-data',photoPrev:'fd-photo-prev'}
+  'inv-':{name:'inv-name',phone:'inv-phone',address:'inv-address',occupation:'inv-occ',idtype:'inv-idtype',idnum:'inv-idnum',photo:'inv-photo-data',photoPrev:'inv-photo-prev',
+    nokName:'inv-nok-name',nokRel:'inv-nok-rel',nokPhone:'inv-nok-phone',nokAddress:'inv-nok-addr',nokOccupation:'inv-nok-occ',nokIdtype:'inv-nok-idtype',nokIdnum:'inv-nok-idnum',nokPhoto:'inv-nok-photo-data',nokPhotoPrev:'inv-nok-photo-prev'},
+  'ctb-':{name:'ctb-name',phone:'ctb-phone',address:'ctb-address',photo:'ctb-photo-data',photoPrev:'ctb-photo-prev',
+    nokName:'ctb-nok-name',nokPhone:'ctb-nok-phone',nokAddress:'ctb-nok-addr',nokPhoto:'ctb-nok-photo-data',nokPhotoPrev:'ctb-nok-photo-prev'},
+  'fd-': {name:'fd-name',phone:'fd-phone',address:'fd-address',occupation:'fd-occ',idtype:'fd-idtype',idnum:'fd-idnum',photo:'fd-photo-data',photoPrev:'fd-photo-prev',
+    nokName:'fd-nok-name',nokRel:'fd-nok-rel',nokPhone:'fd-nok-phone',nokAddress:'fd-nok-addr',nokOccupation:'fd-nok-occ',nokIdtype:'fd-nok-idtype',nokIdnum:'fd-nok-idnum'},
+  'sal-':{name:'sal-name',phone:'sal-phone',address:'sal-address',photo:'sal-photo-data',photoPrev:'sal-photo-prev',
+    nokName:'sal-nok-name',nokPhone:'sal-nok-phone',nokAddress:'sal-nok-addr',nokPhoto:'sal-nok-photo-data',nokPhotoPrev:'sal-nok-photo-prev'}
 };
 function custGenRegNo(){
   let n=allCustomers.length+1, regNo;
@@ -3943,7 +4144,7 @@ function useRegisteredCustomer(prefix,custId){
   if(!custId)return;
   const c=allCustomers.find(x=>x.id===custId);if(!c)return;
   Object.keys(map).forEach(key=>{
-    if(key==='photoPrev'||key==='idpicPrev')return;
+    if(key==='photoPrev'||key==='idpicPrev'||key==='nokPhotoPrev')return;
     const el=document.getElementById(map[key]);
     if(el && c[key]!==undefined) el.value=c[key]||'';
   });
@@ -3954,6 +4155,10 @@ function useRegisteredCustomer(prefix,custId){
   if(map.idpic && map.idpicPrev){
     const img=document.getElementById(map.idpicPrev);
     if(img) img.src=c.idpic||CUST_IDBLANK;
+  }
+  if(map.nokPhoto && map.nokPhotoPrev){
+    const img=document.getElementById(map.nokPhotoPrev);
+    if(img) img.src=c.nokPhoto||CUST_BLANK;
   }
   toast('Loaded '+c.name+'\'s details','s');
 }
@@ -3989,6 +4194,8 @@ function resetCustomerForm(){
   document.getElementById('cust-idpic-data').value='';
   document.getElementById('cust-photo-prev').src=CUST_BLANK;
   document.getElementById('cust-idpic-prev').src=CUST_IDBLANK;
+  document.getElementById('cust-nok-photo-data').value='';
+  document.getElementById('cust-nok-photo-prev').src=CUST_BLANK;
   document.getElementById('cust-form-title').innerHTML='&#128100; Register New Customer <button class="btn btn-out btn-sm no-print" onclick="showPage(\'customers\')">&#8592; Back</button>';
 }
 function submitCustomer(e){
@@ -3996,9 +4203,11 @@ function submitCustomer(e){
   if(!v('cust-name')||!v('cust-phone')||!v('cust-address')){toast('Name, phone and address are required','e');return}
   const editId=v('cust-edit-id');
   const data={
-    name:v('cust-name'), phone:v('cust-phone'), address:v('cust-address'), officeAddress:v('cust-office'),
+    name:v('cust-name'), age:v('cust-age'), phone:v('cust-phone'), address:v('cust-address'), officeAddress:v('cust-office'),
     occupation:v('cust-occ'), idtype:v('cust-idtype'), idnum:v('cust-idnum'),
-    photo:v('cust-photo-data'), idpic:v('cust-idpic-data')
+    photo:v('cust-photo-data'), idpic:v('cust-idpic-data'),
+    nokName:v('cust-nok-name'), nokRel:v('cust-nok-rel'), nokPhone:v('cust-nok-phone'), nokAddress:v('cust-nok-addr'),
+    nokOccupation:v('cust-nok-occ'), nokIdtype:v('cust-nok-idtype'), nokIdnum:v('cust-nok-idnum'), nokPhoto:v('cust-nok-photo-data')
   };
   try{if(JSON.stringify(data).length>980000){toast('Images are too large in total. Use smaller/clearer photos and try again.','e');return}}catch(x){}
   if(editId){
@@ -4032,6 +4241,16 @@ function editCustomer(id){
   document.getElementById('cust-photo-prev').src=c.photo||CUST_BLANK;
   document.getElementById('cust-idpic-data').value=c.idpic||'';
   document.getElementById('cust-idpic-prev').src=c.idpic||CUST_IDBLANK;
+  document.getElementById('cust-age').value=c.age||'';
+  document.getElementById('cust-nok-name').value=c.nokName||'';
+  document.getElementById('cust-nok-rel').value=c.nokRel||'';
+  document.getElementById('cust-nok-phone').value=c.nokPhone||'';
+  document.getElementById('cust-nok-addr').value=c.nokAddress||'';
+  document.getElementById('cust-nok-occ').value=c.nokOccupation||'';
+  document.getElementById('cust-nok-idtype').value=c.nokIdtype||'';
+  document.getElementById('cust-nok-idnum').value=c.nokIdnum||'';
+  document.getElementById('cust-nok-photo-data').value=c.nokPhoto||'';
+  document.getElementById('cust-nok-photo-prev').src=c.nokPhoto||CUST_BLANK;
   document.getElementById('cust-form-title').innerHTML='&#9998; Edit Customer \u2014 '+c.regNo+' <button class="btn btn-out btn-sm no-print" onclick="showPage(\'customers\')">&#8592; Back</button>';
   closeModal('cust-profile-modal');
 }
@@ -4064,9 +4283,21 @@ function openCustomerProfile(id){
     '<div class="iitem"><label>Address</label><p>'+(c.address||'--')+'</p></div>'+
     '<div class="iitem"><label>Office Address</label><p>'+(c.officeAddress||'--')+'</p></div>'+
     '<div class="iitem"><label>Occupation</label><p>'+(c.occupation||'--')+'</p></div>'+
+    '<div class="iitem"><label>Age</label><p>'+(c.age||'--')+'</p></div>'+
     '<div class="iitem"><label>ID</label><p>'+((c.idtype||'')+' '+(c.idnum||'')).trim()+(c.idtype||c.idnum?'':'--')+'</p></div>'+
     '<div class="iitem"><label>Registered</label><p>'+(c.createdAt?c.createdAt.slice(0,10):'--')+'</p></div>'+
     '</div>'+
+    (c.nokName?('<div class="sh">&#128101; Next of Kin</div>'+
+      '<div class="info-grid" style="margin-top:0">'+
+      '<div class="iitem"><label>Full Name</label><p>'+c.nokName+'</p></div>'+
+      '<div class="iitem"><label>Relationship</label><p>'+(c.nokRel||'--')+'</p></div>'+
+      '<div class="iitem"><label>Phone</label><p>'+(c.nokPhone||'--')+'</p></div>'+
+      '<div class="iitem"><label>Address</label><p>'+(c.nokAddress||'--')+'</p></div>'+
+      '<div class="iitem"><label>Occupation</label><p>'+(c.nokOccupation||'--')+'</p></div>'+
+      '<div class="iitem"><label>ID</label><p>'+((c.nokIdtype||'')+' '+(c.nokIdnum||'')).trim()+(c.nokIdtype||c.nokIdnum?'':'--')+'</p></div>'+
+      '</div>'+
+      (c.nokPhoto?'<div class="iitem" style="margin-top:10px"><label>Next of Kin Photo</label><img src="'+c.nokPhoto+'" style="max-width:120px;border-radius:8px;border:1px solid var(--border)"/></div>':'')
+    ):'')+
     (c.photo?'<div class="iitem" style="margin-top:10px"><label>Passport Photo</label><img src="'+c.photo+'" style="max-width:120px;border-radius:8px;border:1px solid var(--border)"/></div>':'')+
     (c.idpic?'<div class="iitem" style="margin-top:10px"><label>Means of Identification</label><img src="'+c.idpic+'" style="max-width:100%;max-height:150px;border-radius:8px;border:1px solid var(--border);cursor:pointer" onclick="ebShowImg(this.src)"/></div>':'')+
     '<div class="sh">&#9889; Use These Details For</div>'+
@@ -4076,6 +4307,7 @@ function openCustomerProfile(id){
     '<button class="btn btn-navy btn-sm" onclick="custQuickAction(\''+c.id+'\',\'inv-\',\'new-investment\')">&#128200; New Investment</button>'+
     '<button class="btn btn-navy btn-sm" onclick="custQuickAction(\''+c.id+'\',\'ctb-\',\'new-contribution\')">&#128021; New Contribution</button>'+
     '<button class="btn btn-navy btn-sm" onclick="custQuickAction(\''+c.id+'\',\'fd-\',\'new-fixeddeposit\')">&#127974; New Fixed Deposit</button>'+
+    '<button class="btn btn-navy btn-sm" onclick="custQuickAction(\''+c.id+'\',\'sal-\',\'new-salarycontribution\')">&#128188; New Salary Contribution</button>'+
     '</div>';
   showModal('cust-profile-modal');
 }
@@ -6118,6 +6350,491 @@ function downloadCSV(filename,headers,rows){
 }
 
 // =====================================================
+// ===== SALARY EARNER CONTRIBUTION MODULE =====
+// =====================================================
+let allSalaryContributions=[], salCurId=null, salLastReport=null;
+const SAL_BLANK="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Crect width='80' height='80' fill='%23e2e8f0'/%3E%3Ctext x='50%25' y='55%25' font-size='28' text-anchor='middle' fill='%2394a3b8'%3E%F0%9F%91%A4%3C/text%3E%3C/svg%3E";
+
+function scopedSAL(){
+  if(currentSession.role==='admin') return allSalaryContributions;
+  if(currentSession.role==='manager') return allSalaryContributions.filter(c=>c.branchId===currentSession.branchId);
+  return allSalaryContributions.filter(c=>c.branchId===currentSession.branchId && (c.createdBy===currentSession.username||c.createdBy===currentSession.userId));
+}
+function salGenId(){ return 'SAL-'+Date.now().toString().slice(-7); }
+function salGenRef(){ return 'STXN-'+Date.now().toString().slice(-8)+Math.floor(Math.random()*90+10); }
+function salBdg(s){
+  const m={Active:'b-ctb-active',Completed:'b-ctb-completed',Suspended:'b-ctb-suspended'};
+  return '<span class="badge '+(m[s]||'b-pending')+'">'+(s||'Active')+'</span>';
+}
+
+// ----- Salary contribution math helpers (always Monthly) -----
+function salGetPaidTotal(c){ return (c.payments||[]).reduce((s,p)=>s+(parseFloat(p.amount)||0),0); }
+function salGetPaidCount(c){ return (c.payments||[]).length; }
+function salPeriodsElapsed(c){
+  if(!c.regDate) return 0;
+  const start=new Date(c.regDate+'T00:00:00'); const now=new Date(); now.setHours(0,0,0,0);
+  if(now<start) return 0;
+  let months=(now.getFullYear()-start.getFullYear())*12+(now.getMonth()-start.getMonth());
+  if(now.getDate()>=start.getDate()) months+=1;
+  return Math.max(0,months);
+}
+function salMissedCount(c){
+  if(c.status!=='Active') return 0;
+  return Math.max(0, salPeriodsElapsed(c) - salGetPaidCount(c));
+}
+function salExpectedTotal(c){ return salPeriodsElapsed(c) * (parseFloat(c.amount)||0); }
+function salOutstanding(c){ return Math.max(0, salExpectedTotal(c) - salGetPaidTotal(c)); }
+function salLastPaymentDate(c){ const p=c.payments||[]; return p.length? p[p.length-1].date : null; }
+function salNextDue(c){
+  const p=c.payments||[];
+  if(!p.length) return c.regDate||null;
+  const d=new Date(p[p.length-1].date+'T00:00:00');
+  d.setMonth(d.getMonth()+1);
+  return d.toISOString().slice(0,10);
+}
+function salIsOverdue(c){ return c.status==='Active' && salMissedCount(c)>0; }
+
+// ----- Branch dropdowns -----
+function populateSALBranchDropdowns(){
+  const sel=document.getElementById('sal-branch');
+  if(sel){
+    sel.innerHTML='<option value="">-- Select Branch --</option>';
+    allBranches.forEach(b=>{const o=document.createElement('option');o.value=b.id;o.textContent=b.name+(b.code?' ('+b.code+')':'');sel.appendChild(o);});
+    if(currentSession.role==='staff'){sel.value=currentSession.branchId;sel.disabled=true;} else sel.disabled=false;
+  }
+  const fbr=document.getElementById('sal-fbr');
+  if(fbr){
+    fbr.style.display=currentSession.role==='admin'?'':'none';
+    fbr.innerHTML='<option value="">All Branches</option>';
+    allBranches.forEach(b=>{const o=document.createElement('option');o.value=b.id;o.textContent=b.name;fbr.appendChild(o);});
+  }
+}
+
+// ----- Dashboard stats for the Salary Contribution module -----
+function renderSALStats(){
+  const list=scopedSAL();
+  const active=list.filter(c=>c.status==='Active').length;
+  const overdue=list.filter(c=>salIsOverdue(c)).length;
+  const totalSaved=list.reduce((s,c)=>s+salGetPaidTotal(c),0);
+  const totalMonthlySalaryBook=list.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+  const today=td();
+  const todaysCollections=list.reduce((s,c)=>s+(c.payments||[]).filter(p=>p.date===today).reduce((a,p)=>a+(parseFloat(p.amount)||0),0),0);
+  const now=new Date(); const weekStart=new Date(now); weekStart.setDate(now.getDate()-now.getDay()); weekStart.setHours(0,0,0,0);
+  const weekStartStr=weekStart.toISOString().slice(0,10);
+  const weekCollections=list.reduce((s,c)=>s+(c.payments||[]).filter(p=>p.date>=weekStartStr&&p.date<=today).reduce((a,p)=>a+(parseFloat(p.amount)||0),0),0);
+  const monthStartStr=today.slice(0,7)+'-01';
+  const monthCollections=list.reduce((s,c)=>s+(c.payments||[]).filter(p=>p.date>=monthStartStr&&p.date<=today).reduce((a,p)=>a+(parseFloat(p.amount)||0),0),0);
+  const el=document.getElementById('sal-stat-grid');if(!el)return;
+  el.innerHTML=
+    '<div class="stat-card" style="border-color:#0369a1"><div class="stat-val">'+list.length+'</div><div class="stat-lbl">Total Salary Contributors</div></div>'+
+    '<div class="stat-card" style="border-color:#0369a1"><div class="stat-val">&#8358;'+fmt(totalMonthlySalaryBook)+'</div><div class="stat-lbl">Total Monthly Contribution Book</div></div>'+
+    '<div class="stat-card" style="border-color:#0369a1"><div class="stat-val">&#8358;'+fmt(todaysCollections)+'</div><div class="stat-lbl">Today\'s Collections</div></div>'+
+    '<div class="stat-card" style="border-color:#0369a1"><div class="stat-val">&#8358;'+fmt(weekCollections)+'</div><div class="stat-lbl">This Week\'s Collections</div></div>'+
+    '<div class="stat-card" style="border-color:#0369a1"><div class="stat-val">&#8358;'+fmt(monthCollections)+'</div><div class="stat-lbl">This Month\'s Collections</div></div>'+
+    '<div class="stat-card" style="border-color:var(--green)"><div class="stat-val">'+active+'</div><div class="stat-lbl">Active Contributors</div></div>'+
+    (overdue>0?'<div class="stat-card" style="border-color:var(--red)"><div class="stat-val" style="color:var(--red)">'+overdue+'</div><div class="stat-lbl">Overdue Contributors</div></div>':'')+
+    '<div class="stat-card" style="border-color:var(--navy)"><div class="stat-val">&#8358;'+fmt(totalSaved)+'</div><div class="stat-lbl">Total Contributions Received</div></div>';
+}
+
+function renderSALActivity(){
+  const el=document.getElementById('sal-activity-feed');if(!el)return;
+  let acts=[];
+  scopedSAL().forEach(c=>{
+    (c.payments||[]).forEach(p=>{
+      acts.push({name:c.name,salId:c.salId,amount:p.amount,date:p.date,recordedBy:p.recordedBy,recordedAt:p.recordedAt||p.date,ref:p.ref});
+    });
+  });
+  acts.sort((a,b)=>new Date(b.recordedAt)-new Date(a.recordedAt));
+  acts=acts.slice(0,8);
+  if(!acts.length){el.innerHTML='<p style="color:var(--muted);font-size:.82rem;text-align:center;padding:14px">No salary contribution activity yet.</p>';return;}
+  el.innerHTML='<div class="tbl-wrap"><table><thead><tr><th>Contributor</th><th>ID</th><th>Amount</th><th>Date</th><th>Recorded By</th><th>Ref</th></tr></thead><tbody>'+
+    acts.map(a=>'<tr><td>'+a.name+'</td><td>'+a.salId+'</td><td style="color:#0369a1;font-weight:700">&#8358;'+fmt(a.amount)+'</td><td>'+a.date+'</td><td>'+(a.recordedBy||'--')+'</td><td>'+(a.ref||'--')+'</td></tr>').join('')+
+    '</tbody></table></div>';
+}
+
+// ----- Render / Search list -----
+function renderSAL(list){
+  const tb=document.getElementById('sal-tbody');if(!tb)return;
+  tb.innerHTML=list.map(c=>{
+    const total=salGetPaidTotal(c), missed=salMissedCount(c), next=salNextDue(c), od=salIsOverdue(c);
+    return '<tr '+(od?'style="background:#fff5f5"':'')+'>'+
+      '<td><strong>'+c.salId+'</strong></td>'+
+      '<td>'+(c.photo?'<img src="'+c.photo+'" style="width:22px;height:22px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:4px;border:1px solid #0369a1" alt=""/>':'')+c.name+'</td>'+
+      '<td>'+c.phone+'</td>'+
+      '<td>'+(c.employer||'--')+'</td>'+
+      '<td><span style="font-size:.68rem;background:#f0f7ff;padding:2px 6px;border-radius:4px;border:1px solid #bae6fd">'+getBranchName(c.branchId)+'</span></td>'+
+      '<td>&#8358;'+fmt(c.amount)+'</td>'+
+      '<td style="color:#0369a1;font-weight:700">&#8358;'+fmt(total)+'</td>'+
+      '<td style="color:'+(missed>0?'var(--red)':'var(--muted)')+'">'+missed+'</td>'+
+      '<td>'+(next||'--')+'</td>'+
+      '<td>'+salBdg(c.status)+(od?'<span class="ndot" title="Overdue"></span>':'')+'</td>'+
+      '<td><div style="display:flex;gap:3px;flex-wrap:wrap">'+
+        '<button class="btn btn-out btn-sm" onclick="viewSALProfile(\''+c.id+'\')">&#128100;</button>'+
+        '<button class="btn btn-sm" style="background:#0369a1;color:#fff" onclick="openSALPayModal(\''+c.id+'\')">&#128176;</button>'+
+        '<button class="btn btn-red btn-sm" onclick="delSAL(\''+c.id+'\')">&#128465;</button>'+
+      '</div></td></tr>';
+  }).join('')||'<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:20px">No salary contributor records found.</td></tr>';
+}
+function searchSAL(){
+  const q=v('sal-srch').toLowerCase(), st=v('sal-fst'), br=v('sal-fbr');
+  let list=scopedSAL().filter(c=>(c.name||'').toLowerCase().includes(q)||(c.phone||'').includes(q)||(c.salId||'').toLowerCase().includes(q)||(c.employer||'').toLowerCase().includes(q));
+  if(st==='Overdue') list=list.filter(c=>salIsOverdue(c));
+  else if(st) list=list.filter(c=>c.status===st);
+  if(br&&currentSession.role==='admin') list=list.filter(c=>c.branchId===br);
+  renderSAL(list);
+}
+
+// ----- Register salary contributor -----
+function submitSalaryContribution(e){
+  e.preventDefault();
+  const branchId=currentSession.role==='staff'?currentSession.branchId:v('sal-branch');
+  if(!branchId){toast('Please select a branch','e');return}
+  if(!v('sal-regdate')){toast('Please select the registration date','e');return}
+  const amount=parseFloat(v('sal-amount'))||0;
+  if(!v('sal-name')||!v('sal-phone')||!v('sal-address')||!v('sal-employer')||!amount){toast('Please fill in all required fields','e');return}
+  const data={
+    salId:salGenId(), name:v('sal-name'), phone:v('sal-phone'), address:v('sal-address'),
+    photo:document.getElementById('sal-photo-data').value,
+    employer:v('sal-employer'), employerAddress:v('sal-employer-addr'), staffNo:v('sal-staffno'), monthlySalary:parseFloat(v('sal-salary'))||0,
+    branchId, branchName:getBranchName(branchId),
+    type:'Monthly', amount, regDate:v('sal-regdate'), status:v('sal-status')||'Active',
+    nok:{ name:v('sal-nok-name'), phone:v('sal-nok-phone'), address:v('sal-nok-addr'),
+      photo:document.getElementById('sal-nok-photo-data').value },
+    payments:[], createdBy:currentSession.username||'admin',
+    createdByName:currentSession.name||currentSession.username,
+    createdAt:new Date().toISOString()
+  };
+  db.collection('salarycontributions').add(data).then(ref=>{
+    const saved={id:ref.id,...data};
+    allSalaryContributions.unshift(saved);
+    logAudit('Salary Contributor Registered', saved.name+' ('+saved.salId+') registered as a salary contributor at '+saved.employer+' \\u2014 \\u20a6'+fmt(saved.amount)+'/month.');
+    toast('Salary contributor registered! ID: '+data.salId,'s');
+    resetSALForm();
+    showPage('salarycontribution');
+  }).catch(ex=>toast('Error: '+ex.message,'e'));
+}
+function resetSALForm(){
+  const cp=document.getElementById('sal-cust-pick');if(cp)cp.value='';
+  const form=document.getElementById('sal-form');if(form)form.reset();
+  const pp=document.getElementById('sal-photo-prev');if(pp)pp.src=SAL_BLANK;
+  const pd=document.getElementById('sal-photo-data');if(pd)pd.value='';
+  const npp=document.getElementById('sal-nok-photo-prev');if(npp)npp.src=SAL_BLANK;
+  const npd=document.getElementById('sal-nok-photo-data');if(npd)npd.value='';
+  const rd=document.getElementById('sal-regdate');if(rd)rd.value=td();
+  populateSALBranchDropdowns();
+}
+function delSAL(id){
+  if(!confirm('Delete this salary contributor record? This cannot be undone.'))return;
+  const c=allSalaryContributions.find(x=>x.id===id);
+  db.collection('salarycontributions').doc(id).delete().then(()=>{
+    allSalaryContributions=allSalaryContributions.filter(x=>x.id!==id);
+    if(c) logAudit('Salary Contributor Deleted', c.name+' ('+c.salId+') record deleted.');
+    renderSAL(scopedSAL());renderSALStats();renderSALActivity();
+    toast('Salary contributor deleted.','w');
+  }).catch(e=>toast('Error: '+e.message,'e'));
+}
+
+// ----- Salary contributor profile -----
+function viewSALProfile(id){
+  salCurId=id;
+  const c=allSalaryContributions.find(x=>x.id===id);if(!c)return;
+  const total=salGetPaidTotal(c), paidCount=salGetPaidCount(c), missed=salMissedCount(c),
+        next=salNextDue(c), last=salLastPaymentDate(c), periods=salPeriodsElapsed(c), outstanding=salOutstanding(c);
+  document.getElementById('sal-pm-title').textContent='Salary Contributor \\u2014 '+c.name;
+  document.getElementById('sal-pm-body').innerHTML=
+    '<div class="prof-hd" style="background:linear-gradient(135deg,#0369a1,#0c4a6e)">'+
+    '<img class="prof-photo" src="'+(c.photo||SAL_BLANK)+'" alt="" style="border-color:#7dd3fc"/>'+
+    '<div style="flex:1"><div style="font-size:1.05rem;font-weight:800">'+c.name+'</div>'+
+    '<div style="opacity:.75;font-size:.81rem">'+c.phone+' &bull; Salary Contributor</div>'+
+    '<div style="opacity:.65;font-size:.73rem;margin-top:3px">&#127970; '+getBranchName(c.branchId)+' &bull; &#128188; '+(c.employer||'--')+'</div>'+
+    '<div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">'+salBdg(c.status)+
+    '<span style="font-size:.72rem;background:rgba(255,255,255,.15);padding:2px 8px;border-radius:10px">'+c.salId+'</span>'+
+    (salIsOverdue(c)?'<span class="badge b-ctb-overdue">OVERDUE</span>':'')+
+    '</div></div></div>'+
+    '<div class="repay-sum">'+
+    '<div class="rs"><div class="rv">&#8358;'+fmt(c.amount)+'</div><div class="rl">Monthly Amount</div></div>'+
+    '<div class="rs"><div class="rv" style="color:#0369a1">&#8358;'+fmt(total)+'</div><div class="rl">Total Saved</div></div>'+
+    '<div class="rs"><div class="rv">'+paidCount+'</div><div class="rl">Payments Made</div></div>'+
+    '<div class="rs"><div class="rv" style="color:'+(missed>0?'var(--red)':'var(--green)')+'">'+missed+'</div><div class="rl">Missed Payments</div></div>'+
+    '<div class="rs"><div class="rv" style="color:'+(outstanding>0?'var(--red)':'var(--green)')+'">&#8358;'+fmt(outstanding)+'</div><div class="rl">Outstanding Balance</div></div>'+
+    '</div>'+
+    '<div style="font-size:.72rem;color:var(--muted);margin-bottom:12px">Registered: <strong>'+(c.regDate||'--')+'</strong> &bull; Last Payment: <strong>'+(last||'--')+'</strong> &bull; Next Due: <strong>'+(next||'--')+'</strong> &bull; Months Elapsed: <strong>'+periods+'</strong></div>'+
+    '<div class="sh">&#128100; Contributor Details <button class="btn btn-out btn-sm no-print" style="margin-left:8px" onclick="openSALEdit(\''+c.id+'\')">&#9998; Edit</button></div>'+
+    '<div class="info-grid" style="margin-top:0">'+
+    '<div class="iitem"><label>Full Name</label><p>'+c.name+'</p></div>'+
+    '<div class="iitem"><label>Phone</label><p>'+c.phone+'</p></div>'+
+    '<div class="iitem"><label>Address</label><p>'+(c.address||'--')+'</p></div>'+
+    '<div class="iitem"><label>Employer</label><p>'+(c.employer||'--')+'</p></div>'+
+    '<div class="iitem"><label>Employer Address</label><p>'+(c.employerAddress||'--')+'</p></div>'+
+    '<div class="iitem"><label>Staff / IPPIS Number</label><p>'+(c.staffNo||'--')+'</p></div>'+
+    '<div class="iitem"><label>Monthly Salary</label><p>'+(c.monthlySalary?'&#8358;'+fmt(c.monthlySalary):'--')+'</p></div>'+
+    '<div class="iitem"><label>Monthly Contribution</label><p>&#8358;'+fmt(c.amount)+'</p></div>'+
+    '<div class="iitem"><label>Registration Date</label><p>'+(c.regDate||'--')+'</p></div>'+
+    '<div class="iitem"><label>Branch</label><p>'+getBranchName(c.branchId)+'</p></div>'+
+    '<div class="iitem"><label>Status</label><p>'+c.status+'</p></div>'+
+    '</div>'+
+    '<div class="sh">&#128101; Next of Kin Details</div>'+
+    '<div style="display:flex;gap:12px;align-items:center;margin-bottom:10px">'+
+    '<img src="'+((c.nok&&c.nok.photo)||SAL_BLANK)+'" alt="" style="width:68px;height:68px;object-fit:cover;border-radius:8px;border:2px solid var(--border)"/>'+
+    '<div style="font-size:.78rem;color:var(--muted)">Next of Kin Photo</div>'+
+    '</div>'+
+    '<div class="info-grid" style="margin-top:0">'+
+    '<div class="iitem"><label>Full Name</label><p>'+((c.nok&&c.nok.name)||'--')+'</p></div>'+
+    '<div class="iitem"><label>Phone</label><p>'+((c.nok&&c.nok.phone)||'--')+'</p></div>'+
+    '<div class="iitem"><label>Address</label><p>'+((c.nok&&c.nok.address)||'--')+'</p></div>'+
+    '</div>'+
+    '<div class="sh">Contribution History ('+(c.payments||[]).length+')</div>'+
+    ((c.payments||[]).length===0
+      ?'<p style="color:var(--muted);font-size:.82rem;text-align:center;padding:14px">No contributions recorded yet.</p>'
+      :'<div class="tbl-wrap"><table><thead><tr><th>#</th><th>Ref</th><th>Amount</th><th>Date</th><th>Note</th><th>By</th></tr></thead><tbody>'+
+      (c.payments||[]).map((p,idx)=>'<tr><td>'+(idx+1)+'</td><td>'+(p.ref||'--')+'</td><td style="color:#0369a1;font-weight:700">&#8358;'+fmt(p.amount)+'</td><td>'+p.date+'</td><td>'+(p.note||'--')+'</td><td>'+(p.recordedBy||'--')+'</td></tr>').join('')+
+      '</tbody></table></div>')+
+    '<div class="btn-row no-print">'+
+    '<button class="btn btn-navy" style="background:#0369a1" onclick="openSALPayModal(\''+c.id+'\');closeModal(\'sal-profile-modal\')">&#128176; Record Contribution</button>'+
+    '<button class="btn btn-out btn-sm" onclick="printSALStatement()">&#128424; Print Statement</button>'+
+    '</div>';
+  showModal('sal-profile-modal');
+}
+
+// ----- Edit salary contributor / status change -----
+function openSALEdit(id){
+  const c=allSalaryContributions.find(x=>x.id===id);if(!c)return;
+  salCurId=id;
+  document.getElementById('sale-name').value=c.name||'';
+  document.getElementById('sale-phone').value=c.phone||'';
+  document.getElementById('sale-address').value=c.address||'';
+  document.getElementById('sale-employer').value=c.employer||'';
+  document.getElementById('sale-employer-addr').value=c.employerAddress||'';
+  document.getElementById('sale-staffno').value=c.staffNo||'';
+  document.getElementById('sale-salary').value=c.monthlySalary||'';
+  document.getElementById('sale-amount').value=c.amount||'';
+  document.getElementById('sale-status').value=c.status||'Active';
+  showModal('sal-edit-modal');
+}
+function saveSALEdit(){
+  const name=v('sale-name'), phone=v('sale-phone'), address=v('sale-address'),
+        employer=v('sale-employer'), employerAddress=v('sale-employer-addr'), staffNo=v('sale-staffno'),
+        monthlySalary=parseFloat(v('sale-salary'))||0, amount=parseFloat(v('sale-amount'))||0, status=v('sale-status');
+  if(!name||!phone||!address||!employer||!amount){toast('Please fill in all required fields','e');return}
+  const c=allSalaryContributions.find(x=>x.id===salCurId);if(!c)return;
+  const changes=[];
+  if(c.status!==status) changes.push('status changed from '+c.status+' to '+status);
+  if(parseFloat(c.amount)!==amount) changes.push('amount changed from \\u20a6'+fmt(c.amount)+' to \\u20a6'+fmt(amount));
+  const upd={name,phone,address,employer,employerAddress,staffNo,monthlySalary,amount,status};
+  db.collection('salarycontributions').doc(salCurId).set(upd,{merge:true}).then(()=>{
+    Object.assign(c,upd);
+    closeModal('sal-edit-modal');
+    logAudit(changes.some(x=>x.startsWith('status'))?'Salary Contributor Status Changed':'Salary Contributor Profile Updated',
+      c.name+' ('+c.salId+') updated'+(changes.length?': '+changes.join('; '):'.'));
+    toast('Salary contributor record updated!','s');
+    renderSAL(scopedSAL());renderSALStats();
+    viewSALProfile(salCurId);
+  }).catch(e=>toast('Error: '+e.message,'e'));
+}
+
+// ----- Record salary contribution payment -----
+function openSALPayModal(id){
+  salCurId=id;
+  const c=allSalaryContributions.find(x=>x.id===id);if(!c)return;
+  if(currentSession.role==='staff'&&c.branchId!==currentSession.branchId){toast('Access denied','e');return}
+  document.getElementById('sal-pay-title').textContent='Record Salary Contribution \\u2014 '+c.name;
+  document.getElementById('sal-pay-body').innerHTML=
+    '<div style="background:var(--bg);border-radius:8px;padding:12px;margin-bottom:14px">'+
+    '<div style="font-weight:700;margin-bottom:4px">'+c.name+' &bull; '+c.salId+'</div>'+
+    '<div style="font-size:.78rem;color:var(--muted)">'+(c.employer||'--')+' &bull; &#8358;'+fmt(c.amount)+'/month &bull; Total Saved: <strong style="color:#0369a1">&#8358;'+fmt(salGetPaidTotal(c))+'</strong></div></div>'+
+    '<div class="sh" style="margin-top:4px">Record Contribution Received</div>'+
+    '<div class="form-grid">'+
+    '<div class="fg"><label>Amount Received (&#8358;) *</label><input type="number" id="sal-pay-amt" value="'+c.amount+'"/></div>'+
+    '<div class="fg"><label>Payment Date *</label><input type="date" id="sal-pay-date" value="'+td()+'"/></div>'+
+    '<div class="fg"><label>Remarks / Notes</label><input id="sal-pay-note" placeholder="Optional remarks"/></div>'+
+    '</div>'+
+    '<button class="btn btn-navy" style="background:#0369a1;width:100%;justify-content:center;padding:11px;margin-top:12px" onclick="saveSALPayment()">Save Contribution</button>'+
+    '<div class="sh" style="margin-top:8px">History ('+(c.payments||[]).length+')</div>'+
+    ((c.payments||[]).length===0?'<p style="color:var(--muted);font-size:.82rem;text-align:center;padding:10px">No contributions recorded yet.</p>':
+    '<div class="tbl-wrap"><table><thead><tr><th>#</th><th>Ref</th><th>Amount</th><th>Date</th><th>Del</th></tr></thead><tbody>'+
+    [...(c.payments||[])].reverse().map((p,ri)=>{const idx=(c.payments.length-1)-ri;return '<tr><td>'+(idx+1)+'</td><td>'+(p.ref||'--')+'</td><td style="color:#0369a1;font-weight:700">&#8358;'+fmt(p.amount)+'</td><td>'+p.date+'</td><td><button class="btn btn-red btn-sm" onclick="delSALPayment('+idx+')">&#128465;</button></td></tr>';}).join('')+
+    '</tbody></table></div>');
+  showModal('sal-pay-modal');
+}
+function saveSALPayment(){
+  const amt=parseFloat(v('sal-pay-amt')), date=v('sal-pay-date');
+  if(!amt||amt<=0){toast('Enter a valid amount','e');return}
+  if(!date){toast('Select the payment date','e');return}
+  const c=allSalaryContributions.find(x=>x.id===salCurId);if(!c)return;
+  const ref=salGenRef();
+  const payments=[...(c.payments||[]),{amount:amt,date,note:v('sal-pay-note'),ref,recordedBy:currentSession.name||currentSession.username,recordedAt:new Date().toISOString()}];
+  db.collection('salarycontributions').doc(salCurId).set({payments},{merge:true}).then(()=>{
+    c.payments=payments;
+    logAudit('Salary Contribution Recorded', '\\u20a6'+fmt(amt)+' from '+c.name+' ('+c.salId+') on '+date+' &bull; Ref: '+ref);
+    renderSAL(scopedSAL());renderSALStats();renderSALActivity();
+    toast('Contribution saved! Ref: '+ref,'s');
+    openSALPayModal(salCurId);
+  }).catch(e=>toast('Error: '+e.message,'e'));
+}
+function delSALPayment(idx){
+  if(!confirm('Delete this contribution entry?'))return;
+  const c=allSalaryContributions.find(x=>x.id===salCurId);if(!c)return;
+  const removed=c.payments[idx];
+  const payments=(c.payments||[]).filter((_,j)=>j!==idx);
+  db.collection('salarycontributions').doc(salCurId).set({payments},{merge:true}).then(()=>{
+    c.payments=payments;
+    logAudit('Salary Contribution Entry Deleted', 'Deleted \\u20a6'+fmt(removed?removed.amount:0)+' entry ('+(removed?removed.ref:'--')+') for '+c.name+' ('+c.salId+')');
+    renderSAL(scopedSAL());renderSALStats();renderSALActivity();
+    toast('Contribution entry deleted.','w');
+    openSALPayModal(salCurId);
+  }).catch(e=>toast('Error: '+e.message,'e'));
+}
+
+// ----- Individual salary contributor statement (print/PDF) -----
+function printSALStatement(){
+  const c=allSalaryContributions.find(x=>x.id===salCurId);if(!c)return;
+  const total=salGetPaidTotal(c), paidCount=salGetPaidCount(c), missed=salMissedCount(c), outstanding=salOutstanding(c);
+  const now=new Date().toLocaleDateString('en-NG',{day:'2-digit',month:'long',year:'numeric'});
+  const win=window.open('','_blank','width=800,height=900');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Salary Contribution Statement</title>
+  <style>body{font-family:Arial,sans-serif;padding:32px;color:#1e293b;max-width:700px;margin:0 auto}
+  h1{color:#0369a1;font-size:1.4rem;margin-bottom:4px}.brand{font-size:1.6rem;font-weight:900;color:#0f2342}
+  .brand span{color:#c8973a}.section{margin-top:20px;border-top:1px solid #e2e8f0;padding-top:12px}
+  .section h3{font-size:.85rem;text-transform:uppercase;color:#0369a1;font-weight:800;letter-spacing:.08em;margin-bottom:8px}
+  table{width:100%;border-collapse:collapse;font-size:.85rem;margin-top:8px}
+  td{padding:7px 10px;border-bottom:1px solid #f1f5f9}td:first-child{font-weight:700;color:#64748b;width:40%}
+  .summary-box{background:#f0f7ff;border:2px solid #0369a1;border-radius:8px;padding:14px;margin-top:16px;display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;text-align:center}
+  .sv{font-size:1rem;font-weight:800;color:#0f2342}.sl{font-size:.63rem;text-transform:uppercase;color:#64748b;margin-top:2px}
+  .sig-row{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:40px}
+  .sig-line{border-top:2px solid #1e293b;padding-top:6px;font-size:.78rem;color:#64748b}
+  @media print{body{padding:16px}}
+  </style></head><body>
+  <div class="brand">Zmo<span>nie</span> Pro</div>
+  <h1>Salary Contributor Statement</h1>
+  <p style="font-size:.8rem;color:#64748b">Statement Date: ${now} &bull; Ref: ${c.salId}</p>
+  <div class="section"><h3>Contributor Information</h3>
+  <table><tr><td>Full Name</td><td>${c.name}</td></tr>
+  <tr><td>Phone</td><td>${c.phone}</td></tr>
+  <tr><td>Address</td><td>${c.address||'--'}</td></tr>
+  <tr><td>Branch</td><td>${getBranchName(c.branchId)}</td></tr></table></div>
+  <div class="section"><h3>Employment Details</h3>
+  <table><tr><td>Employer</td><td>${c.employer||'--'}</td></tr>
+  <tr><td>Employer Address</td><td>${c.employerAddress||'--'}</td></tr>
+  <tr><td>Staff / IPPIS Number</td><td>${c.staffNo||'--'}</td></tr>
+  <tr><td>Monthly Salary</td><td>${c.monthlySalary?'&#8358;'+fmt(c.monthlySalary):'--'}</td></tr></table></div>
+  <div class="section"><h3>Next of Kin</h3>
+  <table><tr><td>Full Name</td><td>${(c.nok&&c.nok.name)||'--'}</td></tr>
+  <tr><td>Phone</td><td>${(c.nok&&c.nok.phone)||'--'}</td></tr>
+  <tr><td>Address</td><td>${(c.nok&&c.nok.address)||'--'}</td></tr></table></div>
+  <div class="section"><h3>Contribution Account</h3>
+  <table><tr><td>Contribution Frequency</td><td>Monthly (Salary Deduction)</td></tr>
+  <tr><td>Monthly Contribution Amount</td><td>&#8358;${fmt(c.amount)}</td></tr>
+  <tr><td>Registration Date</td><td>${c.regDate||'--'}</td></tr>
+  <tr><td>Status</td><td>${c.status}</td></tr>
+  <tr><td>Payments Made</td><td>${paidCount}</td></tr>
+  <tr><td>Missed Payments</td><td>${missed}</td></tr></table></div>
+  <div class="summary-box">
+  <div><div class="sv" style="color:#0369a1">&#8358;${fmt(total)}</div><div class="sl">Total Saved</div></div>
+  <div><div class="sv">${paidCount}</div><div class="sl">Payments Made</div></div>
+  <div><div class="sv" style="color:#dc2626">${missed}</div><div class="sl">Missed</div></div>
+  <div><div class="sv" style="color:#dc2626">&#8358;${fmt(outstanding)}</div><div class="sl">Outstanding</div></div></div>
+  <div class="section"><h3>Contribution History</h3>
+  ${(c.payments||[]).length===0?'<p style="color:#64748b;font-size:.82rem">No contributions recorded.</p>':
+  '<table><tr style="background:#f0f7ff"><td style="font-weight:800;padding:7px">#</td><td style="font-weight:800;padding:7px">Ref</td><td style="font-weight:800;padding:7px">Date</td><td style="font-weight:800;padding:7px">Amount</td></tr>'+
+  (c.payments||[]).map((p,idx)=>'<tr><td style="padding:6px 8px">'+(idx+1)+'</td><td style="padding:6px 8px">'+(p.ref||'--')+'</td><td style="padding:6px 8px">'+p.date+'</td><td style="padding:6px 8px">&#8358;'+fmt(p.amount)+'</td></tr>').join('')+
+  '</table>'}</div>
+  <div class="sig-row">
+  <div><div style="height:60px"></div><div class="sig-line">Contributor Signature &bull; Date: ___________</div></div>
+  <div><div style="height:60px"></div><div class="sig-line">Authorised Officer &bull; Date: ___________</div></div>
+  </div>
+  <script>setTimeout(()=>window.print(),400)<\/script>
+  </body></html>`);
+  win.document.close();
+}
+
+// ----- Salary Contribution Reports (Monthly, Outstanding, Missed, Summary) -----
+function generateSALReport(){
+  const type=v('salr-type'), from=v('salr-from'), to=v('salr-to')||td();
+  const list=scopedSAL();
+  let rows=[], headers=[], title='';
+  if(type==='monthly'){
+    title='Monthly Collections Report'+(from?(' ('+from+' to '+to+')'):'');
+    headers=['Ref','Contributor','Contributor ID','Employer','Amount','Date','Recorded By'];
+    list.forEach(c=>{
+      (c.payments||[]).forEach(p=>{
+        if(from&&p.date<from) return;
+        if(to&&p.date>to) return;
+        rows.push({Ref:p.ref||'--',Contributor:c.name,'Contributor ID':c.salId,Employer:c.employer||'--',Amount:p.amount,Date:p.date,'Recorded By':p.recordedBy||'--'});
+      });
+    });
+  } else if(type==='outstanding'){
+    title='Outstanding Salary Contributions Report';
+    headers=['Contributor','Contributor ID','Employer','Amount/Month','Total Saved','Outstanding Balance','Status'];
+    list.filter(c=>salOutstanding(c)>0).forEach(c=>{
+      rows.push({Contributor:c.name,'Contributor ID':c.salId,Employer:c.employer||'--','Amount/Month':c.amount,'Total Saved':salGetPaidTotal(c),'Outstanding Balance':salOutstanding(c),Status:c.status});
+    });
+  } else if(type==='missed'){
+    title='Missed Salary Contributions Report';
+    headers=['Contributor','Contributor ID','Employer','Missed Payments','Next Due Date','Status'];
+    list.filter(c=>salMissedCount(c)>0).forEach(c=>{
+      rows.push({Contributor:c.name,'Contributor ID':c.salId,Employer:c.employer||'--','Missed Payments':salMissedCount(c),'Next Due Date':salNextDue(c),Status:c.status});
+    });
+  } else {
+    title='Total Salary Contributions Received \\u2014 All Contributors';
+    headers=['Contributor','Contributor ID','Employer','Amount/Month','Payments Made','Total Contributed','Outstanding','Status'];
+    list.forEach(c=>{
+      rows.push({Contributor:c.name,'Contributor ID':c.salId,Employer:c.employer||'--','Amount/Month':c.amount,'Payments Made':salGetPaidCount(c),'Total Contributed':salGetPaidTotal(c),Outstanding:salOutstanding(c),Status:c.status});
+    });
+  }
+  salLastReport={title,headers,rows};
+  const totalAmt=rows.reduce((s,r)=>{
+    const val=r.Amount!==undefined?r.Amount:(r['Total Contributed']!==undefined?r['Total Contributed']:0);
+    return s+(parseFloat(val)||0);
+  },0);
+  document.getElementById('sal-report-meta').innerHTML='<div style="background:var(--bg);border-radius:8px;padding:12px"><strong>'+title+'</strong><br/><span style="font-size:.8rem;color:var(--muted)">'+rows.length+' record(s)'+(totalAmt?' &bull; Total: &#8358;'+fmt(totalAmt):'')+'</span></div>';
+  document.getElementById('sal-report-thead').innerHTML='<tr>'+headers.map(h=>'<th>'+h+'</th>').join('')+'</tr>';
+  document.getElementById('sal-report-tbody').innerHTML=rows.length?rows.map(r=>'<tr>'+headers.map(h=>{
+    let val=r[h];
+    if(typeof val==='number'&&(h.toLowerCase().includes('amount')||h.toLowerCase().includes('balance')||h.toLowerCase().includes('contributed'))) val='&#8358;'+fmt(val);
+    return '<td>'+(val===undefined||val===null||val===''?'--':val)+'</td>';
+  }).join('')+'</tr>').join(''):'<tr><td colspan="'+headers.length+'" style="text-align:center;color:var(--muted);padding:16px">No records found.</td></tr>';
+  document.getElementById('sal-report-export-row').style.display=rows.length?'flex':'none';
+  logAudit('Salary Contribution Report Generated', title+' generated with '+rows.length+' record(s).');
+}
+function exportSALReportPDF(){
+  if(!salLastReport||!salLastReport.rows.length){toast('Generate a report first','e');return}
+  const {title,headers,rows}=salLastReport;
+  const now=new Date().toLocaleDateString('en-NG',{day:'2-digit',month:'long',year:'numeric'});
+  const win=window.open('','_blank','width=900,height=900');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>${title}</title>
+  <style>body{font-family:Arial,sans-serif;padding:28px;color:#1e293b}
+  h1{color:#0369a1;font-size:1.2rem;margin-bottom:2px}.brand{font-size:1.4rem;font-weight:900;color:#0f2342}
+  .brand span{color:#c8973a}
+  table{width:100%;border-collapse:collapse;font-size:.78rem;margin-top:14px}
+  th{background:#f0f7ff;text-align:left;padding:7px 8px;border-bottom:2px solid #0369a1;font-size:.68rem;text-transform:uppercase}
+  td{padding:6px 8px;border-bottom:1px solid #f1f5f9}
+  @media print{body{padding:14px}}
+  </style></head><body>
+  <div class="brand">Zmo<span>nie</span> Pro</div>
+  <h1>${title}</h1>
+  <p style="font-size:.78rem;color:#64748b">Generated: ${now} &bull; ${rows.length} record(s)</p>
+  <table><thead><tr>${headers.map(h=>'<th>'+h+'</th>').join('')}</tr></thead><tbody>
+  ${rows.map(r=>'<tr>'+headers.map(h=>'<td>'+((r[h]===undefined||r[h]===null||r[h]==='')?'--':r[h])+'</td>').join('')+'</tr>').join('')}
+  </tbody></table>
+  <script>setTimeout(()=>window.print(),400)<\/script>
+  </body></html>`);
+  win.document.close();
+}
+function exportSALReportExcel(){
+  if(!salLastReport||!salLastReport.rows.length){toast('Generate a report first','e');return}
+  if(typeof XLSX==='undefined'){toast('Excel library not loaded','e');return}
+  const ws=XLSX.utils.json_to_sheet(salLastReport.rows);
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Report');
+  XLSX.writeFile(wb,'SalaryContribution_'+salLastReport.title.replace(/[^a-z0-9]+/gi,'_')+'_'+td()+'.xlsx');
+  toast('Excel report exported!','s');
+}
+function exportSALReportCSV(){
+  if(!salLastReport||!salLastReport.rows.length){toast('Generate a report first','e');return}
+  downloadCSV('SalaryContribution_'+salLastReport.title.replace(/[^a-z0-9]+/gi,'_')+'_'+td()+'.csv', salLastReport.headers, salLastReport.rows);
+  toast('CSV report exported!','s');
+}
+
+// =====================================================
 // ===== STAFF AUDIT LOG =====
 // Every contributor registration, profile update, contribution entry,
 // contribution edit/delete and status change is recorded here with
@@ -6159,6 +6876,7 @@ function renderAuditLog(){
   <button class="fab-item" onclick="showPage('new-easybuy');toggleFab()">&#128722; New EasyBuy</button>
   <button class="fab-item" onclick="showPage('new-investment');toggleFab()">&#128200; New Investment</button>
   <button class="fab-item" onclick="showPage('new-contribution');toggleFab()">&#128021; New Contribution</button>
+  <button class="fab-item" onclick="showPage('new-salarycontribution');toggleFab()">&#128188; New Salary Contributor</button>
   <button class="fab-item" onclick="exportExcel();toggleFab()">&#128190; Export Excel</button>
 </div>
 <button id="scroll-top" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="Back to top">&#8679;</button>
