@@ -546,7 +546,7 @@ mark{background:#fef08a;border-radius:3px;padding:0 2px}
         <form id="eb-form" onsubmit="submitEasyBuy(event)">
           <div class="sh">&#128100; Customer Information</div>
           <div class="form-grid">
-            <div class="fg" style="grid-column:1/-1;background:#f0f7ff;border:1.5px dashed #0f2342;border-radius:10px;padding:10px 12px"><label style="color:#0f2342">&#128100; Use Registered Customer (optional)</label><select id="eb-cust-pick" onchange="useRegisteredCustomer('eb-',this.value)"><option value="">— Select a registered customer or fill details manually below —</option></select></div>
+            <div class="fg" style="grid-column:1/-1;background:#f0f7ff;border:1.5px dashed #0f2342;border-radius:10px;padding:10px 12px"><label style="color:#0f2342">&#128100; Use Registered Customer (optional)</label><select id="eb-cust-pick" onchange="useRegisteredCustomer('eb-',this.value)"><option value="">— Select a registered customer or fill details manually below —</option></select><input type="hidden" id="eb-cust-id"/></div>
           <div class="fg"><label>Full Name *</label><input required id="eb-name" placeholder="Customer full name"/></div>
             <div class="fg"><label>Phone Number *</label><input required id="eb-phone" placeholder="08XXXXXXXXX"/></div>
             <div class="fg"><label>Address *</label><input required id="eb-address" placeholder="Residential address"/></div>
@@ -680,7 +680,7 @@ mark{background:#fef08a;border-radius:3px;padding:0 2px}
         <form id="inv-form" onsubmit="submitInvestment(event)">
           <div class="sh">&#128100; Investor Information</div>
           <div class="form-grid">
-            <div class="fg" style="grid-column:1/-1;background:#f0f7ff;border:1.5px dashed #0f2342;border-radius:10px;padding:10px 12px"><label style="color:#0f2342">&#128100; Use Registered Customer (optional)</label><select id="inv-cust-pick" onchange="useRegisteredCustomer('inv-',this.value)"><option value="">— Select a registered customer or fill details manually below —</option></select></div>
+            <div class="fg" style="grid-column:1/-1;background:#f0f7ff;border:1.5px dashed #0f2342;border-radius:10px;padding:10px 12px"><label style="color:#0f2342">&#128100; Use Registered Customer (optional)</label><select id="inv-cust-pick" onchange="useRegisteredCustomer('inv-',this.value)"><option value="">— Select a registered customer or fill details manually below —</option></select><input type="hidden" id="inv-cust-id"/></div>
           <div class="fg"><label>Full Name *</label><input required id="inv-name" placeholder="Investor full name"/></div>
             <div class="fg"><label>Phone Number *</label><input required id="inv-phone" placeholder="08XXXXXXXXX"/></div>
             <div class="fg"><label>Address *</label><input required id="inv-address" placeholder="Residential address"/></div>
@@ -812,7 +812,7 @@ mark{background:#fef08a;border-radius:3px;padding:0 2px}
         <form id="ctb-form" onsubmit="submitContribution(event)">
           <div class="sh">&#128100; Contributor Information</div>
           <div class="form-grid">
-            <div class="fg" style="grid-column:1/-1;background:#f0f7ff;border:1.5px dashed #0f2342;border-radius:10px;padding:10px 12px"><label style="color:#0f2342">&#128100; Use Registered Customer (optional)</label><select id="ctb-cust-pick" onchange="useRegisteredCustomer('ctb-',this.value)"><option value="">— Select a registered customer or fill details manually below —</option></select></div>
+            <div class="fg" style="grid-column:1/-1;background:#f0f7ff;border:1.5px dashed #0f2342;border-radius:10px;padding:10px 12px"><label style="color:#0f2342">&#128100; Use Registered Customer (optional)</label><select id="ctb-cust-pick" onchange="useRegisteredCustomer('ctb-',this.value)"><option value="">— Select a registered customer or fill details manually below —</option></select><input type="hidden" id="ctb-cust-id"/></div>
           <div class="fg"><label>Full Name *</label><input required id="ctb-name" placeholder="Contributor full name"/></div>
             <div class="fg"><label>Phone Number *</label><input required id="ctb-phone" placeholder="08XXXXXXXXX"/></div>
             <div class="fg"><label>Residential Address *</label><input required id="ctb-address" placeholder="Residential address"/></div>
@@ -924,7 +924,7 @@ mark{background:#fef08a;border-radius:3px;padding:0 2px}
         <form id="sal-form" onsubmit="submitSalaryContribution(event)">
           <div class="sh">&#128100; Contributor Information</div>
           <div class="form-grid">
-            <div class="fg" style="grid-column:1/-1;background:#f0f7ff;border:1.5px dashed #0f2342;border-radius:10px;padding:10px 12px"><label style="color:#0f2342">&#128100; Use Registered Customer (optional)</label><select id="sal-cust-pick" onchange="useRegisteredCustomer('sal-',this.value)"><option value="">— Select a registered customer or fill details manually below —</option></select></div>
+            <div class="fg" style="grid-column:1/-1;background:#f0f7ff;border:1.5px dashed #0f2342;border-radius:10px;padding:10px 12px"><label style="color:#0f2342">&#128100; Use Registered Customer (optional)</label><select id="sal-cust-pick" onchange="useRegisteredCustomer('sal-',this.value)"><option value="">— Select a registered customer or fill details manually below —</option></select><input type="hidden" id="sal-cust-id"/></div>
             <div class="fg"><label>Full Name *</label><input required id="sal-name" placeholder="Contributor full name"/></div>
             <div class="fg"><label>Phone Number *</label><input required id="sal-phone" placeholder="08XXXXXXXXX"/></div>
             <div class="fg"><label>Residential Address *</label><input required id="sal-address" placeholder="Residential address"/></div>
@@ -1058,7 +1058,7 @@ mark{background:#fef08a;border-radius:3px;padding:0 2px}
         <form id="fd-form" onsubmit="submitFD(event)">
           <div class="sh">&#128100; Customer Information</div>
           <div class="form-grid">
-            <div class="fg" style="grid-column:1/-1;background:#f0f7ff;border:1.5px dashed #0f2342;border-radius:10px;padding:10px 12px"><label style="color:#0f2342">&#128100; Use Registered Customer (optional)</label><select id="fd-cust-pick" onchange="useRegisteredCustomer('fd-',this.value)"><option value="">— Select a registered customer or fill details manually below —</option></select></div>
+            <div class="fg" style="grid-column:1/-1;background:#f0f7ff;border:1.5px dashed #0f2342;border-radius:10px;padding:10px 12px"><label style="color:#0f2342">&#128100; Use Registered Customer (optional)</label><select id="fd-cust-pick" onchange="useRegisteredCustomer('fd-',this.value)"><option value="">— Select a registered customer or fill details manually below —</option></select><input type="hidden" id="fd-cust-id"/></div>
           <div class="fg"><label>Full Name *</label><input required id="fd-name" placeholder="Customer full name"/></div>
             <div class="fg"><label>Phone Number *</label><input required id="fd-phone" placeholder="08XXXXXXXXX"/></div>
             <div class="fg"><label>Address *</label><input required id="fd-address" placeholder="Residential address"/></div>
@@ -1184,7 +1184,7 @@ mark{background:#fef08a;border-radius:3px;padding:0 2px}
         <form id="loan-form" onsubmit="submitForm(event)">
           <div class="sh">&#128100; Personal Information</div>
           <div class="form-grid">
-            <div class="fg" style="grid-column:1/-1;background:#f0f7ff;border:1.5px dashed #0f2342;border-radius:10px;padding:10px 12px"><label style="color:#0f2342">&#128100; Use Registered Customer (optional)</label><select id="f-cust-pick" onchange="useRegisteredCustomer('f-',this.value)"><option value="">— Select a registered customer or fill details manually below —</option></select></div>
+            <div class="fg" style="grid-column:1/-1;background:#f0f7ff;border:1.5px dashed #0f2342;border-radius:10px;padding:10px 12px"><label style="color:#0f2342">&#128100; Use Registered Customer (optional)</label><select id="f-cust-pick" onchange="useRegisteredCustomer('f-',this.value)"><option value="">— Select a registered customer or fill details manually below —</option></select><input type="hidden" id="f-cust-id"/></div>
           <div class="fg"><label>Full Name *</label><input required id="f-name" placeholder="Applicant full name"/></div>
             <div class="fg"><label>Date of Birth *</label>
               <div style="display:flex;gap:6px">
@@ -2829,7 +2829,7 @@ function submitForm(e){
   const matISO=getMaturityISO(appdate,dn,du);
   const matStr=getMaturity(appdate,dn,du);
   const data={
-    loanId:genId(),name:v('f-name'),dob:v('f-dob'),phone:v('f-phone'),
+    loanId:genId(),customerId:v('f-cust-id')||null,name:v('f-name'),dob:v('f-dob'),phone:v('f-phone'),
     address:v('f-address'),occupation:v('f-occ'),income:v('f-income'),
     bank:v('f-bank'),account:v('f-acct'),acctname:v('f-acctname'),
     idtype:v('f-idtype'),idnum:v('f-idnum'),
@@ -2855,6 +2855,7 @@ function submitForm(e){
 }
 function resetForm(){
   const cp=document.getElementById('f-cust-pick');if(cp)cp.value='';
+  const ci=document.getElementById('f-cust-id');if(ci)ci.value='';
   document.getElementById('loan-form').reset();
   document.getElementById('f-interest').value='24%';
   ['f-photo-data','g1-photo-data','g2-photo-data'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=''});
@@ -4068,7 +4069,7 @@ function submitEasyBuy(e){
   const dueDate=ebGetMaturity(agrdate,dn,du);
   const price=parseFloat(v('eb-price'))||0, init=parseFloat(v('eb-initial'))||0;
   const data={
-    ebId:ebGenId(), name:v('eb-name'), phone:v('eb-phone'), address:v('eb-address'), officeAddress:v('eb-office'),
+    ebId:ebGenId(), customerId:v('eb-cust-id')||null, name:v('eb-name'), phone:v('eb-phone'), address:v('eb-address'), officeAddress:v('eb-office'),
     occupation:v('eb-occ'), idtype:v('eb-idtype'), idnum:v('eb-idnum'), idpic:v('eb-idpic-data'),
     branchId, branchName:getBranchName(branchId), officer:v('eb-officer'),
     product:v('eb-product'), proddesc:v('eb-proddesc'),
@@ -4097,6 +4098,7 @@ function resetEBForm(){
   const dl=document.getElementById('eb-docs-list');if(dl)dl.innerHTML='';
   const box=document.getElementById('eb-calc-box');if(box)box.style.display='none';
   ['eb-g1-photo'].forEach(id=>{const im=document.getElementById(id+'-prev');if(im)im.src=blank;const dt=document.getElementById(id+'-data');if(dt)dt.value='';});
+  const ebci=document.getElementById('eb-cust-id');if(ebci)ebci.value='';
   ['eb-idpic','eb-g1-idpic'].forEach(id=>{const im=document.getElementById(id+'-prev');if(im)im.src=EB_ID_BLANK;const dt=document.getElementById(id+'-data');if(dt)dt.value='';});
   // Clear date dropdowns
   ['eb-agrdate-d','eb-agrdate-m','eb-agrdate-y'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
@@ -4141,6 +4143,7 @@ function populateCustomerDropdowns(){
 }
 function useRegisteredCustomer(prefix,custId){
   const map=CUST_FIELD_MAP[prefix];if(!map)return;
+  const idEl=document.getElementById(prefix+'cust-id');if(idEl)idEl.value=custId||'';
   if(!custId)return;
   const c=allCustomers.find(x=>x.id===custId);if(!c)return;
   Object.keys(map).forEach(key=>{
@@ -4271,6 +4274,19 @@ function custQuickAction(id,prefix,page){
     if(sel){ sel.value=id; useRegisteredCustomer(prefix,id); }
   },60);
 }
+function custHistory(c){
+  const samePhone=ph=>ph && c.phone && ph.replace(/\s+/g,'')===c.phone.replace(/\s+/g,'');
+  const matches=(list,idKey)=>list.filter(r=>r.customerId?r.customerId===c.id:samePhone(r.phone));
+  const items=[];
+  matches(allLoans).forEach(l=>items.push({mod:'Loan',icon:'&#128203;',id:l.loanId||l.id,amount:l.amount,status:l.status,date:l.appdate||l.createdAt,fn:"viewProfile('"+l.id+"')"}));
+  matches(allEasyBuys).forEach(e=>items.push({mod:'EasyBuy',icon:'&#128722;',id:e.ebId||e.id,amount:e.totalPrice||e.price,status:e.status,date:e.createdAt,fn:"viewEBProfile('"+e.id+"')"}));
+  matches(allInvestments).forEach(i=>items.push({mod:'Investment',icon:'&#128200;',id:i.invId||i.id,amount:i.amount,status:i.status,date:i.startdate||i.createdAt,fn:"viewINVProfile('"+i.id+"')"}));
+  matches(allContributions).forEach(k=>items.push({mod:'Contribution',icon:'&#128021;',id:k.ctbId||k.id,amount:k.amount,status:k.status,date:k.regDate||k.createdAt,fn:"viewCTBProfile('"+k.id+"')"}));
+  matches(allSalaryContributions).forEach(k=>items.push({mod:'Salary Contribution',icon:'&#128188;',id:k.salId||k.id,amount:k.amount,status:k.status,date:k.regDate||k.createdAt,fn:"viewSALProfile('"+k.id+"')"}));
+  matches(allFDs).forEach(f=>items.push({mod:'Fixed Deposit',icon:'&#127974;',id:f.fdId||f.id,amount:f.amount,status:f.status,date:f.startdate||f.createdAt,fn:"viewFDProfile('"+f.id+"')"}));
+  items.sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
+  return items;
+}
 function openCustomerProfile(id){
   const c=allCustomers.find(x=>x.id===id);if(!c)return;
   document.getElementById('cust-pm-title').textContent=c.regNo+' \u2014 '+c.name;
@@ -4300,6 +4316,15 @@ function openCustomerProfile(id){
     ):'')+
     (c.photo?'<div class="iitem" style="margin-top:10px"><label>Passport Photo</label><img src="'+c.photo+'" style="max-width:120px;border-radius:8px;border:1px solid var(--border)"/></div>':'')+
     (c.idpic?'<div class="iitem" style="margin-top:10px"><label>Means of Identification</label><img src="'+c.idpic+'" style="max-width:100%;max-height:150px;border-radius:8px;border:1px solid var(--border);cursor:pointer" onclick="ebShowImg(this.src)"/></div>':'')+
+    (()=>{
+      const hist=custHistory(c);
+      return '<div class="sh">&#128202; Activity History ('+hist.length+')</div>'+
+        (hist.length===0
+          ?'<p style="color:var(--muted);font-size:.82rem;text-align:center;padding:14px">No loan, EasyBuy, investment, contribution or fixed deposit activity yet for this customer.</p>'
+          :'<div class="tbl-wrap"><table><thead><tr><th>Program</th><th>ID</th><th>Amount</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead><tbody>'+
+          hist.map(h=>'<tr><td>'+h.icon+' '+h.mod+'</td><td>'+h.id+'</td><td>'+(h.amount?'&#8358;'+fmt(h.amount):'--')+'</td><td>'+(h.status||'--')+'</td><td>'+(h.date?String(h.date).slice(0,10):'--')+'</td><td><button class="btn btn-out btn-sm no-print" onclick="closeModal(\'cust-profile-modal\');'+h.fn+'">&#128065; View</button></td></tr>').join('')+
+          '</tbody></table></div>');
+    })()+
     '<div class="sh">&#9889; Use These Details For</div>'+
     '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
     '<button class="btn btn-navy btn-sm" onclick="custQuickAction(\''+c.id+'\',\'f-\',\'new-application\')">&#128203; New Loan</button>'+
@@ -4653,7 +4678,7 @@ function submitInvestment(e){
   // Build monthly interest schedule — final month includes principal payout
   const monthlySchedule=buildMonthlySchedule(startdate,totalMonths,monthlyInterest,amt);
   const data={
-    invId:invGenId(), name:v('inv-name'), phone:v('inv-phone'), address:v('inv-address'),
+    invId:invGenId(), customerId:v('inv-cust-id')||null, name:v('inv-name'), phone:v('inv-phone'), address:v('inv-address'),
     occupation:v('inv-occ'), idtype:v('inv-idtype'), idnum:v('inv-idnum'),
     bank:v('inv-bank'), account:v('inv-acct'), acctname:v('inv-acctname'),
     branchId, branchName:getBranchName(branchId),
@@ -4687,6 +4712,7 @@ function submitInvestment(e){
 }
 function resetINVForm(){
   const cp=document.getElementById('inv-cust-pick');if(cp)cp.value='';
+  const ci=document.getElementById('inv-cust-id');if(ci)ci.value='';
   document.getElementById('inv-form').reset();
   const blank="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Crect width='80' height='80' fill='%23e2e8f0'/%3E%3Ctext x='50%25' y='55%25' font-size='28' text-anchor='middle' fill='%2394a3b8'%3E%F0%9F%91%A4%3C/text%3E%3C/svg%3E";
   const pp=document.getElementById('inv-photo-prev');if(pp)pp.src=blank;
@@ -5545,6 +5571,7 @@ function submitFD(e){
   var maturityDate=fdGetMaturity(startdate,dn,du);
   var data={
     fdId:fdGenId(),
+    customerId:document.getElementById('fd-cust-id').value||null,
     name:document.getElementById('fd-name').value.trim(),
     phone:document.getElementById('fd-phone').value.trim(),
     address:document.getElementById('fd-address').value.trim(),
@@ -5596,6 +5623,7 @@ function submitFD(e){
 
 function resetFDForm(){
   const cp=document.getElementById('fd-cust-pick');if(cp)cp.value='';
+  var ci=document.getElementById('fd-cust-id');if(ci)ci.value='';
   var form=document.getElementById('fd-form');if(form)form.reset();
   var blank="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Crect width='80' height='80' fill='%23e2e8f0'/%3E%3Ctext x='50%25' y='55%25' font-size='28' text-anchor='middle' fill='%2394a3b8'%3E%F0%9F%91%A4%3C/text%3E%3C/svg%3E";
   var pp=document.getElementById('fd-photo-prev');if(pp)pp.src=blank;
@@ -6008,7 +6036,7 @@ function submitContribution(e){
   const amount=parseFloat(v('ctb-amount'))||0;
   if(!v('ctb-name')||!v('ctb-phone')||!v('ctb-address')||!v('ctb-type')||!amount){toast('Please fill in all required fields','e');return}
   const data={
-    ctbId:ctbGenId(), name:v('ctb-name'), phone:v('ctb-phone'), address:v('ctb-address'),
+    ctbId:ctbGenId(), customerId:v('ctb-cust-id')||null, name:v('ctb-name'), phone:v('ctb-phone'), address:v('ctb-address'),
     photo:document.getElementById('ctb-photo-data').value,
     branchId, branchName:getBranchName(branchId),
     type:v('ctb-type'), amount, regDate:v('ctb-regdate'), status:v('ctb-status')||'Active',
@@ -6029,6 +6057,7 @@ function submitContribution(e){
 }
 function resetCTBForm(){
   const cp=document.getElementById('ctb-cust-pick');if(cp)cp.value='';
+  const ci=document.getElementById('ctb-cust-id');if(ci)ci.value='';
   const form=document.getElementById('ctb-form');if(form)form.reset();
   const pp=document.getElementById('ctb-photo-prev');if(pp)pp.src=CTB_BLANK;
   const pd=document.getElementById('ctb-photo-data');if(pd)pd.value='';
@@ -6493,7 +6522,7 @@ function submitSalaryContribution(e){
   const amount=parseFloat(v('sal-amount'))||0;
   if(!v('sal-name')||!v('sal-phone')||!v('sal-address')||!v('sal-employer')||!amount){toast('Please fill in all required fields','e');return}
   const data={
-    salId:salGenId(), name:v('sal-name'), phone:v('sal-phone'), address:v('sal-address'),
+    salId:salGenId(), customerId:v('sal-cust-id')||null, name:v('sal-name'), phone:v('sal-phone'), address:v('sal-address'),
     photo:document.getElementById('sal-photo-data').value,
     employer:v('sal-employer'), employerAddress:v('sal-employer-addr'), staffNo:v('sal-staffno'), monthlySalary:parseFloat(v('sal-salary'))||0,
     branchId, branchName:getBranchName(branchId),
@@ -6515,6 +6544,7 @@ function submitSalaryContribution(e){
 }
 function resetSALForm(){
   const cp=document.getElementById('sal-cust-pick');if(cp)cp.value='';
+  const ci=document.getElementById('sal-cust-id');if(ci)ci.value='';
   const form=document.getElementById('sal-form');if(form)form.reset();
   const pp=document.getElementById('sal-photo-prev');if(pp)pp.src=SAL_BLANK;
   const pd=document.getElementById('sal-photo-data');if(pd)pd.value='';
