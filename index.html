@@ -404,6 +404,7 @@ mark{background:#fef08a;border-radius:3px;padding:0 2px}
     <button class="nb" onclick="showPage('contribution')">&#128021; Contributions</button>
     <button class="nb" onclick="showPage('salarycontribution')">&#128188; Salary Earners</button>
     <button class="nb" onclick="showPage('fixeddeposit')">&#127974; Fixed Deposit</button>
+    <button class="nb" id="nav-ces" onclick="showPage('ces')" style="display:none">&#127891; Children Education Support</button>
     <button class="nb" id="nav-branches" onclick="showPage('branches')" style="display:none">&#x1F3E6; Branches</button>
     <button class="nb" id="nav-users" onclick="showPage('users')" style="display:none">&#x1F464; Staff</button>
     <button class="nb" id="nav-auditlog" onclick="showPage('auditlog')" style="display:none">&#128220; Audit Log</button>
@@ -1007,6 +1008,154 @@ mark{background:#fef08a;border-radius:3px;padding:0 2px}
           <button class="btn btn-out btn-sm" onclick="exportSALReportExcel()">&#128190; Excel</button>
           <button class="btn btn-out btn-sm" onclick="exportSALReportCSV()">&#128190; CSV</button>
         </div>
+      </div>
+    </div>
+
+    <!-- CHILDREN EDUCATION SUPPORT PAGE -->
+    <div class="page-section" id="page-ces">
+      <div class="mod-header" style="background:linear-gradient(135deg,#7c3aed,#4c1d95)"><div class="mod-icon">&#127891;</div><div><h2>Children Education Support</h2><p>Parent/guardian applications for child school-fee support, repaid in affordable instalments</p></div><div style="margin-left:auto;display:flex;gap:8px"><button class="btn btn-sm no-print" style="background:rgba(255,255,255,.2);color:#fff;border:1px solid rgba(255,255,255,.3)" onclick="showPage('ces-reports')">&#128196; Reports</button><button class="btn btn-sm no-print" style="background:rgba(255,255,255,.2);color:#fff;border:1px solid rgba(255,255,255,.3)" onclick="showPage('ces-settings')">&#9881; Settings</button><button class="btn btn-sm no-print" style="background:rgba(255,255,255,.2);color:#fff;border:1px solid rgba(255,255,255,.3)" onclick="showPage('new-ces')">&#43; New Application</button></div></div>
+      <div class="stat-grid" id="ces-stat-grid"></div>
+      <div class="card">
+        <div class="card-title">&#9203; Recent Activity</div>
+        <div id="ces-activity-feed"></div>
+      </div>
+      <div class="card">
+        <div class="card-title"><span>&#127891; Education Support Applications</span></div>
+        <div class="search-row">
+          <input type="text" id="ces-srch" placeholder="Search applicant, child, school, ID..." oninput="searchCES()"/>
+          <select id="ces-fst" onchange="searchCES()"><option value="">All Status</option><option>Draft</option><option>Pending Review</option><option>Documents Incomplete</option><option>Approved</option><option>Rejected</option><option>School Payment Pending</option><option>Support Disbursed</option><option>Repaying</option><option>Completed</option><option value="Overdue">Overdue Only</option></select>
+          <select id="ces-fbr" onchange="searchCES()" style="display:none"><option value="">All Branches</option></select>
+        </div>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>ID</th><th>Applicant</th><th>Child</th><th>School</th><th>Support Amount</th><th>Plan</th><th>Branch</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody id="ces-tbody"></tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- NEW CES APPLICATION -->
+    <div class="page-section" id="page-new-ces">
+      <div class="card">
+        <div class="card-title">&#127891; New Children Education Support Application
+          <button class="btn btn-out btn-sm no-print" onclick="showPage('ces')">&#8592; Back</button>
+        </div>
+        <form id="ces-form" onsubmit="submitCESApplication(event)">
+          <div class="sh" style="margin-top:0">&#128100; Applicant (Parent / Guardian) Information</div>
+          <div class="form-grid">
+            <div class="fg" style="grid-column:1/-1;background:#f5f3ff;border:1.5px dashed #7c3aed;border-radius:10px;padding:10px 12px"><label style="color:#7c3aed">&#128100; Use Registered Customer (optional)</label><select id="ces-cust-pick" onchange="useRegisteredCustomer('ces-',this.value)"><option value="">— Select a registered customer or fill details manually below —</option></select><input type="hidden" id="ces-cust-id"/></div>
+            <div class="fg"><label>Full Name *</label><input required id="ces-name" placeholder="Applicant full name"/></div>
+            <div class="fg"><label>Phone Number *</label><input required id="ces-phone" placeholder="08XXXXXXXXX"/></div>
+            <div class="fg"><label>Address *</label><input required id="ces-address" placeholder="Residential address"/></div>
+            <div class="fg"><label>Occupation</label><input id="ces-occ" placeholder="Occupation / business"/></div>
+            <div class="fg"><label>Marital Status *</label><select required id="ces-marital" onchange="cesToggleMarital()"><option value="">Select</option><option>Married</option><option>Single Mother</option><option>Single Father</option></select></div>
+          </div>
+          <div class="sh" id="ces-spouse-sh" style="display:none">&#128141; Spouse Information</div>
+          <div class="form-grid" id="ces-spouse-fields" style="display:none">
+            <div class="fg"><label>Spouse Full Name</label><input id="ces-spouse-name" placeholder="Spouse full name"/></div>
+            <div class="fg"><label>Spouse Phone</label><input id="ces-spouse-phone" placeholder="08XXXXXXXXX"/></div>
+          </div>
+          <div class="sh">&#128118; Child Information</div>
+          <div class="form-grid">
+            <div class="fg"><label>Child's Full Name *</label><input required id="ces-child-name" placeholder="Child's full name"/></div>
+            <div class="fg"><label>Child's Age / Class</label><input id="ces-child-age" placeholder="e.g. 9 years, Primary 4"/></div>
+            <div class="fg"><label>School Name *</label><input required id="ces-school" placeholder="School name"/></div>
+            <div class="fg"><label>School Address</label><input id="ces-school-addr" placeholder="School address"/></div>
+          </div>
+          <div class="sh">&#128100; Guarantor 1</div>
+          <div class="form-grid">
+            <div class="fg"><label>Full Name *</label><input required id="ces-g1-name" placeholder="Guarantor full name"/></div>
+            <div class="fg"><label>Phone Number *</label><input required id="ces-g1-phone" placeholder="08XXXXXXXXX"/></div>
+            <div class="fg"><label>Address</label><input id="ces-g1-addr" placeholder="Guarantor address"/></div>
+            <div class="fg"><label>Relationship</label><input id="ces-g1-rel" placeholder="e.g. Pastor, Employer, Uncle"/></div>
+          </div>
+          <div class="sh" id="ces-g2-sh" style="display:none">&#128100; Guarantor 2</div>
+          <div class="form-grid" id="ces-g2-fields" style="display:none">
+            <div class="fg"><label>Full Name</label><input id="ces-g2-name" placeholder="Guarantor full name"/></div>
+            <div class="fg"><label>Phone Number</label><input id="ces-g2-phone" placeholder="08XXXXXXXXX"/></div>
+            <div class="fg"><label>Address</label><input id="ces-g2-addr" placeholder="Guarantor address"/></div>
+            <div class="fg"><label>Relationship</label><input id="ces-g2-rel" placeholder="e.g. Pastor, Employer, Uncle"/></div>
+          </div>
+          <div class="sh">&#128176; Support Amount Requested</div>
+          <div class="form-grid">
+            <div class="fg"><label>Support Amount Requested (&#8358;) *</label><input required type="number" id="ces-amount" min="10000" max="100000" step="1000" placeholder="10,000 - 100,000" oninput="cesCalcLive()"/></div>
+            <div class="fg"><label>Repayment Plan *</label><select required id="ces-plan" onchange="cesCalcLive()"><option value="">Select</option><option value="Daily">Daily (90 days)</option><option value="Weekly">Weekly (12 weeks)</option></select></div>
+            <div class="fg"><label>Branch *</label><select id="ces-branch" required><option value="">-- Select Branch --</option></select></div>
+          </div>
+          <div id="ces-calc-box" style="display:none;background:#f5f3ff;border:1.5px solid #7c3aed;border-radius:10px;padding:12px;margin-bottom:16px"></div>
+          <div class="btn-row">
+            <button type="submit" class="btn btn-navy" style="background:#7c3aed">&#128190; Register Application</button>
+            <button type="button" class="btn btn-out" onclick="resetCESForm()">&#8635; Reset</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- CES REPORTS -->
+    <div class="page-section" id="page-ces-reports">
+      <div class="card">
+        <div class="card-title">&#128196; Children Education Support Reports
+          <button class="btn btn-out btn-sm no-print" onclick="showPage('ces')">&#8592; Back</button>
+        </div>
+        <div class="form-grid">
+          <div class="fg"><label>Report Type *</label><select id="cesr-type">
+            <option value="all">All Applications</option>
+            <option value="status">By Status</option>
+            <option value="school">By School</option>
+            <option value="repayments">Repayments Received</option>
+            <option value="outstanding">Outstanding Balances</option>
+            <option value="discounts">Early Repayment Discounts Granted</option>
+            <option value="overdue">Overdue Accounts</option>
+          </select></div>
+          <div class="fg"><label>Status</label><select id="cesr-status"><option value="">Any</option><option>Draft</option><option>Pending Review</option><option>Documents Incomplete</option><option>Approved</option><option>Rejected</option><option>School Payment Pending</option><option>Support Disbursed</option><option>Repaying</option><option>Completed</option></select></div>
+          <div class="fg"><label>Repayment Plan</label><select id="cesr-plan"><option value="">Any</option><option>Daily</option><option>Weekly</option></select></div>
+          <div class="fg"><label>From Date</label><input type="date" id="cesr-from"/></div>
+          <div class="fg"><label>To Date</label><input type="date" id="cesr-to"/></div>
+        </div>
+        <button class="btn btn-navy" style="background:#7c3aed" onclick="generateCESReport()">&#128269; Generate Report</button>
+        <div id="ces-report-meta" style="margin-top:14px"></div>
+        <div class="tbl-wrap" style="margin-top:10px"><table>
+          <thead id="ces-report-thead"></thead>
+          <tbody id="ces-report-tbody"></tbody>
+        </table></div>
+        <div class="btn-row no-print" id="ces-report-export-row" style="display:none">
+          <button class="btn btn-out btn-sm" onclick="exportCESReportPDF()">&#128424; PDF (Print)</button>
+          <button class="btn btn-out btn-sm" onclick="exportCESReportExcel()">&#128190; Excel</button>
+          <button class="btn btn-out btn-sm" onclick="exportCESReportCSV()">&#128190; CSV</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- CES PROGRAMME SETTINGS -->
+    <div class="page-section" id="page-ces-settings">
+      <div class="card">
+        <div class="card-title">&#9881; Children Education Support &mdash; Programme Settings
+          <button class="btn btn-out btn-sm no-print" onclick="showPage('ces')">&#8592; Back</button>
+        </div>
+        <p style="font-size:.8rem;color:var(--muted);margin-bottom:12px">Admin only. Changes apply to new applications; existing applications already approved are not recalculated.</p>
+        <div class="sh" style="margin-top:0">Support Amount Limits</div>
+        <div class="form-grid">
+          <div class="fg"><label>Minimum Support Amount (&#8358;)</label><input type="number" id="cess-min"/></div>
+          <div class="fg"><label>Maximum Support Amount (&#8358;)</label><input type="number" id="cess-max"/></div>
+        </div>
+        <div class="sh">Service Fee Tiers</div>
+        <div class="form-grid">
+          <div class="fg"><label>Tier 1 Max Amount (&#8358;)</label><input type="number" id="cess-t1max"/></div>
+          <div class="fg"><label>Tier 1 Fee (%)</label><input type="number" id="cess-t1pct"/></div>
+          <div class="fg"><label>Tier 2 Max Amount (&#8358;)</label><input type="number" id="cess-t2max"/></div>
+          <div class="fg"><label>Tier 2 Fee (%)</label><input type="number" id="cess-t2pct"/></div>
+          <div class="fg"><label>Tier 3 Max Amount (&#8358;)</label><input type="number" id="cess-t3max"/></div>
+          <div class="fg"><label>Tier 3 Fee (%)</label><input type="number" id="cess-t3pct"/></div>
+        </div>
+        <div class="sh">Repayment Durations</div>
+        <div class="form-grid">
+          <div class="fg"><label>Daily Plan &mdash; Number of Days</label><input type="number" id="cess-dailydays"/></div>
+          <div class="fg"><label>Weekly Plan &mdash; Number of Weeks</label><input type="number" id="cess-weeklyweeks"/></div>
+        </div>
+        <div class="sh">Early Repayment Discount</div>
+        <div class="form-grid">
+          <div class="fg"><label>Early Repayment Discount (%)</label><input type="number" id="cess-discpct"/></div>
+        </div>
+        <button class="btn btn-navy" style="background:#7c3aed" onclick="saveCESSettings()">&#128190; Save Programme Settings</button>
       </div>
     </div>
 
@@ -2050,6 +2199,74 @@ mark{background:#fef08a;border-radius:3px;padding:0 2px}
   </div>
 </div>
 
+<!-- CES APPLICATION PROFILE -->
+<div class="overlay" id="ces-profile-modal">
+  <div class="modal" style="max-width:860px">
+    <div class="mhead">
+      <h3 id="ces-pm-title">Application Profile</h3>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-out btn-sm no-print" onclick="printCESStatement()">&#128424; Print Statement</button>
+        <button class="mclose no-print" onclick="closeModal('ces-profile-modal')">&times;</button>
+      </div>
+    </div>
+    <div class="mbody" id="ces-pm-body"></div>
+  </div>
+</div>
+
+<!-- CES RECORD REPAYMENT -->
+<div class="overlay" id="ces-pay-modal">
+  <div class="modal" style="max-width:540px">
+    <div class="mhead">
+      <h3 id="ces-pay-title">Record Repayment</h3>
+      <button class="mclose" onclick="closeModal('ces-pay-modal')">&times;</button>
+    </div>
+    <div class="mbody" id="ces-pay-body"></div>
+  </div>
+</div>
+
+<!-- CES SCHOOL PAYMENT -->
+<div class="overlay" id="ces-school-modal">
+  <div class="modal" style="max-width:540px">
+    <div class="mhead">
+      <h3 id="ces-school-title">School Fee Payment</h3>
+      <button class="mclose" onclick="closeModal('ces-school-modal')">&times;</button>
+    </div>
+    <div class="mbody" id="ces-school-body"></div>
+  </div>
+</div>
+
+<!-- CES EDIT / APPROVE -->
+<div class="overlay" id="ces-edit-modal">
+  <div class="modal" style="max-width:480px">
+    <div class="mhead">
+      <h3>&#9998; Edit / Approve Application</h3>
+      <button class="mclose" onclick="closeModal('ces-edit-modal')">&times;</button>
+    </div>
+    <div class="mbody">
+      <div class="form-grid">
+        <div class="fg"><label>Applicant Full Name *</label><input id="cese-name"/></div>
+        <div class="fg"><label>Phone *</label><input id="cese-phone"/></div>
+        <div class="fg"><label>Address *</label><input id="cese-address"/></div>
+        <div class="fg"><label>Approved Support Amount (&#8358;) *</label><input type="number" id="cese-approved" oninput="cesEditCalc()"/></div>
+        <div class="fg"><label>Status *</label><select id="cese-status" onchange="cesEditCalc()">
+          <option value="Draft">Draft</option>
+          <option value="Pending Review">Pending Review</option>
+          <option value="Documents Incomplete">Documents Incomplete</option>
+          <option value="Approved">Approved</option>
+          <option value="Rejected">Rejected</option>
+          <option value="School Payment Pending">School Payment Pending</option>
+          <option value="Support Disbursed">Support Disbursed</option>
+          <option value="Repaying">Repaying</option>
+          <option value="Completed">Completed</option>
+        </select></div>
+      </div>
+      <div id="cese-calc-box" style="background:#f5f3ff;border:1.5px solid #7c3aed;border-radius:10px;padding:12px;margin-top:4px;font-size:.82rem"></div>
+      <p style="font-size:.72rem;color:var(--muted);margin-top:8px">Setting status to <strong>Approved</strong> for the first time locks in the approved amount, fee and total repayment, and generates the repayment schedule.</p>
+      <button class="btn btn-navy" style="background:#7c3aed;width:100%;justify-content:center;padding:11px;margin-top:12px" onclick="saveCESEdit()">&#128190; Save Changes</button>
+    </div>
+  </div>
+</div>
+
 <!-- FD PROFILE MODAL -->
 <div class="overlay" id="fd-profile-modal">
   <div class="modal" style="max-width:740px">
@@ -2242,6 +2459,8 @@ function startApp(){
   if(navUsers) navUsers.style.display = (isAdmin || isManager) ? '' : 'none';
   const navAuditlog = document.getElementById('nav-auditlog');
   if(navAuditlog) navAuditlog.style.display = (isAdmin || isManager) ? '' : 'none';
+  const navCES = document.getElementById('nav-ces');
+  if(navCES) navCES.style.display = (isAdmin || isManager) ? '' : 'none';
 
   // Admin-only dashboard branch summary card
   const bsCard = document.getElementById('branch-summary-card');
@@ -2292,6 +2511,10 @@ function showPage(id){
     toast('Access denied: Admin/Manager only','e');
     id='dashboard';
   }
+  if((id==='ces'||id==='new-ces'||id==='ces-reports'||id==='ces-settings') && currentSession.role!=='admin' && currentSession.role!=='manager'){
+    toast('Access denied: Admin/Manager only','e');
+    id='dashboard';
+  }
   document.querySelectorAll('.page-section').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('.nb').forEach(b=>b.classList.remove('active'));
   const sec=document.getElementById('page-'+id);if(sec)sec.classList.add('active');
@@ -2332,6 +2555,15 @@ function showPage(id){
     document.getElementById('sal-report-meta').innerHTML='';
     document.getElementById('sal-report-export-row').style.display='none';
   }
+  if(id==='ces'){populateCESBranchDropdowns();renderCESStats();renderCES(scopedCES());renderCESActivity()}
+  if(id==='new-ces'){populateCESBranchDropdowns();populateCustomerDropdowns();resetCESForm()}
+  if(id==='ces-reports'){
+    document.getElementById('ces-report-thead').innerHTML='';
+    document.getElementById('ces-report-tbody').innerHTML='';
+    document.getElementById('ces-report-meta').innerHTML='';
+    document.getElementById('ces-report-export-row').style.display='none';
+  }
+  if(id==='ces-settings'){cesFillSettingsForm()}
   if(id==='settings'){
     document.getElementById('si-total').textContent=getScopedLoans().length;
     document.getElementById('si-branches').textContent=allBranches.length;
@@ -2343,7 +2575,7 @@ function showPage(id){
 async function loadAll(){
   showLoader('Loading data...');
   try{
-    const [brSnap,usSnap,lnSnap,ebSnap,invSnap,fdSnap,ctbSnap,alSnap,csSnap,salSnap]=await Promise.all([
+    const [brSnap,usSnap,lnSnap,ebSnap,invSnap,fdSnap,ctbSnap,alSnap,csSnap,salSnap,cesSnap]=await Promise.all([
       db.collection('branches').get(),
       db.collection('staff_users').get(),
       db.collection('loans').get(),
@@ -2353,7 +2585,8 @@ async function loadAll(){
       db.collection('contributions').get(),
       db.collection('auditlogs').get(),
       db.collection('customers').get(),
-      db.collection('salarycontributions').get()
+      db.collection('salarycontributions').get(),
+      db.collection('ceseducation').get()
     ]);
     allBranches=brSnap.docs.map(d=>({id:d.id,...d.data()}));
     allUsers=usSnap.docs.map(d=>({id:d.id,...d.data()}));
@@ -2365,11 +2598,14 @@ async function loadAll(){
     allAuditLogs=alSnap.docs.map(d=>({id:d.id,...d.data()}));
     allCustomers=csSnap.docs.map(d=>({id:d.id,...d.data()}));
     allSalaryContributions=salSnap.docs.map(d=>({id:d.id,...d.data()}));
+    allCES=cesSnap.docs.map(d=>({id:d.id,...d.data()}));
     populateAllBranchDropdowns();
     populateEBINVBranchDropdowns();
     populateCTBBranchDropdowns();
     populateSALBranchDropdowns();
+    populateCESBranchDropdowns();
     populateCustomerDropdowns();
+    cesLoadSettings();
     populateAllYearDropdowns();
     chkNotifBadge();
     populateLoginBranchSelect();
@@ -4128,7 +4364,8 @@ const CUST_FIELD_MAP={
   'fd-': {name:'fd-name',phone:'fd-phone',address:'fd-address',occupation:'fd-occ',idtype:'fd-idtype',idnum:'fd-idnum',photo:'fd-photo-data',photoPrev:'fd-photo-prev',
     nokName:'fd-nok-name',nokRel:'fd-nok-rel',nokPhone:'fd-nok-phone',nokAddress:'fd-nok-addr',nokOccupation:'fd-nok-occ',nokIdtype:'fd-nok-idtype',nokIdnum:'fd-nok-idnum'},
   'sal-':{name:'sal-name',phone:'sal-phone',address:'sal-address',photo:'sal-photo-data',photoPrev:'sal-photo-prev',
-    nokName:'sal-nok-name',nokPhone:'sal-nok-phone',nokAddress:'sal-nok-addr',nokPhoto:'sal-nok-photo-data',nokPhotoPrev:'sal-nok-photo-prev'}
+    nokName:'sal-nok-name',nokPhone:'sal-nok-phone',nokAddress:'sal-nok-addr',nokPhoto:'sal-nok-photo-data',nokPhotoPrev:'sal-nok-photo-prev'},
+  'ces-':{name:'ces-name',phone:'ces-phone',address:'ces-address',occupation:'ces-occ'}
 };
 function custGenRegNo(){
   let n=allCustomers.length+1, regNo;
@@ -4333,6 +4570,7 @@ function openCustomerProfile(id){
     '<button class="btn btn-navy btn-sm" onclick="custQuickAction(\''+c.id+'\',\'ctb-\',\'new-contribution\')">&#128021; New Contribution</button>'+
     '<button class="btn btn-navy btn-sm" onclick="custQuickAction(\''+c.id+'\',\'fd-\',\'new-fixeddeposit\')">&#127974; New Fixed Deposit</button>'+
     '<button class="btn btn-navy btn-sm" onclick="custQuickAction(\''+c.id+'\',\'sal-\',\'new-salarycontribution\')">&#128188; New Salary Contribution</button>'+
+    '<button class="btn btn-navy btn-sm" onclick="custQuickAction(\''+c.id+'\',\'ces-\',\'new-ces\')">&#127891; New Education Support</button>'+
     '</div>';
   showModal('cust-profile-modal');
 }
@@ -6865,6 +7103,720 @@ function exportSALReportCSV(){
 }
 
 // =====================================================
+// ===== CHILDREN EDUCATION SUPPORT MODULE =====
+// =====================================================
+let allCES=[], cesCurId=null, cesLastReport=null, cesDocsCache={};
+let cesSettings={min:10000,max:100000,tiers:[{max:30000,pct:10},{max:60000,pct:12},{max:100000,pct:15}],dailyDays:90,weeklyWeeks:12,discPct:3};
+const CES_BLANK="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Crect width='80' height='80' fill='%23e2e8f0'/%3E%3Ctext x='50%25' y='55%25' font-size='28' text-anchor='middle' fill='%2394a3b8'%3E%F0%9F%93%84%3C/text%3E%3C/svg%3E";
+const CES_DOC_BASE=[
+  {key:'father-nin',label:"Father's NIN"},
+  {key:'mother-nin',label:"Mother's NIN"},
+  {key:'father-lasrra',label:"Father's LASRRA Card"},
+  {key:'mother-lasrra',label:"Mother's LASRRA Card"},
+  {key:'child-photo',label:"Child's Passport Photograph"},
+  {key:'school-bill',label:"School Bill / Admission Letter"},
+  {key:'g1-nin',label:"Guarantor 1 NIN"},
+  {key:'g1-lasrra',label:"Guarantor 1 LASRRA Card"},
+  {key:'g1-photo',label:"Guarantor 1 Passport Photograph"}
+];
+const CES_DOC_SINGLE_EXTRA=[
+  {key:'g2-nin',label:"Guarantor 2 NIN"},
+  {key:'g2-lasrra',label:"Guarantor 2 LASRRA Card"},
+  {key:'g2-photo',label:"Guarantor 2 Passport Photograph"}
+];
+const CES_SIGS_MARRIED=[
+  {key:'sig-husband',label:"Husband's Signature"},
+  {key:'sig-wife',label:"Wife's Signature"},
+  {key:'sig-g1',label:"Guarantor's Signature"}
+];
+const CES_SIGS_SINGLE=[
+  {key:'sig-applicant',label:"Applicant's Signature"},
+  {key:'sig-g1',label:"Guarantor 1 Signature"},
+  {key:'sig-g2',label:"Guarantor 2 Signature"}
+];
+function cesDocSlots(c){
+  const extra=(c.maritalStatus==='Single Mother'||c.maritalStatus==='Single Father')?CES_DOC_SINGLE_EXTRA:[];
+  const sigs=c.maritalStatus==='Married'?CES_SIGS_MARRIED:CES_SIGS_SINGLE;
+  return {docs:CES_DOC_BASE.concat(extra), sigs};
+}
+function round2(n){ return Math.round((n+Number.EPSILON)*100)/100; }
+function cesCalcFee(amount){
+  const tier=cesSettings.tiers.find(t=>amount<=t.max) || cesSettings.tiers[cesSettings.tiers.length-1];
+  const fee=Math.round(amount*tier.pct/100);
+  return {pct:tier.pct, fee, total:amount+fee};
+}
+function cesGenId(){ return 'CES-'+Date.now().toString().slice(-7); }
+function cesGenRef(){ return 'CESTXN-'+Date.now().toString().slice(-8)+Math.floor(Math.random()*90+10); }
+function cesBadge(status){
+  const colors={
+    'Draft':'#94a3b8','Pending Review':'#f59e0b','Documents Incomplete':'#f97316','Approved':'#0369a1',
+    'Rejected':'#dc2626','School Payment Pending':'#7c3aed','Support Disbursed':'#0891b2','Repaying':'#16a34a',
+    'Completed':'#15803d','Overdue':'#dc2626'
+  };
+  const c=colors[status]||'#64748b';
+  return '<span style="display:inline-block;padding:3px 9px;border-radius:12px;font-size:.68rem;font-weight:700;color:#fff;background:'+c+'">'+status+'</span>';
+}
+
+// ----- Programme settings -----
+function cesLoadSettings(){
+  return db.collection('settings').doc('ces').get().then(doc=>{
+    if(doc.exists){
+      const d=doc.data();
+      cesSettings={
+        min:d.min||10000, max:d.max||100000,
+        tiers:d.tiers&&d.tiers.length?d.tiers:cesSettings.tiers,
+        dailyDays:d.dailyDays||90, weeklyWeeks:d.weeklyWeeks||12, discPct:d.discPct!==undefined?d.discPct:3
+      };
+    }
+  }).catch(()=>{});
+}
+function cesFillSettingsForm(){
+  document.getElementById('cess-min').value=cesSettings.min;
+  document.getElementById('cess-max').value=cesSettings.max;
+  document.getElementById('cess-t1max').value=cesSettings.tiers[0].max;
+  document.getElementById('cess-t1pct').value=cesSettings.tiers[0].pct;
+  document.getElementById('cess-t2max').value=cesSettings.tiers[1].max;
+  document.getElementById('cess-t2pct').value=cesSettings.tiers[1].pct;
+  document.getElementById('cess-t3max').value=cesSettings.tiers[2].max;
+  document.getElementById('cess-t3pct').value=cesSettings.tiers[2].pct;
+  document.getElementById('cess-dailydays').value=cesSettings.dailyDays;
+  document.getElementById('cess-weeklyweeks').value=cesSettings.weeklyWeeks;
+  document.getElementById('cess-discpct').value=cesSettings.discPct;
+}
+function saveCESSettings(){
+  if(currentSession.role!=='admin'){toast('Admin access required','e');return}
+  const data={
+    min:parseFloat(v('cess-min'))||10000, max:parseFloat(v('cess-max'))||100000,
+    tiers:[
+      {max:parseFloat(v('cess-t1max'))||30000, pct:parseFloat(v('cess-t1pct'))||10},
+      {max:parseFloat(v('cess-t2max'))||60000, pct:parseFloat(v('cess-t2pct'))||12},
+      {max:parseFloat(v('cess-t3max'))||100000, pct:parseFloat(v('cess-t3pct'))||15}
+    ],
+    dailyDays:parseInt(v('cess-dailydays'))||90, weeklyWeeks:parseInt(v('cess-weeklyweeks'))||12,
+    discPct:parseFloat(v('cess-discpct'))!==undefined?(parseFloat(v('cess-discpct'))||0):3
+  };
+  db.collection('settings').doc('ces').set(data).then(()=>{
+    cesSettings=data;
+    logAudit('CES Programme Settings Updated', 'Support limits, fee tiers, repayment durations and/or discount rate changed.');
+    toast('Programme settings saved!','s');
+  }).catch(e=>toast('Error: '+e.message,'e'));
+}
+
+// ----- Branch dropdowns -----
+function populateCESBranchDropdowns(){
+  const sel=document.getElementById('ces-branch');
+  if(sel){
+    sel.innerHTML='<option value="">-- Select Branch --</option>';
+    allBranches.forEach(b=>{const o=document.createElement('option');o.value=b.id;o.textContent=b.name+(b.code?' ('+b.code+')':'');sel.appendChild(o);});
+    if(currentSession.role==='staff'){sel.value=currentSession.branchId;sel.disabled=true;} else sel.disabled=false;
+  }
+  const fbr=document.getElementById('ces-fbr');
+  if(fbr){
+    fbr.style.display=currentSession.role==='admin'?'':'none';
+    fbr.innerHTML='<option value="">All Branches</option>';
+    allBranches.forEach(b=>{const o=document.createElement('option');o.value=b.id;o.textContent=b.name;fbr.appendChild(o);});
+  }
+}
+
+// ----- New application form behaviour -----
+function cesToggleMarital(){
+  const m=v('ces-marital');
+  const married=m==='Married';
+  const single=m==='Single Mother'||m==='Single Father';
+  document.getElementById('ces-spouse-sh').style.display=married?'':'none';
+  document.getElementById('ces-spouse-fields').style.display=married?'':'none';
+  document.getElementById('ces-g2-sh').style.display=single?'':'none';
+  document.getElementById('ces-g2-fields').style.display=single?'':'none';
+}
+function cesCalcLive(){
+  const amt=parseFloat(v('ces-amount'))||0;
+  const box=document.getElementById('ces-calc-box');
+  if(!amt){box.style.display='none';return}
+  const {pct,fee,total}=cesCalcFee(amt);
+  const plan=v('ces-plan');
+  let periodsNote='';
+  if(plan==='Daily') periodsNote=cesSettings.dailyDays+' daily instalments of roughly &#8358;'+fmt(round2(total/cesSettings.dailyDays));
+  else if(plan==='Weekly') periodsNote=cesSettings.weeklyWeeks+' weekly instalments of roughly &#8358;'+fmt(round2(total/cesSettings.weeklyWeeks));
+  box.style.display='block';
+  box.innerHTML='<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>Support Amount</span><strong>&#8358;'+fmt(amt)+'</strong></div>'+
+    '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>Service Fee ('+pct+'%)</span><strong>&#8358;'+fmt(fee)+'</strong></div>'+
+    '<div style="display:flex;justify-content:space-between;border-top:1px solid #ddd6fe;padding-top:4px;font-size:.95rem"><span>Total Repayment</span><strong style="color:#7c3aed">&#8358;'+fmt(total)+'</strong></div>'+
+    (periodsNote?'<div style="font-size:.72rem;color:var(--muted);margin-top:6px">'+periodsNote+'</div>':'');
+}
+
+// ----- Scope / list / search -----
+function scopedCES(){
+  if(currentSession.role==='admin') return allCES;
+  return allCES.filter(c=>c.branchId===currentSession.branchId);
+}
+function cesPaidTotal(c){ return (c.payments||[]).reduce((s,p)=>s+(parseFloat(p.amount)||0),0); }
+function cesEffectiveTotal(c){ return c.earlyDiscount ? c.earlyDiscount.revisedTotal : (c.approvedTotal||0); }
+function cesOutstanding(c){ return Math.max(0, cesEffectiveTotal(c)-cesPaidTotal(c)); }
+function cesMissedCount(c){
+  if(!c.schedule||!c.schedule.length) return 0;
+  const today=td(), paid=cesPaidTotal(c);
+  let running=0, covered=0;
+  c.schedule.forEach(s=>{ running+=s.amount; if(running<=paid+0.5) covered++; });
+  const dueCount=c.schedule.filter(s=>s.due<=today).length;
+  return Math.max(0, dueCount-covered);
+}
+function cesIsOverdue(c){ return ['Repaying','School Payment Pending','Support Disbursed'].includes(c.status) && cesMissedCount(c)>0; }
+function cesNextDue(c){
+  if(!c.schedule||!c.schedule.length) return null;
+  const paid=cesPaidTotal(c); let running=0;
+  for(const s of c.schedule){ running+=s.amount; if(running>paid+0.5) return s.due; }
+  return null;
+}
+function renderCESStats(){
+  const list=scopedCES();
+  const pending=list.filter(c=>c.status==='Pending Review'||c.status==='Documents Incomplete').length;
+  const approved=list.filter(c=>['Approved','School Payment Pending','Support Disbursed','Repaying','Completed'].includes(c.status)).length;
+  const totalApproved=list.reduce((s,c)=>s+(c.approvedAmount||0),0);
+  const totalToSchools=list.filter(c=>c.schoolPayment&&c.schoolPayment.status==='Paid').reduce((s,c)=>s+(c.schoolPayment.amount||0),0);
+  const totalRepaid=list.reduce((s,c)=>s+cesPaidTotal(c),0);
+  const totalOutstanding=list.reduce((s,c)=>s+(c.status==='Approved'||c.status==='Repaying'||c.status==='School Payment Pending'||c.status==='Support Disbursed'?cesOutstanding(c):0),0);
+  const totalFees=list.reduce((s,c)=>s+(c.approvedFee||0),0);
+  const totalDiscounts=list.filter(c=>c.earlyDiscount).reduce((s,c)=>s+(c.earlyDiscount.amount||0),0);
+  const overdue=list.filter(c=>cesIsOverdue(c)).length;
+  const completed=list.filter(c=>c.status==='Completed').length;
+  const el=document.getElementById('ces-stat-grid');if(!el)return;
+  el.innerHTML=
+    '<div class="stat-card" style="border-color:#7c3aed"><div class="stat-val">'+list.length+'</div><div class="stat-lbl">Total Applications</div></div>'+
+    '<div class="stat-card" style="border-color:#f59e0b"><div class="stat-val">'+pending+'</div><div class="stat-lbl">Pending Review</div></div>'+
+    '<div class="stat-card" style="border-color:#0369a1"><div class="stat-val">'+approved+'</div><div class="stat-lbl">Approved / In Progress</div></div>'+
+    '<div class="stat-card" style="border-color:#7c3aed"><div class="stat-val">&#8358;'+fmt(totalApproved)+'</div><div class="stat-lbl">Total Support Approved</div></div>'+
+    '<div class="stat-card" style="border-color:#0891b2"><div class="stat-val">&#8358;'+fmt(totalToSchools)+'</div><div class="stat-lbl">Total Paid to Schools</div></div>'+
+    '<div class="stat-card" style="border-color:var(--green)"><div class="stat-val">&#8358;'+fmt(totalRepaid)+'</div><div class="stat-lbl">Total Repayments Received</div></div>'+
+    '<div class="stat-card" style="border-color:var(--red)"><div class="stat-val">&#8358;'+fmt(totalOutstanding)+'</div><div class="stat-lbl">Outstanding Repayment Balances</div></div>'+
+    '<div class="stat-card" style="border-color:var(--navy)"><div class="stat-val">&#8358;'+fmt(totalFees)+'</div><div class="stat-lbl">Total Service Fees</div></div>'+
+    '<div class="stat-card" style="border-color:#c8973a"><div class="stat-val">&#8358;'+fmt(totalDiscounts)+'</div><div class="stat-lbl">Early Repayment Discounts Granted</div></div>'+
+    (overdue>0?'<div class="stat-card" style="border-color:var(--red)"><div class="stat-val" style="color:var(--red)">'+overdue+'</div><div class="stat-lbl">Overdue Accounts</div></div>':'')+
+    '<div class="stat-card" style="border-color:var(--green)"><div class="stat-val">'+completed+'</div><div class="stat-lbl">Completed Support Plans</div></div>';
+}
+function renderCESActivity(){
+  const el=document.getElementById('ces-activity-feed');if(!el)return;
+  let acts=[];
+  scopedCES().forEach(c=>{
+    (c.payments||[]).forEach(p=>acts.push({who:c.name,id:c.cesId,amount:p.amount,date:p.date,by:p.recordedBy,at:p.recordedAt||p.date,type:'Repayment'}));
+  });
+  acts.sort((a,b)=>new Date(b.at)-new Date(a.at));
+  acts=acts.slice(0,8);
+  if(!acts.length){el.innerHTML='<p style="color:var(--muted);font-size:.82rem;text-align:center;padding:14px">No repayment activity yet.</p>';return;}
+  el.innerHTML='<div class="tbl-wrap"><table><thead><tr><th>Applicant</th><th>ID</th><th>Type</th><th>Amount</th><th>Date</th><th>By</th></tr></thead><tbody>'+
+    acts.map(a=>'<tr><td>'+a.who+'</td><td>'+a.id+'</td><td>'+a.type+'</td><td style="color:#7c3aed;font-weight:700">&#8358;'+fmt(a.amount)+'</td><td>'+a.date+'</td><td>'+(a.by||'--')+'</td></tr>').join('')+
+    '</tbody></table></div>';
+}
+function renderCES(list){
+  const tb=document.getElementById('ces-tbody');if(!tb)return;
+  tb.innerHTML=list.slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||'')).map(c=>
+    '<tr '+(cesIsOverdue(c)?'style="background:#fff5f5"':'')+'>'+
+    '<td><strong>'+c.cesId+'</strong></td>'+
+    '<td>'+c.name+'</td>'+
+    '<td>'+(c.childName||'--')+'</td>'+
+    '<td>'+(c.school||'--')+'</td>'+
+    '<td>&#8358;'+fmt(c.approvedAmount||c.requestedAmount||0)+'</td>'+
+    '<td>'+(c.plan||'--')+'</td>'+
+    '<td><span style="font-size:.68rem;background:#f5f3ff;padding:2px 6px;border-radius:4px;border:1px solid #ddd6fe">'+getBranchName(c.branchId)+'</span></td>'+
+    '<td>'+cesBadge(c.status)+'</td>'+
+    '<td><div style="display:flex;gap:3px;flex-wrap:wrap">'+
+      '<button class="btn btn-out btn-sm" onclick="viewCESProfile(\''+c.id+'\')">&#128100;</button>'+
+      '<button class="btn btn-red btn-sm" onclick="delCES(\''+c.id+'\')">&#128465;</button>'+
+    '</div></td></tr>'
+  ).join('')||'<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:20px">No applications found.</td></tr>';
+}
+function searchCES(){
+  const q=v('ces-srch').toLowerCase(), st=v('ces-fst'), br=v('ces-fbr');
+  let list=scopedCES().filter(c=>(c.name||'').toLowerCase().includes(q)||(c.childName||'').toLowerCase().includes(q)||(c.school||'').toLowerCase().includes(q)||(c.cesId||'').toLowerCase().includes(q));
+  if(st==='Overdue') list=list.filter(c=>cesIsOverdue(c));
+  else if(st) list=list.filter(c=>c.status===st);
+  if(br&&currentSession.role==='admin') list=list.filter(c=>c.branchId===br);
+  renderCES(list);
+}
+
+// ----- Register new application -----
+function submitCESApplication(e){
+  e.preventDefault();
+  const branchId=currentSession.role==='staff'?currentSession.branchId:v('ces-branch');
+  if(!branchId){toast('Please select a branch','e');return}
+  const amount=parseFloat(v('ces-amount'))||0;
+  if(amount<cesSettings.min||amount>cesSettings.max){toast('Support amount must be between \\u20a6'+fmt(cesSettings.min)+' and \\u20a6'+fmt(cesSettings.max),'e');return}
+  if(!v('ces-plan')){toast('Please select a repayment plan','e');return}
+  if(!v('ces-name')||!v('ces-phone')||!v('ces-address')||!v('ces-marital')||!v('ces-child-name')||!v('ces-school')||!v('ces-g1-name')||!v('ces-g1-phone')){
+    toast('Please fill in all required fields','e');return;
+  }
+  const {pct,fee,total}=cesCalcFee(amount);
+  const data={
+    cesId:cesGenId(), customerId:v('ces-cust-id')||null,
+    name:v('ces-name'), phone:v('ces-phone'), address:v('ces-address'), occupation:v('ces-occ'),
+    maritalStatus:v('ces-marital'),
+    spouseName:v('ces-spouse-name'), spousePhone:v('ces-spouse-phone'),
+    childName:v('ces-child-name'), childAge:v('ces-child-age'), school:v('ces-school'), schoolAddress:v('ces-school-addr'),
+    guarantor1:{name:v('ces-g1-name'),phone:v('ces-g1-phone'),address:v('ces-g1-addr'),relationship:v('ces-g1-rel')},
+    guarantor2:{name:v('ces-g2-name'),phone:v('ces-g2-phone'),address:v('ces-g2-addr'),relationship:v('ces-g2-rel')},
+    requestedAmount:amount, requestedPct:pct, requestedFee:fee, requestedTotal:total,
+    plan:v('ces-plan'), branchId, branchName:getBranchName(branchId),
+    status:'Pending Review', payments:[], schedule:[],
+    createdBy:currentSession.username||'admin', createdByName:currentSession.name||currentSession.username,
+    createdAt:new Date().toISOString()
+  };
+  db.collection('ceseducation').add(data).then(ref=>{
+    allCES.unshift({id:ref.id,...data});
+    logAudit('CES Application Registered', data.name+' ('+data.cesId+') applied for \\u20a6'+fmt(amount)+' support for '+data.childName+' at '+data.school+'.');
+    toast('Application registered! ID: '+data.cesId,'s');
+    resetCESForm();
+    showPage('ces');
+  }).catch(ex=>toast('Error: '+ex.message,'e'));
+}
+function resetCESForm(){
+  const cp=document.getElementById('ces-cust-pick');if(cp)cp.value='';
+  const ci=document.getElementById('ces-cust-id');if(ci)ci.value='';
+  const form=document.getElementById('ces-form');if(form)form.reset();
+  document.getElementById('ces-calc-box').style.display='none';
+  cesToggleMarital();
+  populateCESBranchDropdowns();
+}
+function delCES(id){
+  if(!confirm('Delete this application? This cannot be undone.'))return;
+  const c=allCES.find(x=>x.id===id);
+  db.collection('ceseducation').doc(id).delete().then(()=>{
+    allCES=allCES.filter(x=>x.id!==id);
+    if(c) logAudit('CES Application Deleted', c.name+' ('+c.cesId+') application deleted.');
+    renderCES(scopedCES());renderCESStats();renderCESActivity();
+    toast('Application deleted.','w');
+  }).catch(e=>toast('Error: '+e.message,'e'));
+}
+
+// ----- Document / signature checklist (Firestore subcollection: ceseducation/{id}/docs) -----
+function cesLoadDocs(id){
+  return db.collection('ceseducation').doc(id).collection('docs').get().then(snap=>{
+    const o={}; snap.docs.forEach(d=>o[d.id]=d.data());
+    cesDocsCache[id]=o;
+    return o;
+  }).catch(()=>{ cesDocsCache[id]=cesDocsCache[id]||{}; return cesDocsCache[id]; });
+}
+function cesDocUp(inp,appId,docKey){
+  const f=inp.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=ev=>{
+    const img=new Image();
+    img.onload=()=>{
+      const max=500,sc=Math.min(1,max/Math.max(img.width,img.height));
+      const c=document.createElement('canvas');c.width=Math.round(img.width*sc);c.height=Math.round(img.height*sc);
+      c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+      const d=c.toDataURL('image/jpeg',0.7);
+      db.collection('ceseducation').doc(appId).collection('docs').doc(docKey).set({
+        data:d, status:'Received', uploadedBy:currentSession.name||currentSession.username, uploadedAt:new Date().toISOString()
+      }).then(()=>{
+        cesDocsCache[appId]=cesDocsCache[appId]||{};
+        cesDocsCache[appId][docKey]={data:d,status:'Received'};
+        toast('Document uploaded!','s');
+        viewCESProfile(appId);
+      }).catch(e=>toast('Error: '+e.message,'e'));
+    };
+    img.onerror=()=>toast('Could not read image','e');
+    img.src=ev.target.result;
+  };
+  r.readAsDataURL(f);
+}
+function cesDocTiles(appId,c){
+  const {docs,sigs}=cesDocSlots(c);
+  const cache=cesDocsCache[appId]||{};
+  const tile=s=>{
+    const got=cache[s.key];
+    return '<div style="text-align:center">'+
+      '<div class="photo-up" style="padding:8px;max-width:110px" onclick="document.getElementById(\'cesdoc-'+s.key+'\').click()">'+
+      '<img src="'+(got?got.data:CES_BLANK)+'" style="width:60px;height:60px;object-fit:cover;border-radius:6px" alt=""'+(got?' onclick=\'event.stopPropagation();ebShowImg(this.src)\'':'')+'/>'+
+      '<p style="font-size:.62rem;margin-top:4px">'+s.label+'</p>'+
+      '</div>'+
+      '<span style="font-size:.6rem;font-weight:700;color:'+(got?'#16a34a':'#dc2626')+'">'+(got?'\\u2713 Received':'\\u2717 Missing')+'</span>'+
+      '<input type="file" id="cesdoc-'+s.key+'" accept="image/*" style="display:none" onchange="cesDocUp(this,\''+appId+'\',\''+s.key+'\')"/>'+
+      '</div>';
+  };
+  const missing=docs.concat(sigs).filter(s=>!cache[s.key]);
+  return '<div class="sh">&#128196; Required Documents '+(missing.length?'<span style="color:var(--red);font-weight:700;font-size:.7rem;margin-left:8px">&#9888; '+missing.length+' missing</span>':'<span style="color:var(--green);font-weight:700;font-size:.7rem;margin-left:8px">&#10003; All complete</span>')+'</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:10px;margin-bottom:10px">'+docs.map(tile).join('')+'</div>'+
+    '<div class="sh">&#9997; Signatures</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:10px">'+sigs.map(tile).join('');
+}
+
+// ----- Repayment schedule -----
+function cesGenerateSchedule(c,startDate){
+  const periods=c.plan==='Daily'?cesSettings.dailyDays:cesSettings.weeklyWeeks;
+  const total=c.approvedTotal;
+  const base=round2(total/periods);
+  const schedule=[]; let running=0;
+  const start=new Date((startDate||td())+'T00:00:00');
+  for(let i=0;i<periods;i++){
+    const due=new Date(start);
+    if(c.plan==='Daily') due.setDate(due.getDate()+i+1);
+    else due.setDate(due.getDate()+(i+1)*7);
+    let amt=base;
+    if(i===periods-1) amt=round2(total-running);
+    running=round2(running+amt);
+    schedule.push({n:i+1, due:due.toISOString().slice(0,10), amount:amt});
+  }
+  return schedule;
+}
+
+// ----- Edit / Approve application -----
+function openCESEdit(id){
+  const c=allCES.find(x=>x.id===id);if(!c)return;
+  cesCurId=id;
+  document.getElementById('cese-name').value=c.name||'';
+  document.getElementById('cese-phone').value=c.phone||'';
+  document.getElementById('cese-address').value=c.address||'';
+  document.getElementById('cese-approved').value=c.approvedAmount||c.requestedAmount||'';
+  document.getElementById('cese-status').value=c.status||'Draft';
+  cesEditCalc();
+  showModal('ces-edit-modal');
+}
+function cesEditCalc(){
+  const amt=parseFloat(v('cese-approved'))||0;
+  const box=document.getElementById('cese-calc-box');
+  if(!amt){box.innerHTML='';return}
+  const {pct,fee,total}=cesCalcFee(amt);
+  box.innerHTML='Support: <strong>&#8358;'+fmt(amt)+'</strong> &bull; Fee ('+pct+'%): <strong>&#8358;'+fmt(fee)+'</strong> &bull; Total Repayment: <strong style="color:#7c3aed">&#8358;'+fmt(total)+'</strong>';
+}
+function saveCESEdit(){
+  const name=v('cese-name'), phone=v('cese-phone'), address=v('cese-address'), approved=parseFloat(v('cese-approved'))||0, status=v('cese-status');
+  if(!name||!phone||!address||!approved){toast('Please fill in all required fields','e');return}
+  const c=allCES.find(x=>x.id===cesCurId);if(!c)return;
+  const wasApproved=!!c.approvedAt;
+  const {pct,fee,total}=cesCalcFee(approved);
+  const upd={name,phone,address,status,approvedAmount:approved,approvedPct:pct,approvedFee:fee,approvedTotal:total};
+  if(!wasApproved && (status==='Approved'||status==='School Payment Pending'||status==='Support Disbursed'||status==='Repaying')){
+    upd.approvedAt=new Date().toISOString();
+    upd.approvedBy=currentSession.name||currentSession.username;
+    upd.schedule=cesGenerateSchedule({plan:c.plan,approvedTotal:total},td());
+  }
+  db.collection('ceseducation').doc(cesCurId).set(upd,{merge:true}).then(()=>{
+    Object.assign(c,upd);
+    closeModal('ces-edit-modal');
+    logAudit(status==='Rejected'?'CES Application Rejected':(!wasApproved&&upd.approvedAt?'CES Application Approved':'CES Application Updated'),
+      c.name+' ('+c.cesId+') '+(status==='Rejected'?'rejected.':(!wasApproved&&upd.approvedAt?('approved for \\u20a6'+fmt(approved)+' (fee \\u20a6'+fmt(fee)+', total \\u20a6'+fmt(total)+').'):'details updated.')));
+    toast('Application updated!','s');
+    renderCES(scopedCES());renderCESStats();
+    viewCESProfile(cesCurId);
+  }).catch(e=>toast('Error: '+e.message,'e'));
+}
+
+// ----- School fee payment -----
+function openCESSchoolModal(id){
+  cesCurId=id;
+  const c=allCES.find(x=>x.id===id);if(!c)return;
+  const sp=c.schoolPayment||{};
+  document.getElementById('ces-school-title').textContent='School Fee Payment \\u2014 '+c.school;
+  document.getElementById('ces-school-body').innerHTML=
+    '<div style="background:var(--bg);border-radius:8px;padding:12px;margin-bottom:12px"><strong>'+c.childName+'</strong> at <strong>'+c.school+'</strong><br/><span style="font-size:.78rem;color:var(--muted)">Approved Support: &#8358;'+fmt(c.approvedAmount||0)+'</span></div>'+
+    '<div class="form-grid">'+
+    '<div class="fg"><label>School Bank Name</label><input id="ces-sch-bank" value="'+(sp.bankName||'')+'"/></div>'+
+    '<div class="fg"><label>Account Name</label><input id="ces-sch-accname" value="'+(sp.accountName||'')+'"/></div>'+
+    '<div class="fg"><label>Account Number</label><input id="ces-sch-accno" value="'+(sp.accountNumber||'')+'"/></div>'+
+    '<div class="fg"><label>Approved Amount to Pay (&#8358;) *</label><input type="number" id="ces-sch-amt" value="'+(sp.amount||c.approvedAmount||0)+'"/></div>'+
+    '<div class="fg"><label>Payment Date *</label><input type="date" id="ces-sch-date" value="'+(sp.date||td())+'"/></div>'+
+    '<div class="fg"><label>Transaction Reference</label><input id="ces-sch-ref" value="'+(sp.ref||'')+'"/></div>'+
+    '</div>'+
+    '<div style="font-size:.78rem;color:var(--muted);margin:6px 0">Current Status: '+(sp.status||'Pending')+(sp.staffName?' &bull; by '+sp.staffName:'')+'</div>'+
+    '<button class="btn btn-navy" style="background:#7c3aed;width:100%;justify-content:center;padding:11px" onclick="saveCESSchoolPayment()">&#9989; Confirm &amp; Mark School Payment Completed</button>';
+  showModal('ces-school-modal');
+}
+function saveCESSchoolPayment(){
+  const bankName=v('ces-sch-bank'), accountName=v('ces-sch-accname'), accountNumber=v('ces-sch-accno'),
+        amount=parseFloat(v('ces-sch-amt'))||0, date=v('ces-sch-date'), ref=v('ces-sch-ref');
+  if(!amount||!date){toast('Enter the amount and payment date','e');return}
+  const c=allCES.find(x=>x.id===cesCurId);if(!c)return;
+  const schoolPayment={bankName,accountName,accountNumber,amount,date,ref,status:'Paid',staff:currentSession.username,staffName:currentSession.name||currentSession.username,confirmedAt:new Date().toISOString()};
+  const upd={schoolPayment, status:'Repaying', schedule:cesGenerateSchedule(c,date)};
+  db.collection('ceseducation').doc(cesCurId).set(upd,{merge:true}).then(()=>{
+    Object.assign(c,upd);
+    closeModal('ces-school-modal');
+    logAudit('CES School Payment Completed', '\\u20a6'+fmt(amount)+' paid to '+c.school+' for '+c.childName+' ('+c.cesId+'). Ref: '+(ref||'--'));
+    toast('School payment recorded. Repayment schedule is now active.','s');
+    renderCES(scopedCES());renderCESStats();renderCESActivity();
+    viewCESProfile(cesCurId);
+  }).catch(e=>toast('Error: '+e.message,'e'));
+}
+
+// ----- Repayment recording -----
+function openCESPayModal(id){
+  cesCurId=id;
+  const c=allCES.find(x=>x.id===id);if(!c)return;
+  if(currentSession.role==='staff'&&c.branchId!==currentSession.branchId){toast('Access denied','e');return}
+  const next=cesNextDue(c);
+  document.getElementById('ces-pay-title').textContent='Record Repayment \\u2014 '+c.name;
+  document.getElementById('ces-pay-body').innerHTML=
+    '<div style="background:var(--bg);border-radius:8px;padding:12px;margin-bottom:14px">'+
+    '<div style="font-weight:700">'+c.name+' &bull; '+c.cesId+'</div>'+
+    '<div style="font-size:.78rem;color:var(--muted)">Total Repayment: &#8358;'+fmt(cesEffectiveTotal(c))+' &bull; Paid: <strong style="color:#7c3aed">&#8358;'+fmt(cesPaidTotal(c))+'</strong> &bull; Outstanding: <strong style="color:var(--red)">&#8358;'+fmt(cesOutstanding(c))+'</strong>'+(next?' &bull; Next Due: '+next:'')+'</div></div>'+
+    '<div class="form-grid">'+
+    '<div class="fg"><label>Amount Received (&#8358;) *</label><input type="number" id="ces-pay-amt"/></div>'+
+    '<div class="fg"><label>Payment Date *</label><input type="date" id="ces-pay-date" value="'+td()+'"/></div>'+
+    '<div class="fg"><label>Payment Method</label><input id="ces-pay-method" placeholder="Cash, Transfer, etc."/></div>'+
+    '<div class="fg"><label>Transaction Reference</label><input id="ces-pay-ref" placeholder="Leave blank to auto-generate"/></div>'+
+    '</div>'+
+    '<button class="btn btn-navy" style="background:#7c3aed;width:100%;justify-content:center;padding:11px;margin-top:8px" onclick="saveCESPayment()">Save Repayment</button>'+
+    (cesEligibleForDiscount(c)?'<button class="btn btn-out btn-sm" style="width:100%;justify-content:center;margin-top:8px;border-color:#c8973a;color:#c8973a" onclick="applyCESEarlyDiscount(\''+c.id+'\')">&#127942; Apply '+cesSettings.discPct+'% Early Repayment Discount</button>':'')+
+    '<div class="sh" style="margin-top:10px">History ('+(c.payments||[]).length+')</div>'+
+    ((c.payments||[]).length===0?'<p style="color:var(--muted);font-size:.82rem;text-align:center;padding:10px">No repayments recorded yet.</p>':
+    '<div class="tbl-wrap"><table><thead><tr><th>#</th><th>Ref</th><th>Amount</th><th>Date</th><th>Method</th><th>Del</th></tr></thead><tbody>'+
+    [...(c.payments||[])].reverse().map((p,ri)=>{const idx=(c.payments.length-1)-ri;return '<tr><td>'+(idx+1)+'</td><td>'+(p.ref||'--')+'</td><td style="color:#7c3aed;font-weight:700">&#8358;'+fmt(p.amount)+'</td><td>'+p.date+'</td><td>'+(p.method||'--')+'</td><td><button class="btn btn-red btn-sm" onclick="delCESPayment('+idx+')">&#128465;</button></td></tr>';}).join('')+
+    '</tbody></table></div>');
+  showModal('ces-pay-modal');
+}
+function saveCESPayment(){
+  const amt=parseFloat(v('ces-pay-amt')), date=v('ces-pay-date');
+  if(!amt||amt<=0){toast('Enter a valid amount','e');return}
+  if(!date){toast('Select the payment date','e');return}
+  const c=allCES.find(x=>x.id===cesCurId);if(!c)return;
+  let ref=v('ces-pay-ref')||cesGenRef();
+  if((c.payments||[]).some(p=>p.ref===ref)){toast('Duplicate reference \\u2014 this payment may already be recorded','e');return}
+  const payments=[...(c.payments||[]),{amount:amt,date,method:v('ces-pay-method')||'Cash',ref,recordedBy:currentSession.name||currentSession.username,recordedAt:new Date().toISOString()}];
+  let status=c.status;
+  if(cesPaidTotal({payments})>=cesEffectiveTotal(c)-0.5) status='Completed';
+  else if(status!=='Repaying') status='Repaying';
+  db.collection('ceseducation').doc(cesCurId).set({payments,status},{merge:true}).then(()=>{
+    c.payments=payments;c.status=status;
+    logAudit('CES Repayment Recorded', '\\u20a6'+fmt(amt)+' from '+c.name+' ('+c.cesId+') on '+date+'. Ref: '+ref);
+    renderCES(scopedCES());renderCESStats();renderCESActivity();
+    toast('Repayment saved! Ref: '+ref,'s');
+    openCESPayModal(cesCurId);
+  }).catch(e=>toast('Error: '+e.message,'e'));
+}
+function delCESPayment(idx){
+  if(!confirm('Delete this repayment entry?'))return;
+  const c=allCES.find(x=>x.id===cesCurId);if(!c)return;
+  const removed=c.payments[idx];
+  const payments=(c.payments||[]).filter((_,j)=>j!==idx);
+  db.collection('ceseducation').doc(cesCurId).set({payments},{merge:true}).then(()=>{
+    c.payments=payments;
+    logAudit('CES Repayment Entry Deleted', 'Deleted \\u20a6'+fmt(removed?removed.amount:0)+' entry ('+(removed?removed.ref:'--')+') for '+c.name+' ('+c.cesId+')');
+    renderCES(scopedCES());renderCESStats();renderCESActivity();
+    toast('Repayment entry deleted.','w');
+    openCESPayModal(cesCurId);
+  }).catch(e=>toast('Error: '+e.message,'e'));
+}
+
+// ----- Early repayment discount -----
+function cesEligibleForDiscount(c){
+  return c.status==='Repaying' && !c.earlyDiscount && cesOutstanding(c)>0 && cesPaidTotal(c)>0;
+}
+function applyCESEarlyDiscount(id){
+  const c=allCES.find(x=>x.id===id);if(!c)return;
+  if(c.earlyDiscount){toast('Early repayment discount has already been applied to this application','e');return}
+  if(!confirm('Verify eligibility and apply the '+cesSettings.discPct+'% early repayment discount to the outstanding balance?'))return;
+  const originalOutstanding=cesOutstanding(c);
+  const discAmt=round2(originalOutstanding*cesSettings.discPct/100);
+  const revisedOutstanding=round2(originalOutstanding-discAmt);
+  const revisedTotal=round2(cesEffectiveTotal(c)-discAmt);
+  const earlyDiscount={pct:cesSettings.discPct, amount:discAmt, originalOutstanding, revisedOutstanding, revisedTotal, appliedBy:currentSession.name||currentSession.username, appliedAt:new Date().toISOString()};
+  db.collection('ceseducation').doc(id).set({earlyDiscount},{merge:true}).then(()=>{
+    c.earlyDiscount=earlyDiscount;
+    logAudit('CES Early Repayment Discount Applied', c.name+' ('+c.cesId+') granted \\u20a6'+fmt(discAmt)+' ('+cesSettings.discPct+'%) discount. Revised outstanding: \\u20a6'+fmt(revisedOutstanding)+'.');
+    toast('Early repayment discount applied!','s');
+    renderCES(scopedCES());renderCESStats();
+    openCESPayModal(id);
+  }).catch(e=>toast('Error: '+e.message,'e'));
+}
+
+// ----- Application profile -----
+function viewCESProfile(id){
+  cesCurId=id;
+  const c=allCES.find(x=>x.id===id);if(!c)return;
+  cesLoadDocs(id).then(()=>{
+    const paidTotal=cesPaidTotal(c), outstanding=cesOutstanding(c), missed=cesMissedCount(c), next=cesNextDue(c);
+    document.getElementById('ces-pm-title').textContent=c.cesId+' \\u2014 '+c.name;
+    document.getElementById('ces-pm-body').innerHTML=
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">'+
+      '<div>'+cesBadge(c.status)+(cesIsOverdue(c)?' '+cesBadge('Overdue'):'')+'</div>'+
+      '<div style="display:flex;gap:6px;flex-wrap:wrap">'+
+      '<button class="btn btn-out btn-sm no-print" onclick="openCESEdit(\''+c.id+'\')">&#9998; Edit / Approve</button>'+
+      (c.status==='Approved'?'<button class="btn btn-sm no-print" style="background:#7c3aed;color:#fff" onclick="openCESSchoolModal(\''+c.id+'\')">&#127979; Pay School</button>':'')+
+      (['Repaying','School Payment Pending','Support Disbursed'].includes(c.status)?'<button class="btn btn-sm no-print" style="background:#16a34a;color:#fff" onclick="openCESPayModal(\''+c.id+'\')">&#128176; Record Repayment</button>':'')+
+      '</div></div>'+
+      '<div class="sh" style="margin-top:0">&#128100; Applicant Information</div>'+
+      '<div class="info-grid" style="margin-top:0">'+
+      '<div class="iitem"><label>Full Name</label><p>'+c.name+'</p></div>'+
+      '<div class="iitem"><label>Phone</label><p>'+c.phone+'</p></div>'+
+      '<div class="iitem"><label>Address</label><p>'+(c.address||'--')+'</p></div>'+
+      '<div class="iitem"><label>Occupation</label><p>'+(c.occupation||'--')+'</p></div>'+
+      '<div class="iitem"><label>Marital Status</label><p>'+c.maritalStatus+'</p></div>'+
+      '<div class="iitem"><label>Branch</label><p>'+getBranchName(c.branchId)+'</p></div>'+
+      '</div>'+
+      (c.maritalStatus==='Married'?('<div class="sh">&#128141; Spouse</div><div class="info-grid" style="margin-top:0">'+
+        '<div class="iitem"><label>Name</label><p>'+(c.spouseName||'--')+'</p></div>'+
+        '<div class="iitem"><label>Phone</label><p>'+(c.spousePhone||'--')+'</p></div></div>'):'')+
+      '<div class="sh">&#128118; Child &amp; School</div>'+
+      '<div class="info-grid" style="margin-top:0">'+
+      '<div class="iitem"><label>Child\'s Name</label><p>'+c.childName+'</p></div>'+
+      '<div class="iitem"><label>Age / Class</label><p>'+(c.childAge||'--')+'</p></div>'+
+      '<div class="iitem"><label>School</label><p>'+c.school+'</p></div>'+
+      '<div class="iitem"><label>School Address</label><p>'+(c.schoolAddress||'--')+'</p></div>'+
+      '</div>'+
+      '<div class="sh">&#128100; Guarantor 1</div>'+
+      '<div class="info-grid" style="margin-top:0">'+
+      '<div class="iitem"><label>Name</label><p>'+((c.guarantor1&&c.guarantor1.name)||'--')+'</p></div>'+
+      '<div class="iitem"><label>Phone</label><p>'+((c.guarantor1&&c.guarantor1.phone)||'--')+'</p></div>'+
+      '<div class="iitem"><label>Address</label><p>'+((c.guarantor1&&c.guarantor1.address)||'--')+'</p></div>'+
+      '<div class="iitem"><label>Relationship</label><p>'+((c.guarantor1&&c.guarantor1.relationship)||'--')+'</p></div>'+
+      '</div>'+
+      ((c.maritalStatus==='Single Mother'||c.maritalStatus==='Single Father')?('<div class="sh">&#128100; Guarantor 2</div><div class="info-grid" style="margin-top:0">'+
+        '<div class="iitem"><label>Name</label><p>'+((c.guarantor2&&c.guarantor2.name)||'--')+'</p></div>'+
+        '<div class="iitem"><label>Phone</label><p>'+((c.guarantor2&&c.guarantor2.phone)||'--')+'</p></div>'+
+        '<div class="iitem"><label>Address</label><p>'+((c.guarantor2&&c.guarantor2.address)||'--')+'</p></div>'+
+        '<div class="iitem"><label>Relationship</label><p>'+((c.guarantor2&&c.guarantor2.relationship)||'--')+'</p></div></div>'):'')+
+      cesDocTiles(id,c)+'</div>'+
+      '<div class="sh">&#128176; Support &amp; Repayment</div>'+
+      '<div class="repay-sum">'+
+      '<div class="rs"><div class="rv">&#8358;'+fmt(c.approvedAmount||c.requestedAmount||0)+'</div><div class="rl">'+(c.approvedAmount?'Approved':'Requested')+' Amount</div></div>'+
+      '<div class="rs"><div class="rv">&#8358;'+fmt(c.approvedFee||c.requestedFee||0)+'</div><div class="rl">Service Fee ('+(c.approvedPct||c.requestedPct||0)+'%)</div></div>'+
+      '<div class="rs"><div class="rv" style="color:#7c3aed">&#8358;'+fmt(cesEffectiveTotal(c)||c.requestedTotal||0)+'</div><div class="rl">Total Repayment</div></div>'+
+      '<div class="rs"><div class="rv" style="color:var(--green)">&#8358;'+fmt(paidTotal)+'</div><div class="rl">Paid So Far</div></div>'+
+      '<div class="rs"><div class="rv" style="color:'+(outstanding>0?'var(--red)':'var(--green)')+'">&#8358;'+fmt(outstanding)+'</div><div class="rl">Outstanding</div></div>'+
+      '<div class="rs"><div class="rv" style="color:'+(missed>0?'var(--red)':'var(--green)')+'">'+missed+'</div><div class="rl">Missed</div></div>'+
+      '</div>'+
+      '<div style="font-size:.72rem;color:var(--muted);margin-bottom:10px">Plan: <strong>'+c.plan+'</strong>'+(next?' &bull; Next Due: <strong>'+next+'</strong>':'')+'</div>'+
+      (c.earlyDiscount?('<div style="background:#fffbeb;border:1.5px solid #c8973a;border-radius:8px;padding:10px;margin-bottom:12px;font-size:.8rem"><strong>&#127942; Early Repayment Discount Applied</strong><br/>Original Outstanding: &#8358;'+fmt(c.earlyDiscount.originalOutstanding)+' &bull; Discount ('+c.earlyDiscount.pct+'%): &#8358;'+fmt(c.earlyDiscount.amount)+' &bull; Revised Outstanding: &#8358;'+fmt(c.earlyDiscount.revisedOutstanding)+'<br/><span style="color:var(--muted)">Applied by '+c.earlyDiscount.appliedBy+' on '+c.earlyDiscount.appliedAt.slice(0,10)+'</span></div>'):'')+
+      (c.schoolPayment&&c.schoolPayment.status==='Paid'?('<div class="sh">&#127979; School Payment</div><div class="info-grid" style="margin-top:0">'+
+        '<div class="iitem"><label>School</label><p>'+c.school+'</p></div>'+
+        '<div class="iitem"><label>Amount Paid</label><p>&#8358;'+fmt(c.schoolPayment.amount)+'</p></div>'+
+        '<div class="iitem"><label>Date</label><p>'+c.schoolPayment.date+'</p></div>'+
+        '<div class="iitem"><label>Reference</label><p>'+(c.schoolPayment.ref||'--')+'</p></div>'+
+        '<div class="iitem"><label>Paid By</label><p>'+c.schoolPayment.staffName+'</p></div></div>'):'')+
+      '<div class="sh">Repayment History ('+(c.payments||[]).length+')</div>'+
+      ((c.payments||[]).length===0?'<p style="color:var(--muted);font-size:.82rem;text-align:center;padding:14px">No repayments recorded yet.</p>':
+      '<div class="tbl-wrap"><table><thead><tr><th>#</th><th>Ref</th><th>Amount</th><th>Date</th><th>Method</th><th>By</th></tr></thead><tbody>'+
+      (c.payments||[]).map((p,idx)=>'<tr><td>'+(idx+1)+'</td><td>'+(p.ref||'--')+'</td><td style="color:#7c3aed;font-weight:700">&#8358;'+fmt(p.amount)+'</td><td>'+p.date+'</td><td>'+(p.method||'--')+'</td><td>'+(p.recordedBy||'--')+'</td></tr>').join('')+
+      '</tbody></table></div>');
+    showModal('ces-profile-modal');
+  });
+}
+
+// ----- Print statement -----
+function printCESStatement(){
+  const c=allCES.find(x=>x.id===cesCurId);if(!c)return;
+  const paidTotal=cesPaidTotal(c), outstanding=cesOutstanding(c);
+  const now=new Date().toLocaleDateString('en-NG',{day:'2-digit',month:'long',year:'numeric'});
+  const win=window.open('','_blank','width=800,height=900');
+  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Education Support Statement</title>'+
+  '<style>body{font-family:Arial,sans-serif;padding:32px;color:#1e293b;max-width:700px;margin:0 auto}'+
+  'h1{color:#7c3aed;font-size:1.4rem;margin-bottom:4px}.brand{font-size:1.6rem;font-weight:900;color:#0f2342}'+
+  '.brand span{color:#c8973a}.section{margin-top:20px;border-top:1px solid #e2e8f0;padding-top:12px}'+
+  '.section h3{font-size:.85rem;text-transform:uppercase;color:#7c3aed;font-weight:800;letter-spacing:.08em;margin-bottom:8px}'+
+  'table{width:100%;border-collapse:collapse;font-size:.85rem;margin-top:8px}'+
+  'td{padding:7px 10px;border-bottom:1px solid #f1f5f9}td:first-child{font-weight:700;color:#64748b;width:42%}'+
+  '.summary-box{background:#f5f3ff;border:2px solid #7c3aed;border-radius:8px;padding:14px;margin-top:16px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;text-align:center}'+
+  '.sv{font-size:1rem;font-weight:800;color:#0f2342}.sl{font-size:.63rem;text-transform:uppercase;color:#64748b;margin-top:2px}'+
+  '@media print{body{padding:16px}}</style></head><body>'+
+  '<div class="brand">Zmo<span>nie</span> Pro</div>'+
+  '<h1>Children Education Support &mdash; Statement</h1>'+
+  '<p style="font-size:.8rem;color:#64748b">Statement Date: '+now+' &bull; Ref: '+c.cesId+'</p>'+
+  '<div class="section"><h3>Applicant</h3><table>'+
+  '<tr><td>Full Name</td><td>'+c.name+'</td></tr><tr><td>Phone</td><td>'+c.phone+'</td></tr>'+
+  '<tr><td>Marital Status</td><td>'+c.maritalStatus+'</td></tr></table></div>'+
+  '<div class="section"><h3>Child &amp; School</h3><table>'+
+  '<tr><td>Child\'s Name</td><td>'+c.childName+'</td></tr><tr><td>School</td><td>'+c.school+'</td></tr></table></div>'+
+  '<div class="section"><h3>Support Account</h3><table>'+
+  '<tr><td>Approved Amount</td><td>&#8358;'+fmt(c.approvedAmount||0)+'</td></tr>'+
+  '<tr><td>Service Fee</td><td>&#8358;'+fmt(c.approvedFee||0)+'</td></tr>'+
+  '<tr><td>Total Repayment</td><td>&#8358;'+fmt(c.approvedTotal||0)+'</td></tr>'+
+  '<tr><td>Repayment Plan</td><td>'+c.plan+'</td></tr>'+
+  '<tr><td>Status</td><td>'+c.status+'</td></tr></table></div>'+
+  '<div class="summary-box">'+
+  '<div><div class="sv" style="color:#7c3aed">&#8358;'+fmt(paidTotal)+'</div><div class="sl">Paid So Far</div></div>'+
+  '<div><div class="sv" style="color:#dc2626">&#8358;'+fmt(outstanding)+'</div><div class="sl">Outstanding</div></div>'+
+  '<div><div class="sv">'+(c.payments||[]).length+'</div><div class="sl">Payments Made</div></div></div>'+
+  '<div class="section"><h3>Repayment History</h3>'+
+  ((c.payments||[]).length===0?'<p style="color:#64748b;font-size:.82rem">No repayments recorded.</p>':
+  '<table><tr style="background:#f5f3ff"><td style="font-weight:800;padding:7px">#</td><td style="font-weight:800;padding:7px">Date</td><td style="font-weight:800;padding:7px">Amount</td></tr>'+
+  (c.payments||[]).map((p,idx)=>'<tr><td style="padding:6px 8px">'+(idx+1)+'</td><td style="padding:6px 8px">'+p.date+'</td><td style="padding:6px 8px">&#8358;'+fmt(p.amount)+'</td></tr>').join('')+
+  '</table>')+'</div>'+
+  '<script>setTimeout(()=>window.print(),400)<\\/script></body></html>');
+  win.document.close();
+}
+
+// ----- Reports -----
+function generateCESReport(){
+  const type=v('cesr-type'), status=v('cesr-status'), plan=v('cesr-plan'), from=v('cesr-from'), to=v('cesr-to')||td();
+  let list=scopedCES();
+  if(status) list=list.filter(c=>c.status===status);
+  if(plan) list=list.filter(c=>c.plan===plan);
+  let rows=[], headers=[], title='';
+  if(type==='status'||type==='all'){
+    title=type==='status'?'Applications by Status':'All Applications';
+    headers=['ID','Applicant','Child','School','Amount','Plan','Status','Branch'];
+    list.forEach(c=>rows.push({ID:c.cesId,Applicant:c.name,Child:c.childName,School:c.school,Amount:c.approvedAmount||c.requestedAmount||0,Plan:c.plan,Status:c.status,Branch:getBranchName(c.branchId)}));
+  } else if(type==='school'){
+    title='Applications by School';
+    headers=['School','ID','Applicant','Child','Amount','Status'];
+    list.sort((a,b)=>(a.school||'').localeCompare(b.school||'')).forEach(c=>rows.push({School:c.school,ID:c.cesId,Applicant:c.name,Child:c.childName,Amount:c.approvedAmount||c.requestedAmount||0,Status:c.status}));
+  } else if(type==='repayments'){
+    title='Repayments Received'+(from?(' ('+from+' to '+to+')'):'');
+    headers=['Ref','Applicant','ID','Amount','Date','Method','Recorded By'];
+    list.forEach(c=>(c.payments||[]).forEach(p=>{
+      if(from&&p.date<from)return; if(to&&p.date>to)return;
+      rows.push({Ref:p.ref||'--',Applicant:c.name,ID:c.cesId,Amount:p.amount,Date:p.date,Method:p.method||'--','Recorded By':p.recordedBy||'--'});
+    }));
+  } else if(type==='outstanding'){
+    title='Outstanding Repayment Balances';
+    headers=['ID','Applicant','Child','Total Repayment','Paid','Outstanding','Status'];
+    list.filter(c=>cesOutstanding(c)>0).forEach(c=>rows.push({ID:c.cesId,Applicant:c.name,Child:c.childName,'Total Repayment':cesEffectiveTotal(c),Paid:cesPaidTotal(c),Outstanding:cesOutstanding(c),Status:c.status}));
+  } else if(type==='discounts'){
+    title='Early Repayment Discounts Granted';
+    headers=['ID','Applicant','Discount %','Discount Amount','Original Outstanding','Revised Outstanding','Applied By','Date'];
+    list.filter(c=>c.earlyDiscount).forEach(c=>rows.push({ID:c.cesId,Applicant:c.name,'Discount %':c.earlyDiscount.pct,'Discount Amount':c.earlyDiscount.amount,'Original Outstanding':c.earlyDiscount.originalOutstanding,'Revised Outstanding':c.earlyDiscount.revisedOutstanding,'Applied By':c.earlyDiscount.appliedBy,Date:c.earlyDiscount.appliedAt.slice(0,10)}));
+  } else if(type==='overdue'){
+    title='Overdue Accounts';
+    headers=['ID','Applicant','Child','School','Missed Payments','Outstanding','Next Due'];
+    list.filter(c=>cesIsOverdue(c)).forEach(c=>rows.push({ID:c.cesId,Applicant:c.name,Child:c.childName,School:c.school,'Missed Payments':cesMissedCount(c),Outstanding:cesOutstanding(c),'Next Due':cesNextDue(c)}));
+  }
+  cesLastReport={title,headers,rows};
+  const totalAmt=rows.reduce((s,r)=>{
+    const v2=r.Amount!==undefined?r.Amount:(r.Outstanding!==undefined?r.Outstanding:(r['Discount Amount']!==undefined?r['Discount Amount']:0));
+    return s+(parseFloat(v2)||0);
+  },0);
+  document.getElementById('ces-report-meta').innerHTML='<div style="background:var(--bg);border-radius:8px;padding:12px"><strong>'+title+'</strong><br/><span style="font-size:.8rem;color:var(--muted)">'+rows.length+' record(s)'+(totalAmt?' &bull; Total: &#8358;'+fmt(totalAmt):'')+'</span></div>';
+  document.getElementById('ces-report-thead').innerHTML='<tr>'+headers.map(h=>'<th>'+h+'</th>').join('')+'</tr>';
+  document.getElementById('ces-report-tbody').innerHTML=rows.length?rows.map(r=>'<tr>'+headers.map(h=>{
+    let val=r[h];
+    if(typeof val==='number'&&(h.toLowerCase().includes('amount')||h.toLowerCase().includes('outstanding')||h.toLowerCase().includes('paid')||h.toLowerCase().includes('repayment'))) val='&#8358;'+fmt(val);
+    return '<td>'+(val===undefined||val===null||val===''?'--':val)+'</td>';
+  }).join('')+'</tr>').join(''):'<tr><td colspan="'+headers.length+'" style="text-align:center;color:var(--muted);padding:16px">No records found.</td></tr>';
+  document.getElementById('ces-report-export-row').style.display=rows.length?'flex':'none';
+  logAudit('CES Report Generated', title+' generated with '+rows.length+' record(s).');
+}
+function exportCESReportPDF(){
+  if(!cesLastReport||!cesLastReport.rows.length){toast('Generate a report first','e');return}
+  const {title,headers,rows}=cesLastReport;
+  const now=new Date().toLocaleDateString('en-NG',{day:'2-digit',month:'long',year:'numeric'});
+  const win=window.open('','_blank','width=900,height=900');
+  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>'+title+'</title>'+
+  '<style>body{font-family:Arial,sans-serif;padding:28px;color:#1e293b}'+
+  'h1{color:#7c3aed;font-size:1.2rem;margin-bottom:2px}.brand{font-size:1.4rem;font-weight:900;color:#0f2342}'+
+  '.brand span{color:#c8973a}table{width:100%;border-collapse:collapse;font-size:.78rem;margin-top:14px}'+
+  'th{background:#f5f3ff;text-align:left;padding:7px 8px;border-bottom:2px solid #7c3aed;font-size:.68rem;text-transform:uppercase}'+
+  'td{padding:6px 8px;border-bottom:1px solid #f1f5f9}@media print{body{padding:14px}}</style></head><body>'+
+  '<div class="brand">Zmo<span>nie</span> Pro</div><h1>'+title+'</h1>'+
+  '<p style="font-size:.78rem;color:#64748b">Generated: '+now+' &bull; '+rows.length+' record(s)</p>'+
+  '<table><thead><tr>'+headers.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+
+  rows.map(r=>'<tr>'+headers.map(h=>'<td>'+((r[h]===undefined||r[h]===null||r[h]==='')?'--':r[h])+'</td>').join('')+'</tr>').join('')+
+  '</tbody></table><script>setTimeout(()=>window.print(),400)<\\/script></body></html>');
+  win.document.close();
+}
+function exportCESReportExcel(){
+  if(!cesLastReport||!cesLastReport.rows.length){toast('Generate a report first','e');return}
+  if(typeof XLSX==='undefined'){toast('Excel library not loaded','e');return}
+  const ws=XLSX.utils.json_to_sheet(cesLastReport.rows);
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Report');
+  XLSX.writeFile(wb,'CES_'+cesLastReport.title.replace(/[^a-z0-9]+/gi,'_')+'_'+td()+'.xlsx');
+  toast('Excel report exported!','s');
+}
+function exportCESReportCSV(){
+  if(!cesLastReport||!cesLastReport.rows.length){toast('Generate a report first','e');return}
+  downloadCSV('CES_'+cesLastReport.title.replace(/[^a-z0-9]+/gi,'_')+'_'+td()+'.csv', cesLastReport.headers, cesLastReport.rows);
+  toast('CSV report exported!','s');
+}
+
+// =====================================================
 // ===== STAFF AUDIT LOG =====
 // Every contributor registration, profile update, contribution entry,
 // contribution edit/delete and status change is recorded here with
@@ -6907,6 +7859,7 @@ function renderAuditLog(){
   <button class="fab-item" onclick="showPage('new-investment');toggleFab()">&#128200; New Investment</button>
   <button class="fab-item" onclick="showPage('new-contribution');toggleFab()">&#128021; New Contribution</button>
   <button class="fab-item" onclick="showPage('new-salarycontribution');toggleFab()">&#128188; New Salary Contributor</button>
+  <button class="fab-item" onclick="showPage('new-ces');toggleFab()">&#127891; New Education Support</button>
   <button class="fab-item" onclick="exportExcel();toggleFab()">&#128190; Export Excel</button>
 </div>
 <button id="scroll-top" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="Back to top">&#8679;</button>
